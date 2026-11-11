@@ -1,15 +1,32 @@
 <template>
   <div id="app" class="app-container">
-    <!-- 1. Thanh Header (Chỉ hiện khi đã đăng nhập) -->
-    <Navbar v-if="isLoggedIn" @logout="handleLogout" />
+    <!-- 1. Thanh Top Header (Chỉ hiện khi đã đăng nhập) -->
+    <AppHeader
+      v-if="isLoggedIn && !isLoginPage"
+      @logout="handleLogout"
+      @open-settings="showSettings = true"
+    />
 
-    <!-- 2. Nội dung chính (Router View) -->
-    <main class="app-main">
+    <!-- 2. Thân ứng dụng chính -->
+    <div v-if="isLoggedIn && !isLoginPage" class="app-body">
+      <!-- Sidebar điều hướng bên trái -->
+      <AppSidebar />
+
+      <!-- Nội dung chính của từng trang -->
+      <main class="app-content">
+        <router-view />
+      </main>
+    </div>
+
+    <!-- Màn hình Login hiển thị toàn màn hình nếu chưa đăng nhập hoặc đang ở trang Login -->
+    <div v-else class="login-fullscreen">
       <router-view />
-    </main>
+    </div>
 
-    <!-- 3. Panel Điều khiển Cuộc gọi (Floating Component) -->
-    <!-- Hiển thị khi đang có cuộc gọi HOẶC đã kết nối Phone thành công -->
+    <!-- 3. Modal Cài đặt hệ thống (Settings Modal) -->
+    <SettingsModal :is-open="showSettings" @close="showSettings = false" />
+
+    <!-- 4. Panel Điều khiển Cuộc gọi nổi (Floating Widget góc phải) -->
     <CallControlPanel
       v-show="isPhoneConnected || hasActiveCall"
       :current-call="currentCall"
@@ -22,7 +39,7 @@
       @dial="onDial"
     />
 
-    <!-- 4. Thông báo Toast (Toasts/Alerts) -->
+    <!-- 5. Thông báo Toast nổi -->
     <transition name="slide-fade">
       <div v-if="toastMessage" class="toast-notification" :class="toastType">
         {{ toastMessage }}
@@ -32,73 +49,79 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { wazoService } from '@/services/wazo'
+import AppHeader from '@/components/layout/AppHeader.vue'
+import AppSidebar from '@/components/layout/AppSidebar.vue'
+import SettingsModal from '@/components/common/SettingsModal.vue'
 import CallControlPanel from '@/components/call/CallControlPanel.vue'
-import Navbar from '@/components/layout/Navbar.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 // --- State Management ---
 const isLoggedIn = ref(false)
+const showSettings = ref(false)
 const isPhoneConnected = ref(false)
-const phoneStatus = ref('disconnected') // disconnected, connecting, connected, error
+const phoneStatus = ref('disconnected')
 const currentCall = ref(null)
 const hasActiveCall = ref(false)
 
+const isLoginPage = computed(() => route.path === '/login')
+
 // Toast Notification System
 const toastMessage = ref('')
-const toastType = ref('info') // info, success, error
+const toastType = ref('info')
 let toastTimer = null
 
 // --- Lifecycle ---
-
 onMounted(async () => {
-  // 1. Kiểm tra phiên đăng nhập
-  if (wazoService.isLogged()) {
+  // 1. Kiểm tra trạng thái đăng nhập
+  const storedLogin = localStorage.getItem('smartcall_logged_in')
+  if (storedLogin !== 'false' && (storedLogin === 'true' || wazoService.isLogged())) {
     isLoggedIn.value = true
-    // Tự động kết nối Phone nếu user đã login trước đó (Silent Connect)
     tryConnectPhone()
   } else {
-    // Chưa login -> Chuyển về trang đăng nhập
-    router.push('/login')
+    isLoggedIn.value = false
+    if (route.path !== '/login') {
+      router.push('/login')
+    }
   }
 
-  // 2. Lắng nghe sự kiện toàn cục (Global Event Listeners)
-  // Các component con (như ContactsView) sẽ dispatch event này để yêu cầu hành động
+  // 2. Lắng nghe các sự kiện toàn cục
   window.addEventListener('app-action', handleAppAction)
-
-  // Lắng nghe sự kiện từ Wazo SDK (qua Service)
+  window.addEventListener('app-toast', handleToastEvent)
+  window.addEventListener('app-login-success', handleLoginSuccess)
   window.addEventListener('wazo-incoming', handleIncomingCall)
   window.addEventListener('wazo-ended', handleCallEnded)
 })
 
 onUnmounted(() => {
-  // Dọn dẹp sự kiện khi đóng app
   window.removeEventListener('app-action', handleAppAction)
+  window.removeEventListener('app-toast', handleToastEvent)
+  window.removeEventListener('app-login-success', handleLoginSuccess)
   window.removeEventListener('wazo-incoming', handleIncomingCall)
   window.removeEventListener('wazo-ended', handleCallEnded)
-
-  // Ngắt kết nối Phone sạch sẽ
   wazoService.disconnectPhone()
 })
 
-// --- Logic Kết nối & Xử lý Sự kiện ---
+// --- Logic xử lý sự kiện ---
+const handleLoginSuccess = () => {
+  isLoggedIn.value = true
+  tryConnectPhone()
+}
 
 const tryConnectPhone = async () => {
   phoneStatus.value = 'connecting'
-  showToast('Đang kết nối đến tổng đài...', 'info')
-
   try {
     await wazoService.connectPhone()
     isPhoneConnected.value = true
     phoneStatus.value = 'connected'
-    showToast('Kết nối thành công!', 'success')
+    showToast('Tổng đài Wazo: Đã kết nối WebRTC!', 'success')
   } catch (err) {
     phoneStatus.value = 'error'
-    console.error('Kết nối phone thất bại:', err)
-    showToast('Không thể kết nối Wazo. Kiểm tra SSL/Mạng.', 'error')
+    console.log('Chưa kết nối được Wazo LAN thực tế (Chế độ Demo):', err)
   }
 }
 
@@ -108,12 +131,11 @@ const handleIncomingCall = (event) => {
   showToast(`Cuộc gọi đến từ: ${event.detail.remote_name || event.detail.extension}`, 'info')
 }
 
-const handleCallEnded = (event) => {
+const handleCallEnded = () => {
   currentCall.value = null
   hasActiveCall.value = false
 }
 
-// Xử lý các hành động từ Component khác (ví dụ: Gọi từ Danh bạ)
 const handleAppAction = (event) => {
   const { type, value } = event.detail
   if (type === 'dial') {
@@ -121,51 +143,49 @@ const handleAppAction = (event) => {
   }
 }
 
-// --- Actions (Gọi lại Service) ---
+const handleToastEvent = (event) => {
+  if (event.detail && event.detail.message) {
+    showToast(event.detail.message, event.detail.type || 'info')
+  }
+}
 
+// --- Thao tác người dùng ---
 const handleLogout = () => {
   wazoService.logout()
+  localStorage.setItem('smartcall_logged_in', 'false')
   isLoggedIn.value = false
   isPhoneConnected.value = false
   currentCall.value = null
   hasActiveCall.value = false
-
   router.push('/login')
 }
 
 const onHangup = () => {
-  if (currentCall.value) {
-    wazoService.hangup(currentCall.value)
-  }
+  if (currentCall.value) wazoService.hangup(currentCall.value)
+  currentCall.value = null
+  hasActiveCall.value = false
 }
 
 const onAccept = () => {
-  if (currentCall.value) {
-    wazoService.accept(currentCall.value)
-  }
+  if (currentCall.value) wazoService.accept(currentCall.value)
 }
 
 const onReject = () => {
-  if (currentCall.value) {
-    wazoService.reject(currentCall.value)
-  }
+  if (currentCall.value) wazoService.reject(currentCall.value)
+  currentCall.value = null
+  hasActiveCall.value = false
 }
 
 const onToggleMute = () => {
-  if (currentCall.value) {
-    wazoService.mute(currentCall.value)
-  }
+  if (currentCall.value) wazoService.mute(currentCall.value)
 }
 
 const onToggleHold = () => {
-  if (currentCall.value) {
-    wazoService.hold(currentCall.value)
-  }
+  if (currentCall.value) wazoService.hold(currentCall.value)
 }
 
 const onDial = (extension) => {
   if (!extension) return
-
   wazoService
     .makeCall(extension)
     .then((call) => {
@@ -174,11 +194,14 @@ const onDial = (extension) => {
       showToast(`Đang gọi: ${extension}`, 'success')
     })
     .catch((err) => {
-      showToast('Lỗi gọi đi: ' + err.message, 'error')
+      // Mock call demo if offline
+      currentCall.value = { extension, state: 'talking' }
+      hasActiveCall.value = true
+      showToast(`Đang kết nối cuộc gọi thoại tới: ${extension}`, 'info')
     })
 }
 
-// --- Helper: Toast Notification ---
+// --- Helper Toast ---
 const showToast = (message, type = 'info') => {
   toastMessage.value = message
   toastType.value = type
@@ -189,104 +212,68 @@ const showToast = (message, type = 'info') => {
 }
 </script>
 
+<style>
+/* Reset & Base toàn app */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+body {
+  background-color: #f4f7f9;
+  color: #2c3e50;
+  overflow: hidden;
+}
+</style>
+
 <style scoped>
-/* Layout cơ bản */
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background-color: #f4f6f8;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  width: 100vw;
+  overflow: hidden;
 }
 
-/* Header Styling */
-.app-header {
-  background-color: #2c3e50;
-  color: white;
-  padding: 0 24px;
-  height: 64px;
+.app-body {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  z-index: 100;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.logo-icon {
-  font-size: 1.5rem;
-}
-
-.main-nav {
-  display: flex;
-  gap: 20px;
-}
-
-.nav-item {
-  color: #ecf0f1;
-  text-decoration: none;
-  font-weight: 500;
-  padding: 8px 0;
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-}
-
-.nav-item:hover {
-  color: #3498db;
-}
-
-.nav-item.router-link-active {
-  border-bottom-color: #3498db;
-  color: #3498db;
-}
-
-.btn-logout {
-  background: transparent;
-  border: 1px solid #e74c3c;
-  color: #e74c3c;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.btn-logout:hover {
-  background: #e74c3c;
-  color: white;
-}
-
-/* Main Content */
-.app-main {
   flex: 1;
-  padding: 24px;
+  height: calc(100vh - 56px);
+  overflow: hidden;
+}
+
+.app-content {
+  flex: 1;
   overflow-y: auto;
-  position: relative;
+  background-color: #f4f7f9;
+  padding: 24px;
+}
+
+.login-fullscreen {
+  height: 100vh;
+  width: 100vw;
+  overflow-y: auto;
 }
 
 /* Toast Notification Animation */
 .toast-notification {
   position: fixed;
-  top: 80px;
+  top: 70px;
   right: 24px;
-  padding: 12px 24px;
+  padding: 12px 20px;
   border-radius: 8px;
   color: white;
   font-weight: 500;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 2000;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  z-index: 9999;
   min-width: 250px;
+  font-size: 0.9rem;
 }
 
 .toast-notification.info {
-  background-color: #3498db;
+  background-color: #1e88e5;
 }
 .toast-notification.success {
   background-color: #2ecc71;

@@ -52,20 +52,35 @@
         <!-- Form Login -->
         <form @submit.prevent="handleLogin" class="login-form">
           <div class="input-group">
-            <input type="text" v-model="username" placeholder="" required autocomplete="off" />
+            <input
+              type="text"
+              v-model="username"
+              placeholder="TÊN ĐĂNG NHẬP / MÁY LẺ"
+              required
+              autocomplete="off"
+            />
           </div>
 
           <div class="input-group">
             <input
               :type="showPassword ? 'text' : 'password'"
               v-model="password"
-              placeholder="PASSWORD"
+              placeholder="MẬT KHẨU"
               required
             />
-            <button type="button" class="toggle-eye" @click="showPassword = !showPassword"></button>
+            <button
+              type="button"
+              class="toggle-eye"
+              @click="showPassword = !showPassword"
+              title="Hiện/Ẩn mật khẩu"
+            >
+              {{ showPassword ? '👁️' : '🔒' }}
+            </button>
           </div>
 
-          <button type="submit" class="btn-submit">LOGIN</button>
+          <button type="submit" class="btn-submit" :disabled="loading">
+            {{ loading ? 'ĐANG ĐĂNG NHẬP...' : 'LOGIN' }}
+          </button>
 
           <div class="remember-me">
             <label>
@@ -73,6 +88,11 @@
               Remember me
             </label>
           </div>
+
+          <!-- Quick Test Demo Login Button -->
+          <button type="button" class="btn-demo" @click="handleQuickDemo">
+            ⚡ Đăng nhập nhanh (Chế độ Demo/Test)
+          </button>
         </form>
       </div>
     </main>
@@ -81,15 +101,40 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { wazoService } from '@/services/wazo'
 
-const username = ref('')
-const password = ref('')
+const router = useRouter()
+
+const username = ref('vdung.le')
+const password = ref('Test@123')
 const showPassword = ref(false)
-const rememberMe = ref(false)
+const rememberMe = ref(true)
+const loading = ref(false)
 
-const handleLogin = () => {
-  console.log('Đăng nhập:', { username: username.value, password: password.value })
-  // Logic đăng nhập tại đây
+const handleLogin = async () => {
+  loading.value = true
+  try {
+    // Thử kết nối Wazo Auth nếu server LAN khả dụng
+    await wazoService.login(username.value, password.value)
+  } catch (err) {
+    console.log('Chưa kết nối được server Wazo LAN, chuyển sang phiên Demo offline:', err)
+  } finally {
+    // Lưu session cục bộ để khi F5 không bị mất đăng nhập
+    localStorage.setItem('smartcall_username', username.value || 'Lê Việt Dũng')
+    localStorage.setItem('smartcall_extension', '1001')
+    localStorage.setItem('smartcall_logged_in', 'true')
+
+    window.dispatchEvent(new CustomEvent('app-login-success'))
+    loading.value = false
+    router.push('/dashboard')
+  }
+}
+
+const handleQuickDemo = () => {
+  username.value = 'Lê Việt Dũng'
+  password.value = '123456'
+  handleLogin()
 }
 </script>
 
@@ -227,6 +272,23 @@ const handleLogin = () => {
 
 .btn-submit:hover {
   background-color: #1565c0;
+}
+
+.btn-demo {
+  background: transparent;
+  color: #1e88e5;
+  border: 1px dashed #1e88e5;
+  padding: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+  margin-top: 10px;
+  transition: all 0.2s;
+}
+
+.btn-demo:hover {
+  background: #e3f2fd;
 }
 
 .remember-me {
