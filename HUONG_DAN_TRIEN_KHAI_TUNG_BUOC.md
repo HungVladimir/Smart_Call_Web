@@ -314,32 +314,276 @@ Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
 
 ---
 
-### BƯỚC 7: ĐẤU NỐI MÔI TRƯỜNG LAN WAZO THẬT & KẾT NỐI API DATABASE CỦA ANH HẢI
-* **Trạng thái:** `SẴN SÀNG TRIỂN KHAI 🚀`
-* **Nhiệm vụ khi lên công ty:**
-  1. **Cài đặt chứng chỉ CA tự ký (`wazo-ca.crt`):**
-     - Theo mục 1.3 trong `dev_guide.md`, để trình duyệt Chrome/Edge không chặn kết nối WebRTC (Micro) tới server Wazo nội bộ `https://192.168.1.50:9443`, cần cài file `wazo-ca.crt` vào mục `Trusted Root Certification Authorities` trên Windows.
-  2. **Cấu hình địa chỉ IP máy chủ:**
-     - Kiểm tra biến `this.host` trong `src/services/wazo.js` đảm bảo đúng IP LAN của tổng đài (`192.168.1.50:9443`).
-  3. **Đấu nối API Database thật khi anh Hải bàn giao:**
-     - Mở file `src/services/contactService.js`: Thay URL endpoint vào hàm `getContacts()` (ví dụ: `http://192.168.1.50:8080/api/employees`).
-     - Tương tự với `historyService.js` và `chatService.js` nếu anh Hải có API DB riêng.
-  4. **Bàn giao / Đồng bộ cho đồng nghiệp (Dũng):**
-     - Đồng nghiệp chỉ cần `git clone` hoặc `git pull` từ repo `https://github.com/HungVladimir/Smart_Call_Web.git` là có ngay toàn bộ dự án đã chuẩn hóa 100%.
+## 4. KẾ HOẠCH HÀNH ĐỘNG CHI TIẾT CHO NGÀY MAI & CHUẨN BỊ CHO TƯƠNG LAI
+
+### 4.1. Nhiệm vụ cụ thể khi bạn lên công ty ngày mai
+Khi bạn mang laptop/máy tính lên công ty cắm vào mạng LAN nội bộ SDV, hãy thực hiện theo đúng 5 bước sau:
+
+1. **Bước 1 — Kiểm tra kết nối mạng tới Server Wazo (`192.168.1.50`):**
+   - Mở PowerShell / Command Prompt trên máy tính công ty và gõ:
+     ```bash
+     ping 192.168.1.50
+     curl -k https://192.168.1.50:9443/api/auth/0.1/status
+     ```
+   - Nếu ping thông và curl trả về status OK thì máy bạn đã thông mạng LAN tới tổng đài Wazo.
+2. **Bước 2 — Cài đặt chứng chỉ SSL CA tự ký (`wazo-ca.crt`):**
+   - *Tại sao phải cài?* Do server nội bộ Wazo dùng SSL tự ký nên trình duyệt Chrome/Edge sẽ chặn Micro WebRTC nếu chưa cài chứng chỉ vào máy.
+   - *Cách cài:* Lấy file `wazo-ca.crt` (hoặc tải từ `curl -k -o wazo-ca.crt https://192.168.1.50:9443/...`), click đúp vào file $\rightarrow$ Chọn *Install Certificate* $\rightarrow$ *Local Machine* $\rightarrow$ *Place all certificates in the following store* $\rightarrow$ Chọn **Trusted Root Certification Authorities** (Cơ quan chứng nhận gốc đáng tin cậy) $\rightarrow$ Finish.
+3. **Bước 3 — Tạo file cấu hình môi trường `.env`:**
+   - Trong thư mục dự án, copy file `.env.example` thành file `.env`:
+     ```bash
+     cp .env.example .env
+     ```
+   - Đảm bảo dòng `VITE_WAZO_HOST=192.168.1.50:9443`.
+4. **Bước 4 — Chạy dự án và thử đăng nhập tài khoản thật:**
+   - Chạy lệnh: `npm run dev`
+   - Truy cập vào web, tại màn hình Login: Gõ tài khoản máy lẻ (ví dụ `1001` hoặc `vdung.le`) kèm mật khẩu thật do anh Hải hoặc tài liệu server cấp $\rightarrow$ Bấm nút **LOGIN**.
+   - Kiểm tra xem Top Header có hiện biểu tượng máy lẻ và chấm xanh `Registered` hay không.
+5. **Bước 5 — Thực hiện cuộc gọi thoại WebRTC thử nghiệm đầu tiên:**
+   - Dùng 1 máy tính thứ 2 (hoặc máy của bạn Dũng) đăng nhập máy lẻ `1002`.
+   - Tại máy của bạn, vào màn hình **Quay số** (`/calls`), gõ `1002` và bấm 📞 Gọi.
+   - Máy của bạn Dũng sẽ bật popup **INCOMING CALL** và đổ chuông $\rightarrow$ Bấm **NGHE MÁY** để đàm thoại thử âm thanh 2 chiều qua micro!
 
 ---
 
-## 4. TỔNG KẾT DỰ ÁN & SẴN SÀNG TRIỂN KHAI
+### 4.2. Cách chia sẻ và đồng bộ mã nguồn cho bạn Dũng
+* Bạn chỉ cần gửi đường link Git repo cho Dũng:
+  ```
+  https://github.com/HungVladimir/Smart_Call_Web.git
+  ```
+* Hướng dẫn bạn Dũng chạy 3 lệnh sau trên máy tính của bạn ấy:
+  ```bash
+  git clone https://github.com/HungVladimir/Smart_Call_Web.git
+  cd Smart_Call_Web
+  npm install
+  npm run dev
+  ```
+* Dự án đã có sẵn dữ liệu mock chuẩn, Dũng chạy lên là có ngay giao diện hoàn chỉnh 100% giống hệt máy bạn mà không cần cấu hình phức tạp.
 
-Hệ thống **SmartCall Web** hiện tại đã đạt độ hoàn thiện cao:
-* **Giao diện:** Đẹp, chuẩn doanh nghiệp SDV, hiện đại hóa toàn diện từ các ảnh mẫu cũ (`app1` - `app5`, `web1.webp`), có đầy đủ các tab, modal cài đặt, bàn phím số, danh bạ 4 nút hành động, khung chat 2 cột có ghim tin và lịch sử cuộc gọi chi tiết.
-* **Kiến trúc:** 100% tuân thủ mô hình **Service / Adapter Pattern**:
-  - `wazo.js`: Quản lý Auth và WebRTC SIP Phone.
-  - `contactService.js`: Quản lý danh bạ nhân sự.
-  - `historyService.js`: Quản lý nhật ký cuộc gọi CDR.
-  - `chatService.js`: Quản lý phòng chat và tin nhắn.
-  - `websocketService.js`: Quản lý sự kiện thời gian thực.
-* **Tính linh hoạt:** Chạy offline mượt mà với Mock Data chuẩn và sẵn sàng 100% để cắm API Database của anh Hải cũng như máy chủ Wazo tại nhà máy mà không cần sửa giao diện.
+---
+
+### 4.3. Kế hoạch chuẩn bị cho tương lai (Khi anh Hải bàn giao API Database)
+Khi anh Hải hoàn thành xong Database nhân sự và cung cấp danh sách REST API:
+1. **Đấu nối Danh bạ nhân viên:**
+   - Mở file `src/services/contactService.js` $\rightarrow$ Thay URL trong hàm `getContacts()` thành URL của anh Hải (ví dụ: `http://192.168.1.50:8080/api/employees`).
+2. **Đấu nối Lịch sử cuộc gọi:**
+   - Mở file `src/services/historyService.js` $\rightarrow$ Nếu công ty dùng DB riêng để lưu lịch sử cuộc gọi thì trỏ URL vào API của anh Hải; nếu dùng Wazo mặc định thì giữ nguyên Wazo Call-Logd API.
+3. **Đấu nối Tin nhắn Chat nội bộ:**
+   - Mở file `src/services/chatService.js` $\rightarrow$ Tương tự, nếu lưu tin nhắn trên DB công ty thì cắm endpoint vào hàm `sendMessage()` và `getMessages()`.
+> **Điểm ưu việt:** Vì chúng ta đã áp dụng mô hình Service/Adapter, toàn bộ giao diện Vue (`Views`, `Components`) **giữ nguyên 100%**, chỉ cần sửa duy nhất 1-2 dòng URL trong thư mục `src/services/` là hệ thống chạy dữ liệu thật mượt mà!
+
+---
+
+## 5. BẢN ĐỒ DỮ LIỆU FAKE & CƠ CHẾ HIỂN THỊ TRÊN GIAO DIỆN
+
+### 5.1. Bảng tra cứu vị trí lưu trữ và cấu trúc Mock Data
+
+| Phân hệ | Vị trí file lưu trữ Fake Data | Cấu trúc dữ liệu chính | Cơ chế hoạt động |
+|---|---|---|---|
+| **Danh bạ (Contacts)** | `src/services/contactService.js`<br>*(Mảng `MOCK_CONTACTS`)* | `id`, `name`, `dept`, `number`, `status`, `unreadCount` | Cung cấp danh sách nhân viên SDV. Có hàm tìm kiếm, thêm, xóa và chừa sẵn vị trí gọi API DB anh Hải. |
+| **Lịch sử cuộc gọi (History)** | `src/services/historyService.js`<br>*(Mảng `MOCK_HISTORY`)* | `id`, `date`, `name`, `extension`, `duration`, `direction`, `status`, `answered` | Mô phỏng nhật ký cuộc gọi Wazo CDR theo mẫu `web1.webp`. Hỗ trợ 4 tab lọc, tính thời lượng `mm:ss` và xóa lịch sử. |
+| **Tin nhắn phòng chat (Messaging)** | `src/services/chatService.js`<br>*(Mảng `MOCK_ROOMS`)* | `id`, `title`, `unread`, `pinned`, `members`, `messages` (`sender`, `text`, `time`, `readers`) | Mô phỏng chat nhóm theo `app1,2,3`. Hỗ trợ gửi tin, thanh ghim thông báo, modal xem ai đã đọc (`Read ID`), modal Admin thêm/xóa thành viên. |
+| **Phiên người dùng (Session)** | Trình duyệt `localStorage`<br>*(Key `smartcall_user`, `smartcall_logged_in`)* | `username`, `name`, `extension`, `token` | Giữ trạng thái đăng nhập khi F5; hiển thị tên `Lê Việt Dũng` và máy lẻ `1001` lên Header và Dashboard. |
+
+### 5.2. Chu trình Vue Reactivity đưa dữ liệu từ Service lên màn hình
+```
+[Tầng Service: src/services/] 
+       │  (Cung cấp hàm async: getContacts(), getHistory()...)
+       ▼
+[onMounted() trong Vue View]
+       │  (Gọi service và gán vào biến ref: contacts.value = await contactService.getContacts())
+       ▼
+[Biến phản ứng (Reactive State: ref / reactive)]
+       │
+       ▼
+[Bộ lọc tính toán (Computed Properties: filteredContacts, filteredCalls)]
+       │  (Tự động lọc theo từ khóa tìm kiếm hoặc tab đang chọn mà không cần gọi lại API)
+       ▼
+[Directives trên Template HTML: v-for, v-if]
+       │  (Vẽ từng dòng bảng, bong bóng tin nhắn, thẻ cuộc gọi lên trình duyệt)
+```
+
+---
+
+## 6. GIẢI PHẪU CHI TIẾT LUỒNG CHẠY CỦA 1 ACTION ĐIỂN HÌNH TỪ A-Z: CUỘC GỌI THOẠI WEBRTC
+
+Để giúp bạn hình dung toàn bộ luồng hoạt động từ lúc người dùng tương tác, qua các tầng xử lý, phát sự kiện và kết thúc, chúng ta sẽ mổ xẻ **Action Gọi thoại & Đàm thoại WebRTC** — đây là luồng nghiệp vụ quan trọng và tổng quan nhất của toàn bộ dự án SmartCall.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Người dùng A (Máy 1001)
+    participant ContactView as ContactsView / HistoryView
+    participant Router as Vue Router
+    participant CallsView as CallsView.vue
+    participant Audio as audioService.js
+    participant Wazo as wazoService (Wazo.Phone)
+    participant Server as Wazo Server LAN (192.168.1.50)
+    participant UserB as Người dùng B (App.vue / IncomingModal)
+
+    User->>ContactView: Nhấp nút 📞 Gọi (Máy lẻ 1002)
+    ContactView->>Router: router.push('/calls?number=1002&autocall=true')
+    Router->>CallsView: Chuyển màn hình & truyền tham số qua URL
+    CallsView->>Audio: audioService.playRingbackTone() (Phát tiếng tút... tút...)
+    CallsView->>Wazo: wazoService.makeCall("1002")
+    Wazo->>Server: Gửi gói tin SIP INVITE qua WebSocket (WSS)
+    Server->>UserB: Bắn sự kiện SIP / WebSocket: ON_CALL_INCOMING
+    UserB->>UserB: App.vue nhận sự kiện -> Bật IncomingCallModal.vue
+    UserB->>Audio: audioService.startIncomingRingtone() (Đổ chuông reo)
+    UserB-->>UserB: Người dùng B nhấn [📞 NGHE MÁY]
+    UserB->>Audio: audioService.stopIncomingRingtone() (Dừng chuông)
+    UserB->>Wazo: wazoService.accept(session)
+    Wazo->>Server: Gửi SIP 200 OK -> Thiết lập luồng âm thanh SRTP (WebRTC)
+    Note over User,UserB: Hai bên đàm thoại trực tiếp qua Micro & Loa
+    User->>CallsView: Nhấn nút [📵 CÚP MÁY]
+    CallsView->>Wazo: wazoService.hangup()
+    CallsView->>Audio: audioService.playCallEndedTone() (3 tiếng bíp kết thúc)
+    Wazo->>Server: Gửi SIP BYE -> Hủy phiên cuộc gọi
+    Server->>UserB: Bắn sự kiện ON_CALL_ENDED -> Đóng modal cuộc gọi
+```
+
+---
+
+### Dẫn chứng code chi tiết từng bước:
+
+#### Bước 1: Người dùng nhấn nút 📞 Gọi tại Danh bạ ([`src/views/ContactsView.vue`](file:///d:/Project/Smart_Call_Web/src/views/ContactsView.vue#L145))
+Khi người dùng bấm vào icon chiếc điện thoại màu xanh trên dòng của một nhân viên:
+```javascript
+// Trích đoạn trong src/views/ContactsView.vue:
+const handleVoiceCall = (contact) => {
+  if (!contact.number) {
+    alert('Liên hệ này chưa được gán số máy lẻ!')
+    return
+  }
+  // Điều hướng sang màn hình Cuộc gọi kèm tham số số máy lẻ và cờ autocall
+  router.push({
+    path: '/calls',
+    query: {
+      number: contact.number,
+      autocall: 'true',
+    },
+  })
+}
+```
+
+#### Bước 2 & 3: Màn hình Cuộc gọi nhận tham số, phát chuông chờ và gọi tổng đài ([`src/views/CallsView.vue`](file:///d:/Project/Smart_Call_Web/src/views/CallsView.vue#L163))
+Khi `CallsView.vue` được nạp vào, hook `onMounted` đọc URL query và kích hoạt hàm `handleDial()`:
+```javascript
+// Trích đoạn trong src/views/CallsView.vue:
+onMounted(() => {
+  if (route.query.number) {
+    extension.value = String(route.query.number)
+    if (route.query.autocall === 'true') {
+      setTimeout(() => {
+        handleDial() // Tự động bấm gọi
+      }, 300)
+    }
+  }
+})
+
+const handleDial = () => {
+  const ext = extension.value.trim()
+  if (!ext) return
+
+  // 1. Phát âm thanh chuông chờ gọi đi (tiếng tút... tút...)
+  audioService.playRingbackTone()
+
+  // 2. Gọi lệnh bắt tay SIP WebRTC sang Wazo SDK
+  try {
+    wazoService.makeCall(ext)
+  } catch (e) {
+    console.log('Chế độ giả lập cuộc gọi:', e)
+  }
+
+  // 3. Chuyển giao diện sang trạng thái đang gọi và đếm giây thời lượng
+  isCalling.value = true
+  callSeconds.value = 0
+  clearInterval(timer)
+  timer = setInterval(() => { callSeconds.value++ }, 1000)
+}
+```
+
+#### Bước 4: Tầng Dịch vụ gửi lệnh tới máy chủ Wazo ([`src/services/wazo.js`](file:///d:/Project/Smart_Call_Web/src/services/wazo.js#L81))
+Hàm `makeCall` gọi trực tiếp API của `@wazo/sdk` để gửi bản tin SIP INVITE qua WebSocket bảo mật:
+```javascript
+// Trích đoạn trong src/services/wazo.js:
+makeCall(extension) {
+  return Wazo.Phone.call(extension)
+}
+```
+
+#### Bước 5: Phía người nhận — Bắt sự kiện toàn cục và mở Modal đổ chuông ([`src/App.vue`](file:///d:/Project/Smart_Call_Web/src/App.vue#L140) & [`IncomingCallModal.vue`](file:///d:/Project/Smart_Call_Web/src/components/call/IncomingCallModal.vue))
+Ở máy người nhận, Wazo Phone SDK bắt được sự kiện `ON_CALL_INCOMING` và bắn event `wazo-incoming` lên trình duyệt. File `App.vue` nhận được sẽ bật popup toàn cục:
+```javascript
+// Trích đoạn trong src/App.vue:
+const handleIncomingCall = (event) => {
+  incomingCallData.value = event.detail // Lấy tên, máy lẻ người gọi
+  showIncomingModal.value = true        // Bật Modal theo mẫu app5.webp
+  currentCall.value = event.detail
+  hasActiveCall.value = true
+}
+```
+Ngay khi `showIncomingModal = true`, component `IncomingCallModal.vue` tự động kích hoạt âm thanh chuông reo:
+```javascript
+// Trích đoạn trong src/components/call/IncomingCallModal.vue:
+watch(() => props.isOpen, (val) => {
+  if (val) {
+    audioService.startIncomingRingtone() // Phát chuông tổng đài reo 1.6s -> nghỉ 2.0s
+  } else {
+    audioService.stopIncomingRingtone()  // Dừng chuông khi đóng modal
+  }
+})
+```
+
+#### Bước 6: Người nhận bấm NGHE MÁY hoặc TỪ CHỐI
+* **Trường hợp A: Bấm 📞 NGHE MÁY:**
+  ```javascript
+  const handleAccept = () => {
+    audioService.stopIncomingRingtone() // Dừng chuông ngay
+    emit('accept', props.callData)      // Báo lên App.vue gọi wazoService.accept()
+  }
+  ```
+  Lúc này, Wazo SDK gửi lệnh `SIP 200 OK`, luồng âm thanh Micro và Loa giữa 2 máy tính được kết nối trực tiếp (WebRTC Peer-to-Peer).
+* **Trường hợp B: Bấm 📵 TỪ CHỐI:**
+  ```javascript
+  const handleReject = () => {
+    audioService.stopIncomingRingtone() // Dừng chuông
+    audioService.playCallEndedTone()     // Phát 3 tiếng bíp cúp máy
+    emit('reject', props.callData)      // Báo lên App.vue gọi wazoService.reject()
+  }
+  ```
+
+#### Bước 7: Cúp máy & Kết thúc cuộc gọi
+Khi người gọi bấm nút Cúp máy `hangupCall()`:
+```javascript
+// Trích đoạn trong src/views/CallsView.vue:
+const hangupCall = () => {
+  audioService.playCallEndedTone() // Phát âm thanh báo cúp máy
+  try {
+    wazoService.hangup()           // Gửi lệnh SIP BYE kết thúc cuộc gọi
+  } catch (e) { /* ignore */ }
+  isCalling.value = false
+  clearInterval(timer)
+}
+```
+Lúc này máy chủ Wazo ngắt kết nối, gửi sự kiện `ON_CALL_ENDED` sang máy người nhận, đóng modal và đưa toàn bộ ứng dụng về trạng thái sẵn sàng cho cuộc gọi tiếp theo.
+
+---
+
+## 7. TỔNG KẾT HỆ THỐNG SMARTCALL WEB
+
+Hệ thống **SmartCall Web** đã hoàn thiện toàn diện về mặt kiến trúc, giao diện và luồng xử lý:
+1. **Giao diện (UI/UX):** Hiện đại hóa 100% từ các ảnh chụp thực tế (`app1` - `app5`, `web1.webp`), chuẩn Responsive Desktop.
+2. **Âm thanh (Audio):** Mô phỏng chuông gọi, chuông chờ, tiếng phím DTMF qua Web Audio API thuần, hoạt động 100% offline.
+3. **Kiến trúc (Architecture):** 100% tuân thủ mô hình **Service / Adapter Pattern**:
+   - `wazo.js`: Quản lý Auth và WebRTC SIP Phone.
+   - `contactService.js`: Quản lý danh bạ nhân sự SDV.
+   - `historyService.js`: Quản lý nhật ký cuộc gọi CDR.
+   - `chatService.js`: Quản lý phòng chat và tin nhắn.
+   - `websocketService.js`: Quản lý sự kiện thời gian thực.
+   - `audioService.js`: Quản lý âm thanh tổng đài.
+4. **Sẵn sàng triển khai:** Chạy offline mượt mà với Mock Data và sẵn sàng 100% để cắm API Database của anh Hải cũng như máy chủ Wazo Platform tại nhà máy mà không cần sửa giao diện.
+
 
 
 
