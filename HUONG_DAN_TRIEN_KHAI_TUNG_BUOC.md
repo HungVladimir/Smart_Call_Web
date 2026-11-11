@@ -8,16 +8,16 @@
 
 ## BẢNG THEO DÕI TIẾN ĐỘ TỔNG THỂ
 
-| Bước | Nội dung công việc | Trạng thái | Ghi chú / Kết quả |
-|:---:|---|:---:|---|
-| **01** | Khởi tạo base & Trích xuất code latest từ Excel vào `src/` | **HOÀN THÀNH** ✅ | Trích xuất 11 file, cấu hình `src/assets/main.css`, build thành công trong 334ms. |
-| **01.5** | Tạo bản xem trước giao diện hoàn chỉnh (`preview_smartcall.html`) | **HOÀN THÀNH** ✅ | Đã dựng bản HTML tương tác đầy đủ 5 phân hệ + modal để duyệt trước khi code Vue. |
-| **02** | Chuẩn hóa Layout Web (Header + Sidebar) & Hoàn thiện luồng Login | **HOÀN THÀNH** ✅ | Đã code Header có status/settings, Sidebar dọc 5 tab, Settings modal 4 tab, Login mượt mà. |
-| **03** | Nâng cấp Danh bạ (Contacts) đầy đủ 4 nút hành động & Tinh chỉnh cuộc gọi | **TIẾP THEO** 🚀 | Bổ sung 4 nút hành động theo app4.webp, tích hợp gọi nhanh sang CallsView. |
-| **04** | Nâng cấp Danh bạ (Contacts) đầy đủ 4 nút hành động | *Chưa bắt đầu* ⏳ | Nút Gọi thoại, Nhắn tin, Gọi video, Xóa liên hệ theo `app4.webp`. |
-| **05** | Xây dựng Module Tin Nhắn (Chat / Messaging) | *Chưa bắt đầu* ⏳ | Danh sách phòng chat, khung chat, ghim tin nhắn, modal Add Member theo `app1, 2, 3`. |
-| **06** | Chuẩn hóa Lịch sử cuộc gọi (Call History) | *Chưa bắt đầu* ⏳ | Các tab lọc All, Inbound, Outbound, Missed theo `web1.webp` và nút gọi lại. |
-| **07** | Tích hợp WebSocket Realtime & Kiểm thử toàn diện LAN | *Chưa bắt đầu* ⏳ | Lắng nghe sự kiện cuộc gọi, tin nhắn, presence không cần F5. |
+| Bước | Phân hệ / Nội dung công việc | Bám sát tài liệu | Trạng thái | Ghi chú & Kết quả thực tế |
+|:---:|---|:---:|:---:|---|
+| **01** | Khởi tạo base & Trích xuất code từ Excel vào `src/` | `sm_code_latest.xlsx` | **HOÀN THÀNH** ✅ | Trích xuất 11 file Vue/JS, cấu hình `main.css`, build Vite thành công. |
+| **01.5** | Tạo bản xem trước giao diện HTML tương tác | `web1`, `app1-5` | **HOÀN THÀNH** ✅ | Bản prototype `preview_smartcall.html` đầy đủ 5 phân hệ + modal để duyệt giao diện. |
+| **02** | Chuẩn hóa Layout Web Desktop, Header, Sidebar, Settings Modal & Login | `web1.webp` | **HOÀN THÀNH** ✅ | Top Header có presence, Sidebar dọc 5 tab, Modal Settings 4 tab, Lưu phiên login `localStorage`. |
+| **03** | Nâng cấp Danh bạ (Contacts) 4 nút hành động & Tầng dịch vụ `contactService.js` | `app4.webp`, `dev_guide` 4.4 | **HOÀN THÀNH** ✅ | Bảng danh bạ chuẩn SDV, 4 nút chuẩn `app4.webp` (📞 Gọi, 💬 Chat có badge, 🎥 Video, ❌ Xóa). Chừa cổng cắm DB anh Hải. |
+| **04** | Nâng cấp Lịch sử cuộc gọi (History) & Tầng dịch vụ `historyService.js` (CDR) | `web1.webp`, `dev_guide` 4.3 | **HOÀN THÀNH** ✅ | 4 Tab lọc `ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`, nút `🗑️ DELETE HISTORY`, nút 📞 Gọi lại nhanh chuẩn Wazo Call-Logd. |
+| **05** | Tách lớp `chatService.js` & Kết nối Realtime `websocketService.js` (Chatd & Websocketd) | `app1,2,3`, `dev_guide` 4.6 & 6 | **HOÀN THÀNH** ✅ | API Chatd, WebSocket giao thức v2, thanh ghim thông báo `app2`, modal Add Member Admin `app3`, popup Read ID. |
+| **06** | Popup Cuộc gọi đến toàn cục (Incoming Call Modal) & Âm thanh Web Audio API | `app5.webp` | **HOÀN THÀNH** ✅ | Modal chuẩn `app5.webp` (Registered, INCOMING CALL, Avatar radar), chuông reo Web Audio, DTMF phím bấm, nút `🔔 Test Gọi Đến`. |
+| **07** | Đấu nối môi trường LAN Wazo thật & Kết nối API DB của anh Hải | `dev_guide.md` mục 1, 2, 7 | **SẴN SÀNG** 🚀 | Cài chứng chỉ CA `wazo-ca.crt` vào Windows, trỏ IP `192.168.1.50`, cắm endpoint API nhân viên từ anh Hải. |
 
 ---
 
@@ -292,6 +292,21 @@ Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
   4. **Nâng cấp âm thanh cho `src/views/CallsView.vue`:**
      - Phát tiếng DTMF khi gõ số và tiếng tút... tút... khi ấn nút gọi.
   5. **Kiểm tra biên dịch:** `npm run build` thành công 100% trong `396ms`.
+
+---
+
+### BƯỚC 7: ĐẤU NỐI MÔI TRƯỜNG LAN WAZO THẬT & KẾT NỐI API DATABASE CỦA ANH HẢI
+* **Trạng thái:** `SẴN SÀNG TRIỂN KHAI 🚀`
+* **Nhiệm vụ khi lên công ty:**
+  1. **Cài đặt chứng chỉ CA tự ký (`wazo-ca.crt`):**
+     - Theo mục 1.3 trong `dev_guide.md`, để trình duyệt Chrome/Edge không chặn kết nối WebRTC (Micro) tới server Wazo nội bộ `https://192.168.1.50:9443`, cần cài file `wazo-ca.crt` vào mục `Trusted Root Certification Authorities` trên Windows.
+  2. **Cấu hình địa chỉ IP máy chủ:**
+     - Kiểm tra biến `this.host` trong `src/services/wazo.js` đảm bảo đúng IP LAN của tổng đài (`192.168.1.50:9443`).
+  3. **Đấu nối API Database thật khi anh Hải bàn giao:**
+     - Mở file `src/services/contactService.js`: Thay URL endpoint vào hàm `getContacts()` (ví dụ: `http://192.168.1.50:8080/api/employees`).
+     - Tương tự với `historyService.js` và `chatService.js` nếu anh Hải có API DB riêng.
+  4. **Bàn giao / Đồng bộ cho đồng nghiệp (Dũng):**
+     - Đồng nghiệp chỉ cần `git clone` hoặc `git pull` từ repo `https://github.com/HungVladimir/Smart_Call_Web.git` là có ngay toàn bộ dự án đã chuẩn hóa 100%.
 
 ---
 
