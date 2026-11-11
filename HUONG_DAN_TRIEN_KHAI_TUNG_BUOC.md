@@ -17,6 +17,7 @@
 | **04** | Nâng cấp Lịch sử cuộc gọi (History) & Tầng dịch vụ `historyService.js` (CDR) | `web1.webp`, `dev_guide` 4.3 | **HOÀN THÀNH** ✅ | 4 Tab lọc `ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`, nút `🗑️ DELETE HISTORY`, nút 📞 Gọi lại nhanh chuẩn Wazo Call-Logd. |
 | **05** | Tách lớp `chatService.js` & Kết nối Realtime `websocketService.js` (Chatd & Websocketd) | `app1,2,3`, `dev_guide` 4.6 & 6 | **HOÀN THÀNH** ✅ | API Chatd, WebSocket giao thức v2, thanh ghim thông báo `app2`, modal Add Member Admin `app3`, popup Read ID. |
 | **06** | Popup Cuộc gọi đến toàn cục (Incoming Call Modal) & Âm thanh Web Audio API | `app5.webp` | **HOÀN THÀNH** ✅ | Modal chuẩn `app5.webp` (Registered, INCOMING CALL, Avatar radar), chuông reo Web Audio, DTMF phím bấm, nút `🔔 Test Gọi Đến`. |
+| **06.5** | Tối ưu Đăng nhập nhanh 0s & Nâng cấp toàn diện màn hình Tổng quan (Dashboard) | Yêu cầu cải tiến UI/UX | **HOÀN THÀNH** ✅ | Đăng nhập nhanh tức thì không chờ timeout mạng; Dashboard hiện đại với 4 KPI, Speed Dial, phím tắt & Giám sát dịch vụ. |
 | **07** | Đấu nối môi trường LAN Wazo thật & Kết nối API DB của anh Hải | `dev_guide.md` mục 1, 2, 7 | **SẴN SÀNG** 🚀 | Cài chứng chỉ CA `wazo-ca.crt` vào Windows, trỏ IP `192.168.1.50`, cắm endpoint API nhân viên từ anh Hải. |
 
 ---
@@ -292,6 +293,24 @@ Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
   4. **Nâng cấp âm thanh cho `src/views/CallsView.vue`:**
      - Phát tiếng DTMF khi gõ số và tiếng tút... tút... khi ấn nút gọi.
   5. **Kiểm tra biên dịch:** `npm run build` thành công 100% trong `396ms`.
+
+---
+
+### BƯỚC 6.5: TỐI ƯU TỐC ĐỘ ĐĂNG NHẬP NHANH & NÂNG CẤP TOÀN DIỆN MÀN HÌNH TỔNG QUAN (DASHBOARD)
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Công việc đã thực hiện:**
+  1. **Khắc phục triệt để lỗi đăng nhập bị chậm/loading lâu tại `src/views/LoginView.vue`:**
+     - *Nguyên nhân:* Trước đây khi click nút *"Đăng nhập nhanh"*, hệ thống vẫn cố gọi `wazoService.login()` tới IP LAN `192.168.1.50:9443`. Trình duyệt phải chờ TCP timeout (10-20 giây) mới chuyển sang chế độ offline.
+     - *Giải pháp:* Tách riêng hàm `handleQuickDemo()` để lưu phiên đăng nhập và điều hướng ngay lập tức (0.01 giây). Với hàm `handleLogin()` thông thường, bọc thêm `Promise.race` timeout 2 giây để nếu không có server LAN thì tự động chuyển sang chế độ Demo, hoàn toàn không bị treo.
+  2. **Tái thiết kế toàn diện màn hình Tổng quan `src/views/DashboardView.vue`:**
+     - Thay thế 2 thẻ placeholder cũ sơ sài bằng giao diện Dashboard chuẩn Enterprise UC:
+       - **Welcome Banner:** Lời chào cá nhân hóa *"Xin chào, Lê Việt Dũng 👋"*, hiển thị máy lẻ `1001@192.168.1.50` và nút bấm test thử cuộc gọi đến nhanh.
+       - **4 Thẻ thống kê KPI hàng đầu:** (1) Máy lẻ WebRTC `1001` (Registered), (2) Máy chủ Wazo LAN `192.168.1.50:9443` (SSL Ready), (3) Tin nhắn chưa đọc (5 tin mới), (4) Cuộc gọi hôm nay (7 cuộc: 4 đến, 3 đi, 1 nhỡ). Bấm vào thẻ nào sẽ tự động chuyển hướng tới phân hệ đó.
+       - **Bàn phím quay số nhanh (Speed Dial):** Ô nhập số máy lẻ + nút Gọi ngay, cùng danh sách phím tắt 1-chạm gọi nhanh tới các đồng nghiệp (Alice `1002`, Bob `1003`, Storm `1005`, Đức Anh `1006`, Kaito `1007`).
+       - **4 Phím tắt phân hệ chính:** Gạch nối nhanh tới Bàn phím số, Danh bạ, Tin nhắn, Lịch sử.
+       - **Nhật ký 3 cuộc gọi gần nhất:** Kèm nút 📞 Gọi lại nhanh ngay trên Dashboard.
+       - **Bảng giám sát dịch vụ Wazo Platform 26.10:** Kiểm tra trạng thái hoạt động của 5 Microservices (`wazo-auth`, `wazo-calld`, `wazo-chatd`, `wazo-call-logd`, `wazo-websocketd`).
+  3. **Kiểm tra biên dịch:** `npm run build` thành công 100% trong `485ms`.
 
 ---
 

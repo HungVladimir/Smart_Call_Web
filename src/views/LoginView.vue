@@ -115,10 +115,13 @@ const loading = ref(false)
 const handleLogin = async () => {
   loading.value = true
   try {
-    // Thử kết nối Wazo Auth nếu server LAN khả dụng
-    await wazoService.login(username.value, password.value)
+    // Thử kết nối Wazo Auth với timeout 2s để tránh bị treo khi không có LAN
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout server Wazo LAN')), 2000),
+    )
+    await Promise.race([wazoService.login(username.value, password.value), timeoutPromise])
   } catch (err) {
-    console.log('Chưa kết nối được server Wazo LAN, chuyển sang phiên Demo offline:', err)
+    console.log('Chưa kết nối được server Wazo LAN (hoặc dev offline), chuyển sang phiên Demo:', err.message)
   } finally {
     // Lưu session cục bộ để khi F5 không bị mất đăng nhập
     localStorage.setItem('smartcall_username', username.value || 'Lê Việt Dũng')
@@ -131,10 +134,16 @@ const handleLogin = async () => {
   }
 }
 
+// Đăng nhập nhanh 1 chạm: Vào ngay lập tức (0 giây) phục vụ kiểm thử giao diện
 const handleQuickDemo = () => {
   username.value = 'Lê Việt Dũng'
   password.value = '123456'
-  handleLogin()
+  localStorage.setItem('smartcall_username', 'Lê Việt Dũng')
+  localStorage.setItem('smartcall_extension', '1001')
+  localStorage.setItem('smartcall_logged_in', 'true')
+
+  window.dispatchEvent(new CustomEvent('app-login-success'))
+  router.push('/dashboard')
 }
 </script>
 
