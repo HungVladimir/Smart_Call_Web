@@ -1,0 +1,114 @@
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 15:49
+@Lê Thế Sơn  anh Sơn ơi. giúp 2 em này cài project web smartcall với.
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 15:50
+@Nguyễn Văn Hùng﻿  @Lê Việt Dũng﻿  cài công cụ chưa e
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 15:51
+Vâng anh. đang cài môi trường để design
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:51
+nhìn giao diện thôi à?
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:52
+vướng chỗ nào a hướng dẫn, những a cũng cài cách đây mấy năm rồi
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:53
+Cài Xampp trước để chạy dc Php đã
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:54
+tổng đài thì dùng luôn con 86 hoặc 85
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:55
+php kết nối đến là run dc
+
+[Lê Việt Dũng (Hiki)] 11-11-2026 15:56
+Em em định dùng Vue để xây giao diện
+Có 2 task này:
+1:Login- load giao diện danh sách contact
+2:Thực hiện call bằng wazo/sdk
+
+Hiện tại cái nào có thể tiến hành hành được ngay ạ
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 15:56
+mấy cái php , db thì em biết
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:56
+trước a Mạnh copy cho a
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:56
+Reply to Nguyễn Hữu Hiếu (Kaito)15:56
+mấy cái php , db thì em biết
+đấy chỉ cần cái này thôi
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:56
+còn tổng đài dùng luôn con 85 hoặc 86
+
+
+[Lê Thế Sơn (Denver)] 11-11-2026 15:59
+Trước mắt cài Xampp và cho project php nó chạy dc đã mấy ae
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 16:03
+@Nguyễn Văn Hùng﻿  @Lê Việt Dũng﻿   có chưa em. cài được smartcall web và dùng đc ở DB test đi đã em.
+
+[Lê Việt Dũng (Hiki)] 11-11-2026 16:05
+Tức là có smartcall web source base sẵn rùi hả anh
+
+[Lê Việt Dũng (Hiki)] 11-11-2026 16:05
+Em chưa hiểu lắm bọn em định xây dựng phần Front-end giao diện bằng VueJS thui nhỉ, thực hiện kết nối thông qua wazo/sdk và request các api tới backend  để lấy data rùi hiển thị thui nhỉ
+
+[Lê Việt Dũng (Hiki)] 11-11-2026 16:06
+ php là code cả backend nữa mà nhỉ
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:07
+@Nguyễn Hữu Hiếu﻿ ko gửi cho mấy bạn ấy cái tài liệu về smartcall cũ
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:08
+smartcall cũ nó 2 phần: web và tổng đài
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:08
+web nó dùng php
+tổng đài nó dùng Free PBX thì phải
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:09
+nó sẽ có 2 giao diện:
+1. Dành cho người dùng chính là cái PHP
+2. Giao diện dành cho admin là cái tổng đài PBX ý
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 16:09
+@Lê Việt Dũng﻿  em xây dựng được giao diện và kết nối DB chưa ?
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 16:11
+quan trong là giờ mở được 1 link web. có giao diện và kết nối là dc
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:11
+còn chỉ cần tham khảo giao diện thì dùng luôn con vận hành
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 16:12
+đó. thì đang cần xem con vận hành và sửa đó anh. đổi kết nối và phương thức
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:13
+con mới dùng nền tảng mới mà
+
+[Lê Việt Dũng (Hiki)] 11-11-2026 16:19
+Vầng, tạm thời em triển khai phần giao diện của smartcall cũ , các data em sẽ fake ở json ở hiện thị trước , phần kết nối thực thì em sẽ hỏi thêm Hải bên em ợ
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 16:21
+em làm sao cho anh 1 web run được như sau:
+1. Có màn hình login
+2. Có 2 mành hình hiển thị được như slide anh gửi kia.
+Còn dữ liệu thì fake được em. kết nối DB sau
+
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:37
+các e ý chỉ cần nhìn giao diện thôi, ko chú thiết kế cho các e ý làm
+
+[Lê Thế Sơn (Denver)] 11-11-2026 16:37
+smartcall giờ off hết rồi ko xem dc
+
+[Nguyễn Hữu Hiếu (Kaito)] 11-11-2026 16:38
+@Lê Việt Dũng﻿  e cần giao diện login nữa ah
+
+[Lê Việt Dũng (Hiki)] 11-11-2026 16:41
+Vầng, nếu đã không có mẫu cố định, em sẽ tham khảo và sáng tạo thêm nhé, có gì sáng mai các anh duyệt thiết kế nhé

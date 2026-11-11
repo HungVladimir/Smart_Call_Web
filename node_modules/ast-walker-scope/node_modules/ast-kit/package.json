@@ -1,0 +1,66 @@
+{
+  "name": "ast-kit",
+  "type": "module",
+  "version": "3.0.1",
+  "description": "A toolkit for easy Babel AST generation and manipulation.",
+  "author": "Kevin Deng <sxzz@sxzz.moe>",
+  "license": "MIT",
+  "funding": "https://github.com/sponsors/sxzz",
+  "homepage": "https://github.com/sxzz/ast-kit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sxzz/ast-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sxzz/ast-kit/issues"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "dependencies": {
+    "@babel/parser": "^8.1.0",
+    "estree-walker": "^3.0.3",
+    "pathe": "^2.0.3"
+  },
+  "devDependencies": {
+    "@babel/types": "^8.1.0",
+    "@sxzz/eslint-config": "^8.9.2",
+    "@sxzz/prettier-config": "^2.3.3",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
+    "@vitest/ui": "^5.1.0",
+    "bumpp": "^12.3.0",
+    "eslint": "^10.14.0",
+    "prettier": "^3.9.10",
+    "tsdown": "^0.23.5",
+    "tsdown-preset-sxzz": "^0.7.1",
+    "typescript": "6.0.3",
+    "typescript-next": "npm:typescript@^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "resolutions": {
+    "vite": "^8.3.6"
+  },
+  "prettier": "@sxzz/prettier-config",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "pnpm run lint --fix",
+    "format": "prettier --write .",
+    "build": "tsdown",
+    "test": "vitest",
+    "release": "bumpp",
+    "typecheck": "tsc --noEmit"
+  }
+}
