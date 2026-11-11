@@ -67,7 +67,7 @@
             v-for="msg in currentRoom.messages"
             :key="msg.id"
             class="msg-bubble-wrap"
-            :class="msg.sender === 'me' ? 'mine' : 'theirs'"
+            :class="(msg.sender === 'mine' || msg.sender === 'me') ? 'mine' : 'theirs'"
           >
             <span class="msg-sender">{{ msg.senderName }}</span>
             <div class="msg-bubble">
@@ -701,9 +701,15 @@ const startVideoCall = () => {
 }
 
 .msg-bubble-wrap.mine .msg-bubble {
-  background: #1e88e5;
+  background: #0284c7;
   color: white;
   border-bottom-right-radius: 2px;
+  box-shadow: 0 1px 4px rgba(2, 132, 199, 0.3);
+}
+
+.msg-bubble-wrap.mine .msg-sender {
+  color: #0284c7;
+  font-weight: 600;
 }
 
 .msg-bubble-wrap.theirs .msg-bubble {
