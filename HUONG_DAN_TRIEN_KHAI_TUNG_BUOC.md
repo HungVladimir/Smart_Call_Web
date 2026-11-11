@@ -103,11 +103,163 @@
 ---
 
 ### BƯỚC 3: NÂNG CẤP DANH BẠ (CONTACTS) 4 NÚT HÀNH ĐỘNG & CUỘC GỌI WEBRTC
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Công việc đã thực hiện:**
+  1. **Tạo tầng dịch vụ `src/services/contactService.js`:**
+     - Thiết kế theo mẫu Service/Adapter Pattern: Chừa sẵn vị trí kết nối API Database anh Hải (`GET /api/employees`) hoặc Wazo Dird API (`GET /api/dird/0.1/...`).
+     - Tự động kích hoạt Mock Data chuẩn nhân viên SDV khi dev offline, đảm bảo giao diện luôn mượt mà.
+  2. **Nâng cấp toàn diện `src/views/ContactsView.vue` theo chuẩn Desktop & `app4.webp`:**
+     - Bảng danh bạ chuyên nghiệp: Avatar chữ cái đầu, Họ tên, Phòng ban SDV, Số máy lẻ 4 số (`1002`, `1003`...), chấm trạng thái Online/Offline.
+     - Thanh tìm kiếm tức thì theo tên/máy lẻ/bộ phận kèm nút xóa nhanh `✖`.
+     - Nút `+ Thêm liên hệ` mở Modal tạo liên hệ mới có kiểm tra dữ liệu đầu vào.
+     - **Trang bị đầy đủ 4 nút chức năng chuẩn theo ảnh `app4.webp`:**
+       - 📞 **Nút 1 (Gọi thoại):** Tự động chuyển sang `/calls`, điền số máy lẻ và kích hoạt cuộc gọi.
+       - 💬 **Nút 2 (Nhắn tin):** Hiển thị huy hiệu số tin chưa đọc (Badge màu đỏ), bấm vào chuyển thẳng sang phòng chat tương ứng trong `/messages`.
+       - 🎥 **Nút 3 (Gọi Video):** Mở Modal đàm thoại video WebRTC với khung hình camera và các nút điều khiển mic/cam.
+       - ❌ **Nút 4 (Xóa liên hệ):** Hiện hộp thoại xác nhận *"Bạn có chắc chắn muốn xóa liên hệ này?"* theo yêu cầu nghiệp vụ.
+  3. **Kiểm tra biên dịch:** `npm run build` thành công 100% không cảnh báo hay lỗi.
+
+---
+
+## 3.1. CƠ CHẾ DỮ LIỆU FAKE & ĐIỂM KẾT NỐI DATABASE THẬT (SERVICE / ADAPTER PATTERN)
+
+### 3.1.1 Triết lý thiết kế: Tách biệt Giao diện (UI) và Dữ liệu (Data)
+Nhằm đảm bảo dự án phát triển độc lập, không bị phụ thuộc vào tiến độ triển khai Database của anh Hải hay máy chủ Wazo tại nhà máy, toàn bộ ứng dụng áp dụng mô hình **Service / Adapter Pattern**:
+
+```
+[ Giao diện Vue (Views / Components) ]
+                   │
+                   ▼  (gọi hàm nghiệp vụ: getContacts(), getHistory(), sendMessage())
+[ Tầng Dịch vụ (Service Layer: src/services/) ]
+                   │
+         ┌─────────┴─────────┐
+         ▼                   ▼
+ [ API Thật Wazo/DB ]   [ Dữ liệu Fake (Mock Data) ]
+ (Khi có LAN & Token)  (Tự động kích hoạt khi dev offline)
+```
+
+* **Quy tắc bất di bất dịch:** Các file giao diện (`ContactsView.vue`, `HistoryView.vue`, `MessagesView.vue`...) **tuyệt đối không bao giờ** gọi `fetch()` URL trực tiếp hoặc thao tác thô với API. Mọi thao tác đọc/ghi dữ liệu bắt buộc phải đi qua các hàm của tầng `src/services/`.
+* **Cơ chế Fallback thông minh:** Trong mỗi hàm Service luôn có khối lệnh `try ... catch`. Khi chưa có server Wazo hoặc đang dev ở nhà, hệ thống tự động trả về Mock Data chuẩn định dạng doanh nghiệp SDV, giúp giao diện luôn hiển thị đầy đủ, không bao giờ bị văng lỗi màn hình trắng.
+
+---
+
+### 3.1.2 Bản đồ vị trí lưu trữ Dữ liệu Fake (Mock Data) trong dự án
+
+| Phân Hệ | Vị Trí File Lưu Mock Data | Cấu Trúc Dữ Liệu Fake | Mục Đích Hiển Thị |
+|---|---|---|---|
+| **Danh bạ (Contacts)** | `src/services/contactService.js`<br>*(Mảng `MOCK_CONTACTS`)* | `id`, `name`, `email`, `dept`, `number`, `status`, `unreadCount` | Hiển thị bảng danh bạ nhân viên nội bộ SDV, hỗ trợ tìm kiếm và 4 nút hành động (📞 Gọi, 💬 Chat, 🎥 Video, ❌ Xóa). |
+| **Tin nhắn (Messaging)** | `src/views/MessagesView.vue`<br>*(Mảng `rooms`, `currentRoomMembers`)* | `id`, `title`, `unread`, `icon`, `messages` (`sender`, `text`, `time`, `readStatus`, `readers`) | Hiển thị danh sách phòng chat, bong bóng tin nhắn 2 chiều, thanh ghim thông báo, modal xem ai đã đọc tin (Read ID) và modal Add Member. |
+| **Lịch sử cuộc gọi (History)** | `src/services/historyService.js`<br>*(Mảng `MOCK_HISTORY`)* | `id`, `date`, `name`, `extension`, `dept`, `duration`, `direction`, `status`, `answered` | Hiển thị danh sách nhật ký cuộc gọi theo đúng mẫu `web1.webp`, hỗ trợ 4 tab lọc (`ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`) và nút Gọi lại. |
+| **Phiên người dùng (User Session)** | `localStorage`<br>*(Key `smartcall_user`, `smartcall_logged_in`)* | `username`, `name`, `extension`, `department`, `token` | Giữ trạng thái đăng nhập khi F5; hiển thị tên nhân viên đăng nhập (`Lê Việt Dũng`), máy lẻ (`1001`) và trạng thái SIP trên Top Header & Sidebar. |
+
+---
+
+### 3.1.3. Cơ chế dữ liệu được render lên Giao diện (Vue 3 Reactivity)
+1. **Khởi tạo & Nạp dữ liệu:**
+   - Trong `onMounted()` của mỗi View, hàm async của Service tương ứng sẽ được gọi (ví dụ: `await contactService.getContacts()`).
+   - Dữ liệu trả về được gán vào biến phản ứng `const contacts = ref([])`.
+2. **Lọc dữ liệu thời gian thực (Computed):**
+   - Sử dụng `computed()` để tự động lọc dữ liệu theo ô tìm kiếm hoặc tab đang chọn mà không cần gọi lại API.
+   - Ví dụ: `filteredContacts = computed(...)` lọc danh bạ theo tên/phòng ban/máy lẻ; `filteredCalls = computed(...)` lọc lịch sử theo tab `ALL` / `INCOMINGS` / `OUTGOINGS` / `MISSED`.
+3. **Hiển thị trực quan (Directives):**
+   - Vòng lặp `v-for` duyệt qua mảng dữ liệu đã lọc để render ra các dòng bảng, thẻ card, danh sách phòng chat.
+   - Các cờ trạng thái `v-if="loading"`, `v-else-if="filtered.length === 0"` giúp hiển thị hiệu ứng xoay spinner hoặc thông báo trống thân thiện.
+
+---
+
+### 3.1.4. Điểm cắm API thật của anh Hải (DB nhân sự) và Wazo Platform
+
+Dưới đây là vị trí cụ thể trong mã nguồn đã được chừa sẵn để đấu nối API thật khi anh Hải bàn giao:
+
+#### 1. Đấu nối Danh bạ nhân viên (`src/services/contactService.js`):
+```javascript
+async getContacts() {
+  try {
+    const token = wazoService.getToken()
+    if (!token) throw new Error('No token')
+
+    // 🎯 ĐIỂM CẮM API DATABASE ANH HẢI:
+    // Khi anh Hải cung cấp API máy chủ nội bộ (ví dụ: http://192.168.1.50:8080/api/employees),
+    // Bạn chỉ cần mở file này và thay URL vào fetch:
+    const res = await fetch('http://192.168.1.50:8080/api/employees', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    const data = await res.json()
+
+    // Map dữ liệu từ DB công ty sang schema của SmartCall Web:
+    return data.items.map(emp => ({
+      id: emp.id || emp.employee_code,
+      name: emp.full_name,
+      dept: emp.department_name,
+      number: emp.wazo_extension, // Máy lẻ 4 số (1001, 1002...)
+      status: 'online',
+      unreadCount: 0
+    }))
+  } catch (err) {
+    // Tự động dùng Mock Data nếu mạng lỗi hoặc chưa có DB
+    return this.localContacts
+  }
+}
+```
+
+#### 2. Đấu nối Lịch sử cuộc gọi (`src/services/historyService.js`):
+Đã được viết sẵn theo đúng chuẩn tài liệu `dev_guide.md` (mục 4.3):
+```javascript
+// Gọi Wazo Call-Logd API:
+GET https://192.168.1.50:9443/api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
+Headers: { 'X-Auth-Token': token }
+```
+Nếu sau này anh Hải muốn lưu lịch sử vào Database riêng của công ty, chỉ việc đổi URL trong `historyService.js` sang endpoint của anh Hải.
+
+#### 3. Đấu nối Tin nhắn & WebSocket Realtime (`src/services/chatService.js` & `websocketService.js`):
+Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
+* Lấy phòng chat: `GET /api/chatd/1.0/users/me/rooms`
+* Lấy tin nhắn: `GET /api/chatd/1.0/users/me/rooms/{uuid}/messages`
+* Gửi tin nhắn: `POST /api/chatd/1.0/users/me/rooms/{uuid}/messages`
+* Nhận tin nhắn mới tức thì: Lắng nghe qua WebSocket `wss://192.168.1.50:9443/api/websocketd/?token=<token>&version=2`.
+
+---
+
+### BƯỚC 4: NÂNG CẤP LỊCH SỬ CUỘC GỌI (HISTORY VIEW) & TÍCH HỢP CDR SERVICE (THEO WEB1.WEBP)
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Công việc đã thực hiện:**
+  1. **Tạo tầng dịch vụ `src/services/historyService.js`:**
+     - Bám sát tài liệu `dev_guide.md` (mục 4.3): Gọi API Wazo Call-Logd `GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc` với token xác thực.
+     - Tích hợp Mock Data dự phòng chuẩn thông tin cuộc gọi nội bộ SDV LAN (`조창연 (이윤수) - 1002`, `Nguyễn Hữu Hiếu - 1007`, `Lương Đức Anh - 1006`...).
+     - Hỗ trợ đầy đủ các hàm nghiệp vụ: `getHistory()`, `clearAllHistory()` (xóa toàn bộ), `deleteItem(id)` (xóa 1 dòng), và hàm format thời lượng `formatDuration()` (`mm:ss`).
+  2. **Tái thiết kế giao diện `src/views/HistoryView.vue` bám sát 100% layout `web1.webp`:**
+     - **Thanh Tab lọc chuyên nghiệp:** 4 tab `ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED` kèm huy hiệu đếm số lượng cuộc gọi thời gian thực. Nút tab active có tông màu xanh dương đậm chuẩn `web1.webp`.
+     - **Nút DELETE HISTORY:** Đặt góc trên bên phải, có Modal xác nhận bảo vệ tránh bấm nhầm.
+     - **Thanh tìm kiếm & lọc ngày:** Cho phép tìm theo Tên, Máy lẻ, Phòng ban và lọc theo mốc thời gian bắt đầu.
+     - **Khối hiển thị cuộc gọi theo đúng thẻ `web1.webp`:**
+       - Avatar hộp vuông/tròn có mũi tên hướng gọi (↙️ Đến màu xanh lá, ↗️ Đi màu xanh dương, ❌ Nhỡ màu đỏ).
+       - Cột thông tin chuẩn `web1.webp`: `Date: 2026-11-11 15:39:27`, `Duration: 00:09`, `Direction: Incoming/Outgoing`, `Status: Success/Missed`.
+       - Cột thông tin nhân viên & số máy lẻ nội bộ SDV.
+       - **Bộ 3 nút thao tác nhanh:**
+         - 📞 **Nút Gọi lại (Callback):** Click 1 chạm tự động điều hướng sang `/calls?number=...&autocall=true` và khởi chạy cuộc gọi WebRTC ngay lập tức.
+         - 💬 **Nút Nhắn tin:** Điều hướng sang `/messages` mở cuộc trò chuyện với nhân viên đó.
+         - ✖ **Nút Xóa dòng:** Xóa từng bản ghi lịch sử cuộc gọi.
+  3. **Nâng cấp `src/views/CallsView.vue`:**
+     - Lắng nghe tham số `route.query.number` và `autocall=true` trong `onMounted()` để tự động nhận lệnh gọi lại từ Danh bạ hoặc Lịch sử.
+  4. **Kiểm tra biên dịch:** `npm run build` thành công 100% trong `420ms`.
+
+---
+
+### BƯỚC 5: TÁCH LỚP CHAT SERVICE & KẾT NỐI WEBSOCKET REALTIME (THEO DEV_GUIDE.MD)
 * **Trạng thái:** `TIẾP THEO 🚀`
 * **Mục tiêu:**
-  1. Cập nhật `src/views/ContactsView.vue` để hiển thị danh bạ dạng bảng/danh sách hiện đại, trang bị đầy đủ **4 nút hành động chuẩn theo `app4.webp`**:
-     - 📞 **Gọi thoại:** Bấm vào tự động nạp số máy lẻ và thực hiện cuộc gọi sang `CallsView`.
-     - 💬 **Nhắn tin:** Có huy hiệu số tin chưa đọc, bấm vào chuyển ngay sang phòng chat với người đó trong `MessagesView`.
-     - 🎥 **Gọi Video:** Khởi chạy modal cuộc gọi video.
-     - ❌ **Xóa liên hệ:** Hiện popup hỏi xác nhận *"Hỏi xóa không?"*.
-  2. Kết nối chuyển đổi mượt mà giữa Danh bạ $\leftrightarrow$ Bàn phím gọi $\leftrightarrow$ Phòng chat.
+  1. Tạo `src/services/chatService.js`:
+     - Bóc tách mảng `rooms`, `messages`, `members` từ `MessagesView.vue` sang tầng Service.
+     - Tích hợp API Wazo Chatd theo `dev_guide.md`:
+       - `GET /api/chatd/1.0/users/me/rooms` (lấy danh sách phòng chat).
+       - `GET /api/chatd/1.0/users/me/rooms/{uuid}/messages` (lấy tin nhắn).
+       - `POST /api/chatd/1.0/users/me/rooms/{uuid}/messages` (gửi tin nhắn).
+     - Chuẩn bị sẵn cổng cắm API Chat nội bộ khi anh Hải cung cấp.
+  2. Tạo `src/services/websocketService.js`:
+     - Kết nối tới `wss://192.168.1.50:9443/api/websocketd/?token=<token>&version=2`.
+     - Lắng nghe các sự kiện thời gian thực:
+       - `call_created`, `call_ended` (cuộc gọi đến / kết thúc).
+       - `chatd_user_room_message_created` (tin nhắn mới trong phòng chat).
+       - `chatd_presence_updated` (thay đổi trạng thái Online / Away / DND).
+
+

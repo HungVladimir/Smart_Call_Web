@@ -100,9 +100,11 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { wazoService } from '@/services/wazo'
 
+const route = useRoute()
 const extension = ref('1002')
 const isCalling = ref(false)
 const isMuted = ref(false)
@@ -193,6 +195,17 @@ const toggleMute = () => {
 const toggleHold = () => {
   isHeld.value = !isHeld.value
 }
+
+onMounted(() => {
+  if (route.query.number) {
+    extension.value = String(route.query.number)
+    if (route.query.autocall === 'true') {
+      setTimeout(() => {
+        handleDial()
+      }, 300)
+    }
+  }
+})
 </script>
 
 <style scoped>

@@ -1,77 +1,183 @@
 <template>
   <div class="history-container">
-    <h1>Lịch sử cuộc gọi</h1>
-
-    <!-- Bộ lọc -->
-    <div class="filters">
-      <div class="filter-group">
-        <label for="direction-filter">Hướng:</label>
-        <select id="direction-filter" v-model="filterDirection" @change="applyFilters">
-          <option value="all">Tất cả</option>
-          <option value="inbound">Đến (Inbound)</option>
-          <option value="outbound">Đi (Outbound)</option>
-        </select>
+    <!-- Header Toolbar -->
+    <div class="history-header">
+      <div class="header-left">
+        <h1>Lịch sử cuộc gọi</h1>
+        <span class="sub-title">Nhật ký thoại nội bộ Wazo Call-Logd (CDR)</span>
       </div>
 
-      <div class="filter-group">
-        <label for="date-filter">Từ ngày:</label>
-        <input type="date" id="date-filter" v-model="startDate" @change="applyFilters" />
-      </div>
-
-      <button @click="loadHistoryData" class="btn-refresh">🔄 Làm mới dữ liệu</button>
-    </div>
-
-    <!-- Loading State -->
-    <div v-if="loading" class="state-message">
-      <div class="spinner"></div>
-      <p>Đang tải lịch sử cuộc gọi...</p>
-    </div>
-
-    <!-- Error State -->
-    <div v-else-if="error" class="state-message error">
-      <p>{{ error }}</p>
-      <button @click="loadHistoryData" class="btn-retry">Thử lại</button>
-    </div>
-
-    <!-- Empty State -->
-    <div v-else-if="filteredCalls.length === 0 && !loading" class="state-message empty">
-      <p>Không có cuộc gọi nào phù hợp với bộ lọc.</p>
-    </div>
-
-    <!-- Responsive Call List (Thay thế Table) -->
-    <div v-else class="call-list-wrapper">
-      <div v-for="call in filteredCalls" :key="call.uuid" class="call-card">
-        <!-- Header của Card: Thời gian & Hướng -->
-        <div class="card-header">
-          <span class="time-text">{{ formatTime(call.start_time) }}</span>
-          <span :class="['badge', call.direction]">
-            {{ getDirectionLabel(call.direction) }}
-          </span>
+      <div class="header-filters">
+        <!-- Ô tìm kiếm -->
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Tìm theo tên, máy lẻ hoặc phòng ban..."
+            class="search-input"
+          />
+          <button v-if="searchQuery" class="btn-clear-search" @click="searchQuery = ''">✖</button>
         </div>
 
-        <!-- Body của Card: Thông tin chính -->
-        <div class="card-body">
-          <div class="info-row">
-            <div class="info-item">
-              <span class="label">Đối tượng:</span>
-              <span class="value name">{{ call.remote_name || 'Ẩn danh' }}</span>
-            </div>
-            <div class="info-item">
-              <span class="label">Số máy:</span>
-              <span class="value number">{{ call.extension || call.remote_number || '-' }}</span>
-            </div>
-          </div>
+        <!-- Lọc từ ngày -->
+        <div class="date-filter-box">
+          <label>Từ ngày:</label>
+          <input v-model="filterDate" type="date" class="date-input" />
+          <button v-if="filterDate" class="btn-clear-date" title="Bỏ lọc ngày" @click="filterDate = ''">✖</button>
+        </div>
 
-          <div class="info-row bottom-row">
-            <div class="info-item">
-              <span class="label">Thời lượng:</span>
-              <span class="value duration">{{ formatDuration(call.duration) }}</span>
-            </div>
-            <div class="info-item status-item">
-              <span :class="['status-dot', call.answered ? 'answered' : 'missed']"></span>
-              <span class="value status-text">{{ call.answered ? 'Đã nghe' : 'Nhỡ' }}</span>
-            </div>
+        <!-- Nút làm mới -->
+        <button class="btn-refresh" title="Làm mới danh sách" @click="fetchHistory">
+          🔄 Làm mới
+        </button>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs chuẩn web1.webp & Nút Xóa lịch sử -->
+    <div class="tabs-toolbar">
+      <div class="tabs-group">
+        <button
+          :class="['tab-btn', { active: currentTab === 'all' }]"
+          @click="currentTab = 'all'"
+        >
+          ALL <span class="tab-badge">{{ counts.all }}</span>
+        </button>
+
+        <button
+          :class="['tab-btn', { active: currentTab === 'incomings' }]"
+          @click="currentTab = 'incomings'"
+        >
+          INCOMINGS <span class="tab-badge">{{ counts.incomings }}</span>
+        </button>
+
+        <button
+          :class="['tab-btn', { active: currentTab === 'outgoings' }]"
+          @click="currentTab = 'outgoings'"
+        >
+          OUTGOINGS <span class="tab-badge">{{ counts.outgoings }}</span>
+        </button>
+
+        <button
+          :class="['tab-btn', { active: currentTab === 'missed' }]"
+          @click="currentTab = 'missed'"
+        >
+          MISSED <span class="tab-badge danger">{{ counts.missed }}</span>
+        </button>
+      </div>
+
+      <!-- Nút DELETE HISTORY theo đúng giao diện web1.webp -->
+      <button
+        class="btn-delete-history"
+        :disabled="calls.length === 0"
+        @click="showConfirmDeleteAll = true"
+      >
+        🗑️ DELETE HISTORY
+      </button>
+    </div>
+
+    <!-- Trạng thái Loading -->
+    <div v-if="loading" class="state-message">
+      <div class="spinner"></div>
+      <p>Đang tải nhật ký cuộc gọi từ Wazo CDR...</p>
+    </div>
+
+    <!-- Trạng thái Không có dữ liệu -->
+    <div v-else-if="filteredCalls.length === 0" class="state-message empty">
+      <div class="empty-icon">🕒</div>
+      <p>Không có bản ghi cuộc gọi nào phù hợp với bộ lọc.</p>
+    </div>
+
+    <!-- Danh sách cuộc gọi theo chuẩn web1.webp -->
+    <div v-else class="history-list">
+      <div
+        v-for="call in filteredCalls"
+        :key="call.id"
+        class="history-card"
+        :class="{ missed: call.status === 'missed' }"
+      >
+        <!-- Khối Avatar người gọi (Hình hộp vuông/tròn theo web1.webp) -->
+        <div class="avatar-box" :class="call.direction">
+          <span v-if="call.direction === 'inbound'" class="direction-arrow inbound">↙</span>
+          <span v-else class="direction-arrow outbound">↗</span>
+          <div class="avatar-initials">{{ getInitials(call.name) }}</div>
+        </div>
+
+        <!-- Khối Thông tin chi tiết cuộc gọi (Theo mẫu chuẩn web1.webp) -->
+        <div class="history-meta">
+          <div class="meta-line">
+            <span class="meta-label">Date:</span>
+            <strong class="meta-value date-val">{{ call.date }}</strong>
           </div>
+          <div class="meta-line">
+            <span class="meta-label">Duration:</span>
+            <span class="meta-value duration-val">{{ formatDuration(call.duration) }}</span>
+          </div>
+          <div class="meta-line">
+            <span class="meta-label">Direction:</span>
+            <span :class="['direction-tag', call.direction]">
+              {{ call.directionLabel || (call.direction === 'inbound' ? 'Incoming' : 'Outgoing') }}
+            </span>
+          </div>
+          <div class="meta-line">
+            <span class="meta-label">Status:</span>
+            <span :class="['status-tag', call.status]">
+              {{ call.statusLabel || (call.answered ? 'Success' : 'Missed') }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Khối Tên nhân viên & Máy lẻ nội bộ -->
+        <div class="contact-info">
+          <div class="contact-name">{{ call.name || 'Số ngoài mạng' }}</div>
+          <div class="contact-ext">
+            <span class="ext-badge">Máy lẻ {{ call.extension || '---' }}</span>
+          </div>
+          <div class="contact-dept">{{ call.dept || 'Nội bộ SDV LAN' }}</div>
+        </div>
+
+        <!-- Các nút thao tác nhanh -->
+        <div class="history-actions">
+          <!-- 📞 Nút Gọi lại nhanh -->
+          <button
+            class="btn-action btn-callback"
+            title="Gọi lại ngay"
+            @click="handleCallback(call)"
+          >
+            <span class="action-icon">📞</span>
+            <span class="action-text">Gọi lại</span>
+          </button>
+
+          <!-- 💬 Nút Nhắn tin -->
+          <button
+            class="btn-action btn-chat"
+            title="Nhắn tin với nhân viên này"
+            @click="handleChat(call)"
+          >
+            <span class="action-icon">💬</span>
+          </button>
+
+          <!-- ❌ Nút Xóa bản ghi này -->
+          <button
+            class="btn-action btn-delete-item"
+            title="Xóa bản ghi này"
+            @click="handleDeleteItem(call)"
+          >
+            <span class="action-icon">✖</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Xác nhận Xóa toàn bộ lịch sử -->
+    <div v-if="showConfirmDeleteAll" class="modal-backdrop" @click.self="showConfirmDeleteAll = false">
+      <div class="confirm-modal">
+        <div class="modal-icon danger">⚠️</div>
+        <h3>Xác nhận xóa lịch sử cuộc gọi</h3>
+        <p>Bạn có chắc chắn muốn xóa toàn bộ lịch sử cuộc gọi không? Thao tác này sẽ xóa sạch nhật ký cuộc gọi khỏi hệ thống và không thể hoàn tác.</p>
+        <div class="modal-actions">
+          <button class="btn-cancel" @click="showConfirmDeleteAll = false">Hủy bỏ</button>
+          <button class="btn-confirm-delete" @click="confirmDeleteAll">Xác nhận xóa hết</button>
         </div>
       </div>
     </div>
@@ -80,442 +186,685 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { historyService } from '@/services/historyService'
 
-const filterDirection = ref('all')
-const startDate = ref('')
+const router = useRouter()
+
 const loading = ref(false)
-const error = ref('')
+const currentTab = ref('all') // 'all' | 'incomings' | 'outgoings' | 'missed'
+const searchQuery = ref('')
+const filterDate = ref('')
+const showConfirmDeleteAll = ref(false)
 
-// Mock Data giả lập từ API Call Log
-const rawCalls = ref([
-  {
-    uuid: 'cdr-001',
-    start_time: new Date().toISOString(),
-    remote_name: 'Alice Nguyễn',
-    extension: '1001',
-    direction: 'inbound',
-    duration: 125,
-    answered: true,
-  },
-  {
-    uuid: 'cdr-002',
-    start_time: new Date(Date.now() - 3600000).toISOString(),
-    remote_name: null,
-    extension: '1002',
-    direction: 'outbound',
-    duration: 45,
-    answered: true,
-  },
-  {
-    uuid: 'cdr-003',
-    start_time: new Date(Date.now() - 7200000).toISOString(),
-    remote_name: 'Bob Trần',
-    extension: '1003',
-    direction: 'inbound',
-    duration: 0,
-    answered: false,
-  },
-  {
-    uuid: 'cdr-004',
-    start_time: new Date(Date.now() - 86400000).toISOString(),
-    remote_name: 'Carol Lê',
-    extension: '1004',
-    direction: 'outbound',
-    duration: 300,
-    answered: true,
-  },
-])
+const calls = ref([])
 
-const filteredCalls = computed(() => {
-  let result = rawCalls.value
-
-  if (filterDirection.value !== 'all') {
-    result = result.filter((c) => c.direction === filterDirection.value)
-  }
-
-  if (startDate.value) {
-    const start = new Date(startDate.value)
-    start.setHours(0, 0, 0, 0)
-
-    result = result.filter((c) => {
-      const callDate = new Date(c.start_time)
-      return callDate >= start
-    })
-  }
-
-  return result.sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
-})
-
-onMounted(() => {
-  loadHistoryData()
-})
-
-const loadHistoryData = async () => {
+// Nạp dữ liệu từ historyService
+const fetchHistory = async () => {
   loading.value = true
-  error.value = ''
-
   try {
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    console.log('Đã tải lịch sử cuộc gọi')
+    calls.value = await historyService.getHistory({ tab: 'all', limit: 100 })
   } catch (err) {
-    console.error('Lỗi tải lịch sử:', err)
-    error.value = 'Không thể tải lịch sử cuộc gọi từ server.'
+    console.error('Lỗi khi tải lịch sử cuộc gọi:', err)
   } finally {
     loading.value = false
   }
 }
 
-const applyFilters = () => {
-  // Computed property tự động cập nhật
+onMounted(() => {
+  fetchHistory()
+})
+
+// Đếm số lượng cuộc gọi theo từng tab
+const counts = computed(() => {
+  const all = calls.value.length
+  const incomings = calls.value.filter((c) => c.direction === 'inbound').length
+  const outgoings = calls.value.filter((c) => c.direction === 'outbound').length
+  const missed = calls.value.filter((c) => c.status === 'missed' || !c.answered).length
+  return { all, incomings, outgoings, missed }
+})
+
+// Lọc dữ liệu theo tab, từ khóa tìm kiếm và ngày tháng
+const filteredCalls = computed(() => {
+  let list = calls.value
+
+  // 1. Lọc theo Tab
+  if (currentTab.value === 'incomings') {
+    list = list.filter((c) => c.direction === 'inbound')
+  } else if (currentTab.value === 'outgoings') {
+    list = list.filter((c) => c.direction === 'outbound')
+  } else if (currentTab.value === 'missed') {
+    list = list.filter((c) => c.status === 'missed' || !c.answered)
+  }
+
+  // 2. Lọc theo từ khóa tìm kiếm (tên, số máy, phòng ban)
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.toLowerCase().trim()
+    list = list.filter(
+      (c) =>
+        (c.name && c.name.toLowerCase().includes(q)) ||
+        (c.extension && c.extension.includes(q)) ||
+        (c.dept && c.dept.toLowerCase().includes(q)),
+    )
+  }
+
+  // 3. Lọc theo ngày (Từ ngày)
+  if (filterDate.value) {
+    list = list.filter((c) => c.date && c.date.startsWith(filterDate.value))
+  }
+
+  return list
+})
+
+// Format thời lượng cuộc gọi mm:ss
+const formatDuration = (seconds) => {
+  return historyService.formatDuration(seconds)
 }
 
-const formatTime = (isoString) => {
-  if (!isoString) return '-'
-  const date = new Date(isoString)
-  return date.toLocaleString('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+// Lấy 2 chữ cái đầu cho Avatar
+const getInitials = (name) => {
+  if (!name) return '?'
+  const parts = name.trim().split(' ')
+  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+// Thao tác Gọi lại nhanh (Callback): Điều hướng sang màn hình /calls và kích hoạt gọi
+const handleCallback = (call) => {
+  if (!call.extension) {
+    alert('Không tìm thấy số máy lẻ để gọi lại!')
+    return
+  }
+  router.push({
+    path: '/calls',
+    query: {
+      number: call.extension,
+      autocall: 'true',
+    },
   })
 }
 
-const formatDuration = (seconds) => {
-  if (!seconds || seconds === 0) return '-'
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}:${s < 10 ? '0' : ''}${s}`
+// Thao tác Nhắn tin: Điều hướng sang MessagesView
+const handleChat = (call) => {
+  router.push({
+    path: '/messages',
+    query: {
+      name: call.name,
+      ext: call.extension,
+    },
+  })
 }
 
-const getDirectionLabel = (dir) => {
-  switch (dir) {
-    case 'inbound':
-      return 'Đến'
-    case 'outbound':
-      return 'Đi'
-    default:
-      return dir
-  }
+// Thao tác Xóa 1 bản ghi
+const handleDeleteItem = async (call) => {
+  const ok = confirm(`Bạn có chắc chắn muốn xóa bản ghi cuộc gọi của ${call.name || call.extension}?`)
+  if (!ok) return
+  await historyService.deleteItem(call.id)
+  await fetchHistory()
+}
+
+// Thao tác Xóa toàn bộ lịch sử (DELETE HISTORY)
+const confirmDeleteAll = async () => {
+  await historyService.clearAllHistory()
+  showConfirmDeleteAll.value = false
+  await fetchHistory()
 }
 </script>
 
 <style scoped>
-/* --- Container chung --- */
 .history-container {
-  max-width: 1000px;
+  padding: 0;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 20px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  color: #333;
 }
 
-h1 {
-  color: #2c3e50;
-  margin-bottom: 20px;
-  font-size: 1.5rem;
-}
-
-/* --- Filters --- */
-.filters {
+/* Header & Filters */
+.history-header {
   display: flex;
-  gap: 15px;
+  justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap; /* Cho phép xuống dòng trên mobile */
-  background: white;
-  padding: 15px;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  flex-wrap: wrap;
+  gap: 16px;
   margin-bottom: 20px;
 }
 
-.filter-group {
+.header-left h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 4px 0;
+}
+
+.sub-title {
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.header-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.search-input {
+  width: 280px;
+  padding: 9px 36px 9px 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  outline: none;
+  background-color: #fff;
+  transition: all 0.2s;
+}
+
+.search-input:focus {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+}
+
+.btn-clear-search,
+.btn-clear-date {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.date-filter-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.date-input {
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  background: #fff;
+  outline: none;
+}
+
+.btn-refresh {
+  padding: 9px 14px;
+  background-color: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-refresh:hover {
+  background-color: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+/* Tabs Toolbar chuẩn web1.webp */
+.tabs-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f8fafc;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.tabs-group {
+  display: flex;
+  gap: 4px;
+}
+
+.tab-btn {
+  padding: 9px 18px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.tab-btn:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+/* Nút tab Active có màu xanh đậm chuẩn web1.webp */
+.tab-btn.active {
+  background-color: #0284c7;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.3);
+}
+
+.tab-badge {
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.1);
+  font-weight: 600;
+}
+
+.tab-btn.active .tab-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.tab-badge.danger {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.tab-btn.active .tab-badge.danger {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* Nút DELETE HISTORY chuẩn theo ảnh web1.webp */
+.btn-delete-history {
+  padding: 9px 18px;
+  background-color: #334155;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.btn-delete-history:hover:not(:disabled) {
+  background-color: #dc2626;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+}
+
+.btn-delete-history:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Danh sách cuộc gọi */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-card {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 20px;
+  gap: 20px;
+  transition: all 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.history-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.07);
+  transform: translateY(-1px);
+}
+
+.history-card.missed {
+  border-left: 4px solid #ef4444;
+}
+
+/* Avatar Box */
+.avatar-box {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  background-color: #334155;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.avatar-box.inbound {
+  background: linear-gradient(135deg, #0ea5e9, #0284c7);
+}
+
+.avatar-box.outbound {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+}
+
+.history-card.missed .avatar-box {
+  background: linear-gradient(135deg, #f87171, #ef4444);
+}
+
+.avatar-initials {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.direction-arrow {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+}
+
+.direction-arrow.inbound {
+  background-color: #10b981;
+  color: #fff;
+}
+
+.direction-arrow.outbound {
+  background-color: #3b82f6;
+  color: #fff;
+}
+
+/* History Metadata theo chuẩn web1.webp */
+.history-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  row-gap: 3px;
+  column-gap: 8px;
+  min-width: 240px;
+  font-size: 0.85rem;
+}
+
+.meta-line {
+  display: contents;
+}
+
+.meta-label {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.meta-value {
+  color: #1e293b;
+}
+
+.date-val {
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.duration-val {
+  font-weight: 600;
+  color: #0284c7;
+}
+
+.direction-tag {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.direction-tag.inbound {
+  color: #059669;
+}
+
+.direction-tag.outbound {
+  color: #2563eb;
+}
+
+.status-tag {
+  font-weight: 600;
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  width: fit-content;
+}
+
+.status-tag.success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.status-tag.missed {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.status-tag.declined {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+/* Contact Info Column */
+.contact-info {
+  flex: 1;
+  padding: 0 10px;
+}
+
+.contact-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 4px;
+}
+
+.contact-ext {
+  margin-bottom: 4px;
+}
+
+.ext-badge {
+  display: inline-block;
+  background-color: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #0284c7;
+}
+
+.contact-dept {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+/* History Actions */
+.history-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.filter-group label {
-  font-weight: 500;
-  color: #34495e;
-  white-space: nowrap;
-}
-
-select,
-input[type='date'] {
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  background-color: #fff;
-}
-
-.btn-refresh {
-  background: #3498db;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 500;
-  transition: background 0.2s;
-  margin-left: auto; /* Đẩy nút về cuối nếu có chỗ */
-}
-
-.btn-refresh:hover {
-  background: #2980b9;
-}
-
-/* --- Call List (Responsive替代Table) --- */
-.call-list-wrapper {
-  display: grid;
-  gap: 15px;
-  /* Desktop: Có thể chia cột nếu muốn, nhưng list dọc thường dễ đọc hơn với nhiều dữ liệu */
-  grid-template-columns: 1fr;
-}
-
-.call-card {
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-  overflow: hidden;
-  transition:
-    transform 0.2s,
-    box-shadow 0.2s;
-  border-left: 4px solid transparent; /* Dấu hiệu màu sắc bên trái */
-}
-
-.call-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-}
-
-/* Thêm màu viền trái dựa trên hướng */
-.call-card.inbound {
-  border-left-color: #2ecc71;
-}
-.call-card.outbound {
-  border-left-color: #3498db;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 15px;
-  background-color: #f8f9fa;
-  border-bottom: 1px solid #eee;
-}
-
-.time-text {
-  font-weight: 600;
-  color: #2c3e50;
-  font-size: 0.95rem;
-}
-
-.badge {
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: white;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.badge.inbound {
-  background-color: #2ecc71;
-}
-
-.badge.outbound {
-  background-color: #3498db;
-}
-
-.card-body {
-  padding: 15px;
-}
-
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.info-row:last-child {
-  margin-bottom: 0;
-}
-
-.info-item {
+.btn-action {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.label {
-  font-size: 0.85rem;
-  color: #7f8c8d;
-  font-weight: 500;
-}
-
-.value {
-  font-size: 0.95rem;
-  color: #2c3e50;
-  font-weight: 500;
-}
-
-.value.name {
-  font-weight: 600;
-}
-
-.value.number {
-  font-family: monospace; /* Giúp số dễ đọc hơn */
-}
-
-.bottom-row {
-  align-items: center;
-}
-
-.status-item {
-  margin-left: auto; /* Đẩy trạng thái về bên phải */
-}
-
-.status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.status-dot.answered {
-  background-color: #2ecc71;
-  box-shadow: 0 0 4px rgba(46, 204, 113, 0.4);
-}
-
-.status-dot.missed {
-  background-color: #e74c3c;
-  box-shadow: 0 0 4px rgba(231, 76, 60, 0.4);
-}
-
-.status-text {
+  padding: 8px 14px;
+  border-radius: 8px;
   font-size: 0.85rem;
   font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
 }
 
-.status-text.answered {
-  color: #27ae60;
-}
-.status-text.missed {
-  color: #c0392b;
+.btn-callback {
+  background-color: #ecfdf5;
+  color: #059669;
+  border-color: #a7f3d0;
 }
 
-/* --- States (Loading, Error, Empty) --- */
+.btn-callback:hover {
+  background-color: #059669;
+  color: #fff;
+  border-color: #059669;
+}
+
+.btn-chat {
+  background-color: #f0f9ff;
+  color: #0284c7;
+  border-color: #bae6fd;
+  padding: 8px 12px;
+}
+
+.btn-chat:hover {
+  background-color: #0284c7;
+  color: #fff;
+}
+
+.btn-delete-item {
+  background-color: #f8fafc;
+  color: #94a3b8;
+  border-color: #e2e8f0;
+  padding: 8px 10px;
+}
+
+.btn-delete-item:hover {
+  background-color: #fee2e2;
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+/* Loading & Empty States */
 .state-message {
   text-align: center;
-  padding: 40px;
-  color: #7f8c8d;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-.state-message.error {
-  color: #e74c3c;
+  padding: 60px 20px;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
 }
 
 .spinner {
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #3498db;
+  width: 36px;
+  height: 36px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #0284c7;
   border-radius: 50%;
-  width: 30px;
-  height: 30px;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 10px;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px auto;
 }
 
 @keyframes spin {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
+  to {
     transform: rotate(360deg);
   }
 }
 
-.btn-retry {
-  margin-top: 10px;
-  padding: 8px 15px;
-  background: #e74c3c;
-  color: white;
-  border: none;
-  border-radius: 4px;
+.empty-icon {
+  font-size: 2.5rem;
+  margin-bottom: 12px;
+}
+
+/* Confirm Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.confirm-modal {
+  background: #fff;
+  border-radius: 14px;
+  padding: 24px;
+  width: 90%;
+  max-width: 440px;
+  text-align: center;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.modal-icon.danger {
+  font-size: 2.5rem;
+  margin-bottom: 12px;
+}
+
+.confirm-modal h3 {
+  font-size: 1.25rem;
+  color: #1e293b;
+  margin: 0 0 10px 0;
+}
+
+.confirm-modal p {
+  font-size: 0.9rem;
+  color: #64748b;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.btn-cancel {
+  padding: 10px 20px;
+  background-color: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-weight: 600;
+  color: #475569;
   cursor: pointer;
 }
 
-/* --- RESPONSIVE BREAKPOINTS --- */
-
-/* Tablet và Mobile (< 768px) */
-@media (max-width: 768px) {
-  .history-container {
-    padding: 15px;
-  }
-
-  h1 {
-    font-size: 1.25rem;
-  }
-
-  .filters {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-
-  .filter-group {
-    width: 100%;
-  }
-
-  select,
-  input[type='‘date’'] {
-    width: 100%;
-  }
-
-  .btn-refresh {
-    width: 100%;
-    margin-left: 0;
-    text-align: center;
-  }
-
-  /* Điều chỉnh card trên mobile cho dễ nhìn */
-  .card-body {
-    padding: 12px;
-  }
-
-  .info-row {
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .bottom-row {
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px dashed #eee;
-  }
-
-  .status-item {
-    margin-left: 0;
-    justify-content: flex-start;
-  }
+.btn-cancel:hover {
+  background-color: #e2e8f0;
 }
 
-/* Màn hình rất nhỏ (< 480px) */
-@media (max-width: 480px) {
-  .card-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 5px;
-  }
+.btn-confirm-delete {
+  padding: 10px 20px;
+  background-color: #dc2626;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  color: #ffffff;
+  cursor: pointer;
+}
 
-  .badge {
-    align-self: flex-start;
-  }
+.btn-confirm-delete:hover {
+  background-color: #b91c1c;
 }
 </style>

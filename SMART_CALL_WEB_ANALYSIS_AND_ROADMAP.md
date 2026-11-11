@@ -24,6 +24,7 @@
 6. [Lộ Trình Các Bước Triển Khai Chi Tiết Cho Nhóm Web](#6-lộ-trình-các-bước-triển-khai-chi-tiết-cho-nhóm-web)
 7. [Kế Hoạch Phân Chia Công Việc Cụ Thể](#7-kế-hoạch-phân-chia-công-việc-cụ-thể)
 8. [Bảng Tổng Hợp Các API Wazo Cần Dùng Trong Dự Án](#8-bảng-tổng-hợp-các-api-wazo-cần-dùng-trong-dự-án)
+9. [Cơ Chế Dữ Liệu Fake & Điểm Kết Nối Database Thật (Service / Adapter Pattern)](#9-cơ-chế-dữ-liệu-fake--điểm-kết-nối-database-thật-service--adapter-pattern)
 
 ---
 
@@ -386,6 +387,105 @@ src/
 | Gửi tin nhắn | `wazo-chatd` | `POST /api/chatd/1.0/users/me/rooms/{room_uuid}/messages` | Gửi tin nhắn mới |
 | Đăng ký SIP WebRTC | Asterisk WSS | `wss://<HOST>/api/asterisk/ws` (SIP protocol) | Thư viện `@wazo/sdk` tự quản lý qua `Wazo.Phone.connect()` |
 | Sự kiện Realtime | `websocketd` | `wss://<HOST>/api/websocketd/?token=<token>&version=2` | Nhận sự kiện cuộc gọi, tin nhắn, presence |
+
+---
+
+## 9. CƠ CHẾ DỮ LIỆU FAKE & ĐIỂM KẾT NỐI DATABASE THẬT (SERVICE / ADAPTER PATTERN)
+
+### 9.1. Triết lý thiết kế: Tách biệt Giao diện (UI) và Dữ liệu (Data)
+Nhằm đảm bảo dự án phát triển độc lập, không bị phụ thuộc vào tiến độ triển khai Database của anh Hải hay máy chủ Wazo tại nhà máy, toàn bộ ứng dụng áp dụng mô hình **Service / Adapter Pattern**:
+
+```
+[ Giao diện Vue (Views / Components) ]
+                   │
+                   ▼  (gọi hàm nghiệp vụ: getContacts(), getHistory(), sendMessage())
+[ Tầng Dịch vụ (Service Layer: src/services/) ]
+                   │
+         ┌─────────┴─────────┐
+         ▼                   ▼
+ [ API Thật Wazo/DB ]   [ Dữ liệu Fake (Mock Data) ]
+ (Khi có LAN & Token)  (Tự động kích hoạt khi dev offline)
+```
+
+* **Quy tắc bất di bất dịch:** Các file giao diện (`ContactsView.vue`, `HistoryView.vue`, `MessagesView.vue`...) **tuyệt đối không bao giờ** gọi `fetch()` URL trực tiếp hoặc thao tác thô với API. Mọi thao tác đọc/ghi dữ liệu bắt buộc phải đi qua các hàm của tầng `src/services/`.
+* **Cơ chế Fallback thông minh:** Trong mỗi hàm Service luôn có khối lệnh `try ... catch`. Khi chưa có server Wazo hoặc đang dev ở nhà, hệ thống tự động trả về Mock Data chuẩn định dạng doanh nghiệp SDV, giúp giao diện luôn hiển thị đầy đủ, không bao giờ bị văng lỗi màn hình trắng.
+
+---
+
+### 9.2. Bản đồ vị trí lưu trữ Dữ liệu Fake (Mock Data) trong dự án
+
+| Phân Hệ | Vị Trí File Lưu Mock Data | Cấu Trúc Dữ Liệu Fake | Mục Đích Hiển Thị |
+|---|---|---|---|
+| **Danh bạ (Contacts)** | `src/services/contactService.js`<br>*(Mảng `MOCK_CONTACTS`)* | `id`, `name`, `email`, `dept`, `number`, `status`, `unreadCount` | Hiển thị bảng danh bạ nhân viên nội bộ SDV, hỗ trợ tìm kiếm và 4 nút hành động (📞 Gọi, 💬 Chat, 🎥 Video, ❌ Xóa). |
+| **Tin nhắn (Messaging)** | `src/views/MessagesView.vue`<br>*(Mảng `rooms`, `currentRoomMembers`)* | `id`, `title`, `unread`, `icon`, `messages` (`sender`, `text`, `time`, `readStatus`, `readers`) | Hiển thị danh sách phòng chat, bong bóng tin nhắn 2 chiều, thanh ghim thông báo, modal xem ai đã đọc tin (Read ID) và modal Add Member. |
+| **Lịch sử cuộc gọi (History)** | `src/services/historyService.js`<br>*(Mảng `MOCK_HISTORY`)* | `id`, `date`, `name`, `extension`, `dept`, `duration`, `direction`, `status`, `answered` | Hiển thị danh sách nhật ký cuộc gọi theo đúng mẫu `web1.webp`, hỗ trợ 4 tab lọc (`ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`) và nút Gọi lại. |
+| **Phiên người dùng (User Session)** | `localStorage`<br>*(Key `smartcall_user`, `smartcall_logged_in`)* | `username`, `name`, `extension`, `department`, `token` | Giữ trạng thái đăng nhập khi F5; hiển thị tên nhân viên đăng nhập (`Lê Việt Dũng`), máy lẻ (`1001`) và trạng thái SIP trên Top Header & Sidebar. |
+
+---
+
+### 9.3. Cơ chế dữ liệu được render lên Giao diện (Vue 3 Reactivity)
+1. **Khởi tạo & Nạp dữ liệu:**
+   - Trong `onMounted()` của mỗi View, hàm async của Service tương ứng sẽ được gọi (ví dụ: `await contactService.getContacts()`).
+   - Dữ liệu trả về được gán vào biến phản ứng `const contacts = ref([])`.
+2. **Lọc dữ liệu thời gian thực (Computed):**
+   - Sử dụng `computed()` để tự động lọc dữ liệu theo ô tìm kiếm hoặc tab đang chọn mà không cần gọi lại API.
+   - Ví dụ: `filteredContacts = computed(...)` lọc danh bạ theo tên/phòng ban/máy lẻ; `filteredCalls = computed(...)` lọc lịch sử theo tab `ALL` / `INCOMINGS` / `OUTGOINGS` / `MISSED`.
+3. **Hiển thị trực quan (Directives):**
+   - Vòng lặp `v-for` duyệt qua mảng dữ liệu đã lọc để render ra các dòng bảng, thẻ card, danh sách phòng chat.
+   - Các cờ trạng thái `v-if="loading"`, `v-else-if="filtered.length === 0"` giúp hiển thị hiệu ứng xoay spinner hoặc thông báo trống thân thiện.
+
+---
+
+### 9.4. Điểm cắm API thật của anh Hải (DB nhân sự) và Wazo Platform
+
+Dưới đây là vị trí cụ thể trong mã nguồn đã được chừa sẵn để đấu nối API thật khi anh Hải bàn giao:
+
+#### 1. Đấu nối Danh bạ nhân viên (`src/services/contactService.js`):
+```javascript
+async getContacts() {
+  try {
+    const token = wazoService.getToken()
+    if (!token) throw new Error('No token')
+
+    // 🎯 ĐIỂM CẮM API DATABASE ANH HẢI:
+    // Khi anh Hải cung cấp API máy chủ nội bộ (ví dụ: http://192.168.1.50:8080/api/employees),
+    // Bạn chỉ cần mở file này và thay URL vào fetch:
+    const res = await fetch('http://192.168.1.50:8080/api/employees', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    const data = await res.json()
+
+    // Map dữ liệu từ DB công ty sang schema của SmartCall Web:
+    return data.items.map(emp => ({
+      id: emp.id || emp.employee_code,
+      name: emp.full_name,
+      dept: emp.department_name,
+      number: emp.wazo_extension, // Máy lẻ 4 số (1001, 1002...)
+      status: 'online',
+      unreadCount: 0
+    }))
+  } catch (err) {
+    // Tự động dùng Mock Data nếu mạng lỗi hoặc chưa có DB
+    return this.localContacts
+  }
+}
+```
+
+#### 2. Đấu nối Lịch sử cuộc gọi (`src/services/historyService.js`):
+Đã được viết sẵn theo đúng chuẩn tài liệu `dev_guide.md` (mục 4.3):
+```javascript
+// Gọi Wazo Call-Logd API:
+GET https://192.168.1.50:9443/api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
+Headers: { 'X-Auth-Token': token }
+```
+Nếu sau này anh Hải muốn lưu lịch sử vào Database riêng của công ty, chỉ việc đổi URL trong `historyService.js` sang endpoint của anh Hải.
+
+#### 3. Đấu nối Tin nhắn & WebSocket Realtime (`src/services/chatService.js` & `websocketService.js`):
+Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
+* Lấy phòng chat: `GET /api/chatd/1.0/users/me/rooms`
+* Lấy tin nhắn: `GET /api/chatd/1.0/users/me/rooms/{uuid}/messages`
+* Gửi tin nhắn: `POST /api/chatd/1.0/users/me/rooms/{uuid}/messages`
+* Nhận tin nhắn mới tức thì: Lắng nghe qua WebSocket `wss://192.168.1.50:9443/api/websocketd/?token=<token>&version=2`.
 
 ---
 *Tài liệu này được biên soạn để làm kim chỉ nam thực thi cho dự án SmartCall Web. Mọi thắc mắc kỹ thuật về Wazo API có thể đối chiếu thêm trong file `dev_guide.md`.*
