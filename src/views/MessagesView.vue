@@ -197,7 +197,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, nextTick } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { chatService } from '@/services/chatService'
+import { websocketService } from '@/services/websocketService'
 
 const showPinned = ref(true)
 const showMemberModal = ref(false)
@@ -309,27 +311,12 @@ const selectRoom = (room) => {
   scrollToBottom()
 }
 
-const sendMessage = () => {
+const sendMessage = async () => {
   const text = inputText.value.trim()
   if (!text) return
 
-  const now = new Date()
-  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-
-  currentRoom.value.messages.push({
-    id: Date.now(),
-    sender: 'mine',
-    senderName: 'Tôi (Lê Việt Dũng)',
-    text,
-    time,
-    readStatus: 'Sent',
-    readers: [],
-  })
-
-  currentRoom.value.preview = `Tôi: ${text}`
-  currentRoom.value.time = time
   inputText.value = ''
-
+  await chatService.sendMessage(currentRoom.value.id, text)
   scrollToBottom()
 }
 
@@ -340,6 +327,46 @@ const scrollToBottom = () => {
     }
   })
 }
+
+// Lắng nghe tin nhắn mới từ WebSocket
+const handleRealtimeMessage = (data) => {
+  if (!data) return
+  const targetRoom = rooms.find((r) => r.id === data.room_uuid)
+  if (targetRoom) {
+    targetRoom.messages.push({
+      id: data.uuid || `msg-${Date.now()}`,
+      sender: 'theirs',
+      senderName: data.alias || 'Đồng nghiệp',
+      dept: 'SDV LAN',
+      text: data.content,
+      time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      readStatus: 'Read',
+      readers: [],
+    })
+    targetRoom.preview = data.content
+    if (currentRoom.value.id === targetRoom.id) {
+      scrollToBottom()
+    } else {
+      targetRoom.unread = (targetRoom.unread || 0) + 1
+    }
+  }
+}
+
+onMounted(async () => {
+  const loadedRooms = await chatService.getRooms()
+  if (loadedRooms && loadedRooms.length > 0) {
+    rooms.splice(0, rooms.length, ...loadedRooms)
+    currentRoom.value = rooms[0]
+  }
+
+  // Kết nối WebSocket theo mục 6 trong dev_guide.md
+  websocketService.connect()
+  websocketService.on('chatd_user_room_message_created', handleRealtimeMessage)
+})
+
+onUnmounted(() => {
+  websocketService.off('chatd_user_room_message_created', handleRealtimeMessage)
+})
 
 // Modal Add Member (app3.webp logic)
 const openAddMemberModal = () => {
@@ -353,20 +380,30 @@ const checkTitleChange = () => {
     editGroupTitle.value.trim() !== '' && editGroupTitle.value !== currentRoom.value.title
 }
 
-const saveGroupTitle = () => {
-  currentRoom.value.title = editGroupTitle.value.trim()
-  showMemberModal.value = false
+const saveGroupTitle = async () => {
+  try {
+    await chatService.updateRoomTitle(currentRoom.value.id, editGroupTitle.value)
+    currentRoom.value.title = editGroupTitle.value.trim()
+    showMemberModal.value = false
+  } catch (err) {
+    alert(err.message)
+  }
 }
 
-const searchAndAdd = () => {
+const searchAndAdd = async () => {
   const q = searchQuery.value.trim()
   if (!q) return
 
   if (confirm(`Thêm ID nhân viên: [${q}] vào nhóm này?`)) {
-    currentRoomMembers.push({
+    const newEmp = {
       id: Date.now(),
       name: `Nhân viên ${q}`,
       dept: 'SDV New Member',
+      number: q,
+    }
+    await chatService.addMember(currentRoom.value.id, newEmp)
+    currentRoomMembers.push({
+      ...newEmp,
       ext: q,
       isAdmin: false,
     })
@@ -374,10 +411,15 @@ const searchAndAdd = () => {
   }
 }
 
-const removeMember = (m) => {
+const removeMember = async (m) => {
   if (confirm(`Bạn có chắc chắn muốn Xóa [${m.name}] khỏi nhóm không?`)) {
-    const idx = currentRoomMembers.findIndex((item) => item.id === m.id)
-    if (idx !== -1) currentRoomMembers.splice(idx, 1)
+    try {
+      await chatService.removeMember(currentRoom.value.id, m.id)
+      const idx = currentRoomMembers.findIndex((item) => item.id === m.id)
+      if (idx !== -1) currentRoomMembers.splice(idx, 1)
+    } catch (err) {
+      alert(err.message)
+    }
   }
 }
 

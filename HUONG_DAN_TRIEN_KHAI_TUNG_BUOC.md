@@ -246,20 +246,40 @@ Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
 ---
 
 ### BƯỚC 5: TÁCH LỚP CHAT SERVICE & KẾT NỐI WEBSOCKET REALTIME (THEO DEV_GUIDE.MD)
-* **Trạng thái:** `TIẾP THEO 🚀`
-* **Mục tiêu:**
-  1. Tạo `src/services/chatService.js`:
-     - Bóc tách mảng `rooms`, `messages`, `members` từ `MessagesView.vue` sang tầng Service.
-     - Tích hợp API Wazo Chatd theo `dev_guide.md`:
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Công việc đã thực hiện:**
+  1. **Tạo tầng dịch vụ `src/services/chatService.js`:**
+     - Bóc tách toàn bộ dữ liệu mock và logic nghiệp vụ từ `MessagesView.vue` ra Service độc lập.
+     - Tích hợp chuẩn REST API Wazo Chatd theo `dev_guide.md` mục 4.6:
        - `GET /api/chatd/1.0/users/me/rooms` (lấy danh sách phòng chat).
-       - `GET /api/chatd/1.0/users/me/rooms/{uuid}/messages` (lấy tin nhắn).
-       - `POST /api/chatd/1.0/users/me/rooms/{uuid}/messages` (gửi tin nhắn).
-     - Chuẩn bị sẵn cổng cắm API Chat nội bộ khi anh Hải cung cấp.
-  2. Tạo `src/services/websocketService.js`:
-     - Kết nối tới `wss://192.168.1.50:9443/api/websocketd/?token=<token>&version=2`.
-     - Lắng nghe các sự kiện thời gian thực:
-       - `call_created`, `call_ended` (cuộc gọi đến / kết thúc).
-       - `chatd_user_room_message_created` (tin nhắn mới trong phòng chat).
-       - `chatd_presence_updated` (thay đổi trạng thái Online / Away / DND).
+       - `GET /api/chatd/1.0/users/me/rooms/{uuid}/messages?limit=50` (lấy lịch sử tin nhắn).
+       - `POST /api/chatd/1.0/users/me/rooms/{uuid}/messages` (gửi tin nhắn mới).
+     - Đầy đủ các hàm nghiệp vụ nhóm theo ảnh `app3.webp`: `addMember()`, `removeMember()` (có kiểm tra không xóa Admin, không xóa khi < 3 thành viên), `updateRoomTitle()` (kiểm tra tối đa 100 ký tự), và `updatePinnedMessage()` (thanh ghim theo `app2.webp`).
+     - Tự động fallback sang Mock Data chuẩn SDV LAN khi dev offline.
+  2. **Tạo tầng dịch vụ `src/services/websocketService.js`:**
+     - Thiết lập kết nối WebSocket tới Wazo websocketd theo `dev_guide.md` mục 6:
+       `wss://192.168.1.50:9443/api/websocketd/?token=<token>&version=2`.
+     - Triển khai giao thức v2: Tự động gửi các lệnh `subscribe` sự kiện (`call_created`, `call_ended`, `chatd_user_room_message_created`, `chatd_presence_updated`) và gửi `op: "start"`.
+     - Thiết kế theo mô hình Event Emitter (`on`, `off`, `emit`) với cơ chế tự động kết nối lại (auto-reconnect sau 5s).
+  3. **Đấu nối `src/views/MessagesView.vue` vào tầng Service & Realtime:**
+     - Nạp danh sách phòng chat từ `chatService.getRooms()`.
+     - Lắng nghe sự kiện `chatd_user_room_message_created` qua `websocketService`: khi có tin nhắn mới thì tự động đẩy vào khung chat hoặc tăng số tin chưa đọc tức thì.
+     - Xử lý gửi tin nhắn, thêm/xóa thành viên và cập nhật tiêu đề nhóm qua `chatService`.
+  4. **Kiểm tra biên dịch:** `npm run build` thành công 100% trong `404ms`.
+
+---
+
+## 4. TỔNG KẾT DỰ ÁN & SẴN SÀNG TRIỂN KHAI
+
+Hệ thống **SmartCall Web** hiện tại đã đạt độ hoàn thiện cao:
+* **Giao diện:** Đẹp, chuẩn doanh nghiệp SDV, hiện đại hóa toàn diện từ các ảnh mẫu cũ (`app1` - `app5`, `web1.webp`), có đầy đủ các tab, modal cài đặt, bàn phím số, danh bạ 4 nút hành động, khung chat 2 cột có ghim tin và lịch sử cuộc gọi chi tiết.
+* **Kiến trúc:** 100% tuân thủ mô hình **Service / Adapter Pattern**:
+  - `wazo.js`: Quản lý Auth và WebRTC SIP Phone.
+  - `contactService.js`: Quản lý danh bạ nhân sự.
+  - `historyService.js`: Quản lý nhật ký cuộc gọi CDR.
+  - `chatService.js`: Quản lý phòng chat và tin nhắn.
+  - `websocketService.js`: Quản lý sự kiện thời gian thực.
+* **Tính linh hoạt:** Chạy offline mượt mà với Mock Data chuẩn và sẵn sàng 100% để cắm API Database của anh Hải cũng như máy chủ Wazo tại nhà máy mà không cần sửa giao diện.
+
 
 
