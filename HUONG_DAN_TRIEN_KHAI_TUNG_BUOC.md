@@ -269,6 +269,32 @@ Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
 
 ---
 
+### BƯỚC 6: POPUP CUỘC GỌI ĐẾN (INCOMING CALL) & ÂM THANH CHUÔNG WEBRTC (THEO ẢNH APP5.WEBP)
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Công việc đã thực hiện:**
+  1. **Tạo tầng dịch vụ âm thanh `src/services/audioService.js`:**
+     - Sử dụng trực tiếp **Web Audio API** của trình duyệt: Không phụ thuộc vào bất kỳ file `.mp3` bên ngoài nào, hoạt động 100% offline, không bao giờ lo lỗi 404.
+     - **Chuông cuộc gọi đến (Incoming Ringtone):** Tạo tần số kép chuẩn tổng đài Bắc Mỹ/Châu Âu (440Hz + 480Hz) kêu theo chu kỳ 1.6s reo $\rightarrow$ 2.0s nghỉ.
+     - **Chuông chờ gọi đi (Ringback Tone):** Tần số 425Hz chuẩn ITU-T (tiếng "tút... tút...").
+     - **Âm thanh bàn phím số (DTMF Tones):** Phát âm thanh chuẩn DTMF khi người dùng bấm các phím `0-9`, `*`, `#` trên bàn phím quay số.
+     - **Âm thanh kết thúc cuộc gọi:** Phát 3 tiếng bíp báo cúp máy khi kết thúc cuộc đàm thoại.
+  2. **Tạo Component `src/components/call/IncomingCallModal.vue` theo đúng mẫu `app5.webp`:**
+     - **Thanh trạng thái trên cùng:** Nền xanh lam có chấm xanh `Registered` và biểu tượng ổ khóa `🔒` chuẩn thoại mã hóa SRTP.
+     - **Banner loại cuộc gọi:** Dòng chữ in hoa `INCOMING CALL` nổi bật.
+     - **Thông tin người gọi:** Hiển thị Tên người gọi (`Nguyễn Hữu Hiếu`), Địa chỉ SIP (`sip:1007@192.168.1.50`) và Phòng ban.
+     - **Avatar radar pulse:** Vòng tròn trung tâm kích thước lớn với hiệu ứng sóng radar tỏa ra liên tục.
+     - **Hai nút thao tác chuẩn chân trang:**
+       - 📵 **Nút TỪ CHỐI (Bên trái):** Tắt chuông, cúp máy và đóng modal.
+       - 📞 **Nút NGHE MÁY (Bên phải):** Tắt chuông, kết nối WebRTC và chuyển ngay sang giao diện đàm thoại `/calls`.
+  3. **Tích hợp toàn cục vào `src/App.vue` & Header:**
+     - Lắng nghe sự kiện `wazo-incoming`: Tự động bật modal và đổ chuông dù người dùng đang ở bất kỳ trang nào.
+     - Bổ sung nút **`🔔 Test Gọi Đến`** trên thanh Top Header (`AppHeader.vue`) để bạn và đồng nghiệp có thể bấm 1 chạm mô phỏng cuộc gọi đến thử nghiệm ngay lập tức.
+  4. **Nâng cấp âm thanh cho `src/views/CallsView.vue`:**
+     - Phát tiếng DTMF khi gõ số và tiếng tút... tút... khi ấn nút gọi.
+  5. **Kiểm tra biên dịch:** `npm run build` thành công 100% trong `396ms`.
+
+---
+
 ## 4. TỔNG KẾT DỰ ÁN & SẴN SÀNG TRIỂN KHAI
 
 Hệ thống **SmartCall Web** hiện tại đã đạt độ hoàn thiện cao:

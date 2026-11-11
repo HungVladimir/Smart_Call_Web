@@ -103,6 +103,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { wazoService } from '@/services/wazo'
+import { audioService } from '@/services/audioService'
 
 const route = useRoute()
 const extension = ref('1002')
@@ -150,6 +151,7 @@ const formattedDuration = computed(() => {
 })
 
 const pressKey = (key) => {
+  audioService.playDtmfTone(key)
   if (extension.value.length < 6) {
     extension.value += key
   }
@@ -162,6 +164,8 @@ const clearDigit = () => {
 const handleDial = () => {
   const ext = extension.value.trim()
   if (!ext) return
+
+  audioService.playRingbackTone()
 
   // Thử gọi qua wazoService hoặc giả lập gọi nếu đang dev offline
   try {
@@ -179,6 +183,7 @@ const handleDial = () => {
 }
 
 const hangupCall = () => {
+  audioService.playCallEndedTone()
   try {
     wazoService.hangup()
   } catch (e) {

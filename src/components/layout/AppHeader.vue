@@ -44,6 +44,11 @@
         ⚙️ SETTINGS
       </button>
 
+      <!-- Nút Test mô phỏng cuộc gọi đến (app5.webp) -->
+      <button class="btn-test-call" title="Mô phỏng cuộc gọi đến theo chuẩn app5.webp" @click="triggerSimulatedIncomingCall">
+        🔔 Test Gọi Đến
+      </button>
+
       <button class="btn-logout-header" title="Đăng xuất khỏi hệ thống" @click="$emit('logout')">
         🚪 Thoát
       </button>
@@ -91,6 +96,20 @@ const updatePresence = () => {
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: { message: `Đã chuyển trạng thái sang: ${presenceState.value.toUpperCase()}` },
+    }),
+  )
+}
+
+const triggerSimulatedIncomingCall = () => {
+  window.dispatchEvent(
+    new CustomEvent('wazo-incoming', {
+      detail: {
+        id: `call-${Date.now()}`,
+        name: 'Nguyễn Hữu Hiếu (Kaito)',
+        extension: '1007',
+        sipUri: 'sip:1007@192.168.1.50',
+        dept: 'SDV MES Application Group Lead',
+      },
     }),
   )
 }
@@ -248,6 +267,27 @@ const updatePresence = () => {
   background: #384252;
   color: white;
   border-color: #64b5f6;
+}
+
+.btn-test-call {
+  background: #0284c7;
+  border: 1px solid #38bdf8;
+  color: #ffffff;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.4);
+}
+
+.btn-test-call:hover {
+  background: #0369a1;
+  transform: translateY(-1px);
 }
 
 .btn-logout-header {

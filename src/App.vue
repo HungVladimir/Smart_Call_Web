@@ -26,7 +26,15 @@
     <!-- 3. Modal Cài đặt hệ thống (Settings Modal) -->
     <SettingsModal :is-open="showSettings" @close="showSettings = false" />
 
-    <!-- 4. Panel Điều khiển Cuộc gọi nổi (Floating Widget góc phải) -->
+    <!-- 4. Modal Cuộc gọi đến chuẩn app5.webp -->
+    <IncomingCallModal
+      :is-open="showIncomingModal"
+      :call-data="incomingCallData"
+      @accept="onAcceptIncomingCall"
+      @reject="onRejectIncomingCall"
+    />
+
+    <!-- 5. Panel Điều khiển Cuộc gọi nổi (Floating Widget góc phải) -->
     <CallControlPanel
       v-show="isPhoneConnected || hasActiveCall"
       :current-call="currentCall"
@@ -39,7 +47,7 @@
       @dial="onDial"
     />
 
-    <!-- 5. Thông báo Toast nổi -->
+    <!-- 6. Thông báo Toast nổi -->
     <transition name="slide-fade">
       <div v-if="toastMessage" class="toast-notification" :class="toastType">
         {{ toastMessage }}
@@ -56,6 +64,7 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import SettingsModal from '@/components/common/SettingsModal.vue'
 import CallControlPanel from '@/components/call/CallControlPanel.vue'
+import IncomingCallModal from '@/components/call/IncomingCallModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -63,6 +72,8 @@ const route = useRoute()
 // --- State Management ---
 const isLoggedIn = ref(false)
 const showSettings = ref(false)
+const showIncomingModal = ref(false)
+const incomingCallData = ref(null)
 const isPhoneConnected = ref(false)
 const phoneStatus = ref('disconnected')
 const currentCall = ref(null)
@@ -126,9 +137,45 @@ const tryConnectPhone = async () => {
 }
 
 const handleIncomingCall = (event) => {
+  incomingCallData.value = event.detail
+  showIncomingModal.value = true
   currentCall.value = event.detail
   hasActiveCall.value = true
-  showToast(`Cuộc gọi đến từ: ${event.detail.remote_name || event.detail.extension}`, 'info')
+}
+
+const onAcceptIncomingCall = (callData) => {
+  showIncomingModal.value = false
+  if (wazoService.session && callData?.rawSession) {
+    try {
+      wazoService.accept(callData.rawSession)
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  showToast(`Đã nhận cuộc gọi từ ${callData.name || callData.extension || 'Đồng nghiệp'}!`, 'success')
+
+  // Chuyển sang màn hình CallsView để hiển thị cuộc gọi đang đàm thoại
+  router.push({
+    path: '/calls',
+    query: {
+      number: callData.extension || '1007',
+      autocall: 'true',
+    },
+  })
+}
+
+const onRejectIncomingCall = (callData) => {
+  showIncomingModal.value = false
+  if (wazoService.session && callData?.rawSession) {
+    try {
+      wazoService.reject(callData.rawSession)
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  currentCall.value = null
+  hasActiveCall.value = false
+  showToast('Đã từ chối cuộc gọi.', 'info')
 }
 
 const handleCallEnded = () => {
