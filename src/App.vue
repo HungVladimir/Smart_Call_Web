@@ -34,9 +34,9 @@
       @reject="onRejectIncomingCall"
     />
 
-    <!-- 5. Panel Điều khiển Cuộc gọi nổi (Floating Widget góc phải) -->
+    <!-- 5. Panel Điều khiển Cuộc gọi nổi (Chỉ hiển thị khi đang có cuộc gọi đàm thoại thực sự) -->
     <CallControlPanel
-      v-show="isPhoneConnected || hasActiveCall"
+      v-show="hasActiveCall"
       :current-call="currentCall"
       :phone-status="phoneStatus"
       @hangup="onHangup"
@@ -341,22 +341,30 @@ body {
   right: 24px;
   padding: 12px 20px;
   border-radius: 8px;
+  background-color: #1e293b;
   color: white;
   font-weight: 500;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
   z-index: 9999;
   min-width: 250px;
+  max-width: 440px;
   font-size: 0.9rem;
+  word-break: break-word;
 }
 
 .toast-notification.info {
-  background-color: #1e88e5;
+  background-color: #0284c7;
 }
 .toast-notification.success {
-  background-color: #2ecc71;
+  background-color: #10b981;
+}
+.toast-notification.warning {
+  background-color: #d97706;
+  border: 1px solid #b45309;
 }
 .toast-notification.error {
-  background-color: #e74c3c;
+  background-color: #ef4444;
 }
 
 .slide-fade-enter-active {

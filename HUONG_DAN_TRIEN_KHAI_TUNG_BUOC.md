@@ -24,6 +24,7 @@
 | **08.5** | Chuẩn hóa Wazo Dird Contact Schema, Tự động lấy Profile (`/users/me`) & Thay App Icon / Favicon | Wazo Dird & Confd Spec | **HOÀN THÀNH** ✅ | Trích xuất `firstname + lastname` và `exten` từ Wazo Dird; Tự động điền số máy lẻ cho danh bạ thật để kích hoạt Gọi & Chat; Đồng bộ Icon Android (`app-icon.webp`) và Favicon web chuẩn PNG/WebP. |
 | **09** | Nâng cấp toàn diện Màn hình Đăng nhập (Login) chuẩn Enterprise & Bổ sung Chế độ thử nghiệm Offline | Nâng cấp UI/UX & Tính năng Sandbox | **HOÀN THÀNH** ✅ | Thiết kế Card nổi khối bo góc 16px, tích hợp icon vector SVG (User, Lock, Toggle Eye), phân loại thông báo lỗi đăng nhập chi tiết (401, Timeout, SSL), bổ sung nút "Chạy chế độ thử nghiệm Offline" và điều hướng Router an toàn. |
 | **10** | Tinh chỉnh giao diện Nội bộ: Header, Dashboard & Bàn phím gọi thoại chuẩn Enterprise | Chuẩn hóa UI/UX & Tối ưu trải nghiệm người dùng | **HOÀN THÀNH** ✅ | Loại bỏ nhãn kỹ thuật LAN và IP nội bộ, nâng cấp 100% icon sang SVG vector sắc nét, tái cấu trúc Dashboard cân đối và chuẩn hóa bàn phím số gọi thoại đối xứng tâm. |
+| **11** | Nâng cấp Tin nhắn Realtime (Top 1), Hội nghị thoại nhóm & Tối ưu Trải nghiệm Widget nổi | Yêu cầu trải nghiệm tin nhắn & họp nhóm | **HOÀN THÀNH** ✅ | Tự động sắp xếp phòng chat lên Top 1 khi gửi/nhận tin; Hỗ trợ họp thoại nhóm qua phòng hội nghị 8001; Nâng cấp icon SVG; Ẩn panel nổi Wazo khi rảnh rỗi để không che nút Gửi; Sửa lỗi hiển thị cảnh báo Toast. |
 
 ---
 
@@ -547,6 +548,29 @@ VITE_APP_MODE=wazo_lan
    - Chuẩn hóa nút Xóa lùi Backspace đồng đường kính `58px` và icon `22px` (tỷ lệ 1:1 cân đối hoàn hảo).
    - Bố trí 2 nút Gọi và Xóa gom chụm vào giữa tâm bàn phím, đối xứng đều qua trục phím số `0`.
    - Nâng cấp toàn bộ hàng nút điều khiển cuộc gọi (Micro, Hold, Loa ngoài, Cúp máy) sang bộ icon SVG vector sắc nét, bổ sung hiệu ứng sóng âm/nhịp thở (*pulse ring animation*) cho avatar khi đang đàm thoại.
+
+---
+
+### BƯỚC 11: NÂNG CẤP TIN NHẮN REALTIME (TOP 1), HỘI NGHỊ THOẠI NHÓM & TỐI ƯU TRẢI NGHIỆM GIAO DIỆN
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:** Tự động đưa cuộc hội thoại có tin nhắn mới nhất lên đầu danh sách theo thời gian thực (Top 1); hỗ trợ luồng gọi thoại nhóm sang phòng hội nghị nội bộ (Conference Bridge); thay thế icon vector SVG hiện đại; dọn sạch các thành phần giao diện thừa che nút gửi tin nhắn và chuẩn hóa thông báo cảnh báo.
+
+#### Các việc đã làm:
+1. **Sắp xếp danh sách phòng chat theo thời gian thực (Top 1):**
+   - Bổ sung trường thời gian epoch `updatedAt` cho từng phòng chat trong `src/services/chatService.js`.
+   - Xử lý cơ chế phản ứng tức thì trong Vue 3: khi người dùng gửi tin nhắn hoặc nhận tin nhắn mới qua WebSocket, cập nhật `updatedAt = Date.now()` và tạo bản sao mảng mới (`rooms.value = [...rooms.value].sort(...)`), giúp phòng chat nhảy lên vị trí đầu tiên ngay lập tức mà không cần chuyển tab hay tải lại trang.
+   - Đồng bộ thứ tự và nội dung bền vững vào `localStorage` (`STORAGE_KEY: 'smartcall_chat_rooms'`).
+2. **Xử lý Gọi thoại & Cuộc gọi hội nghị nhóm (Group Call):**
+   - Cuộc trò chuyện 1-1: Giữ nguyên cơ chế gọi trực tiếp đến số máy lẻ của đối phương (`Wazo.Phone.call(ext)`).
+   - Cuộc trò chuyện nhóm nhiều thành viên: Bổ sung luồng xác nhận khởi tạo **Phòng hội nghị thoại nội bộ (Conference Bridge - Số phòng 8001)**. Tự động gửi tin nhắn mời họp vào phòng chat để toàn bộ thành viên cùng tham gia, đồng thời chuyển hướng hệ thống gọi tự động kết nối vào phòng họp 8001.
+   - Thay thế toàn bộ emoji điện thoại và máy quay thô trên thanh tiêu đề phòng chat bằng bộ icon vector SVG sắc nét `16px`.
+3. **Giải phóng không gian hiển thị & Loại bỏ xung đột che nút Gửi tin nhắn:**
+   - Điều chỉnh điều kiện hiển thị widget cuộc gọi nổi (`CallControlPanel.vue`) trong `App.vue`: Chỉ hiển thị khi thực sự có cuộc gọi thoại đang diễn ra (`hasActiveCall`). Ẩn hoàn toàn khi ở trạng thái rảnh rỗi, giải phóng góc dưới bên phải giúp nút **Gửi ➤** luôn thông thoáng 100%.
+   - Nâng vị trí neo của widget lên `bottom: 80px; right: 24px` để khi đang đàm thoại, người dùng vẫn có thể vừa đàm thoại vừa nhập tin nhắn mà không bị che khuất thanh soạn thảo.
+   - Việt hóa tiêu đề và nội dung panel từ `Wazo: Ready / Disconnected` sang chuẩn thân thiện: `SmartCall: Đang đàm thoại` và `Tổng đài: Chưa kết nối`.
+4. **Khắc phục lỗi hiển thị thông báo Toast cảnh báo (Warning):**
+   - Bổ sung class `.toast-notification.warning` với màu nền hổ phách đậm (`#d97706`), viền nổi `#b45309`, chữ trắng sắc nét, khắc phục triệt để hiện tượng chữ trắng chìm trên nền trắng.
+   - Tối ưu giới hạn độ rộng `max-width: 440px` và giãn dòng `line-height: 1.45` giúp các thông báo kỹ thuật dài hiển thị thanh lịch, dễ đọc.
 
 ---
 

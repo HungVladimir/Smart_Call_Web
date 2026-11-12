@@ -129,18 +129,36 @@ class ChatService {
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
+          // Bổ sung thời gian updatedAt nếu phòng cũ chưa có
+          parsed.forEach((r, idx) => {
+            if (!r.updatedAt) {
+              r.updatedAt = Date.now() - idx * 60000
+            }
+          })
+          parsed.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
           return parsed
         }
       }
     } catch (e) {
       console.warn('Lỗi đọc cache phòng chat:', e)
     }
-    return JSON.parse(JSON.stringify(INITIAL_MOCK_ROOMS))
+    const initial = JSON.parse(JSON.stringify(INITIAL_MOCK_ROOMS))
+    initial.forEach((r, idx) => {
+      r.updatedAt = Date.now() - idx * 60000
+    })
+    return initial
+  }
+
+  // Sắp xếp các phòng chat theo thứ tự tin nhắn mới nhất lên đầu (Top 1)
+  sortRooms() {
+    if (!this.rooms || !Array.isArray(this.rooms)) return
+    this.rooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   }
 
   // Lưu bền vững vào localStorage
   saveRooms() {
     try {
+      this.sortRooms()
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.rooms))
     } catch (e) {
       console.warn('Lỗi lưu cache phòng chat:', e)
@@ -186,7 +204,8 @@ class ChatService {
     if (!this.rooms || this.rooms.length === 0) {
       this.rooms = this.loadSavedRooms()
     }
-    return this.rooms
+    this.sortRooms()
+    return [...this.rooms]
   }
 
   /**
@@ -213,6 +232,7 @@ class ChatService {
         isDirect: true,
         ext: ext,
         memberCount: 2,
+        updatedAt: Date.now(),
         members: [
           { id: '1001', name: currentUserName, dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
           { id: `emp-${ext}`, name: name, dept: 'Nội bộ công ty', ext: ext, isAdmin: false },
@@ -230,6 +250,9 @@ class ChatService {
         ],
       }
       this.rooms.unshift(found)
+      this.saveRooms()
+    } else {
+      found.updatedAt = Date.now()
       this.saveRooms()
     }
 
@@ -284,6 +307,7 @@ class ChatService {
       room.messages.push(newMsg)
       room.preview = text
       room.time = timeStr
+      room.updatedAt = Date.now()
       this.saveRooms()
     }
 

@@ -10,7 +10,7 @@
 
         <div class="room-list">
           <div
-            v-for="room in rooms"
+            v-for="room in sortedRooms"
             :key="room.id"
             class="room-item"
             :class="{ active: currentRoom && currentRoom.id === room.id }"
@@ -51,8 +51,24 @@
           </div>
 
           <div class="chat-header-actions">
-            <button class="btn-action" title="Gọi thoại cho nhóm" @click="startVoiceCall">📞</button>
-            <button class="btn-action" title="Gọi video nhóm" @click="startVideoCall">🎥</button>
+            <button
+              class="btn-action"
+              :title="currentRoom.isDirect ? 'Gọi thoại 1-1 trực tiếp' : 'Khởi tạo cuộc gọi hội nghị nhóm'"
+              @click="startVoiceCall"
+            >
+              <svg class="header-action-svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z" />
+              </svg>
+            </button>
+            <button
+              class="btn-action"
+              :title="currentRoom.isDirect ? 'Gọi video 1-1' : 'Hội nghị truyền hình nhóm'"
+              @click="startVideoCall"
+            >
+              <svg class="header-action-svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" />
+              </svg>
+            </button>
             <button class="btn-manage-members" @click="openAddMemberModal">👥 Thành viên</button>
           </div>
         </div>
@@ -251,6 +267,10 @@ const currentUserExt = computed(() => localStorage.getItem('smartcall_extension'
 const rooms = ref([])
 const currentRoom = ref(null)
 
+const sortedRooms = computed(() => {
+  return [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+})
+
 const currentRoomMembers = computed(() => {
   return currentRoom.value?.members || []
 })
@@ -260,7 +280,8 @@ const selectedMsgReaders = computed(() => {
 })
 
 const loadRooms = async () => {
-  rooms.value = await chatService.getRooms()
+  const list = await chatService.getRooms()
+  rooms.value = [...list]
   if (!currentRoom.value && rooms.value.length > 0) {
     currentRoom.value = rooms.value[0]
   }
@@ -294,10 +315,23 @@ const sendMessage = async () => {
   const text = inputText.value.trim()
   if (!text || !currentRoom.value) return
 
+  const targetId = currentRoom.value.id
   inputText.value = ''
-  await chatService.sendMessage(currentRoom.value.id, text, currentUserName.value)
-  rooms.value = await chatService.getRooms()
-  const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
+
+  // Cập nhật ngay tức thì trên mảng rooms để giao diện nhảy Top 1 lập tức
+  const target = rooms.value.find((r) => r.id === targetId)
+  if (target) {
+    target.updatedAt = Date.now()
+    target.preview = text
+    target.time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+  }
+  rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+
+  // Lưu bền vững vào cơ sở dữ liệu chatService
+  await chatService.sendMessage(targetId, text, currentUserName.value)
+  const freshRooms = await chatService.getRooms()
+  rooms.value = [...freshRooms]
+  const updated = rooms.value.find((r) => r.id === targetId)
   if (updated) currentRoom.value = updated
   scrollToBottom()
 }
@@ -317,7 +351,8 @@ const checkDirectChatRoute = async () => {
     const name = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
 
     const directRoom = await chatService.getDirectRoom(ext, name, currentUserName.value)
-    rooms.value = await chatService.getRooms()
+    const fresh = await chatService.getRooms()
+    rooms.value = [...fresh]
     currentRoom.value = directRoom
     scrollToBottom()
   }
@@ -347,7 +382,12 @@ const handleRealtimeMessage = (data) => {
       readers: [],
     })
     targetRoom.preview = data.content
+    targetRoom.updatedAt = Date.now()
+    rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     chatService.saveRooms()
+    chatService.getRooms().then((res) => {
+      rooms.value = [...res]
+    })
     if (currentRoom.value && currentRoom.value.id === targetRoom.id) {
       scrollToBottom()
     } else {
@@ -444,19 +484,73 @@ const openReadIdModal = (msg) => {
 
 const startVoiceCall = () => {
   if (!currentRoom.value) return
-  window.dispatchEvent(
-    new CustomEvent('app-action', {
-      detail: { type: 'dial', value: currentRoom.value.ext || '1002' },
-    }),
-  )
+  if (currentRoom.value.isDirect) {
+    const targetExt = currentRoom.value.ext || '1002'
+    window.dispatchEvent(
+      new CustomEvent('app-action', {
+        detail: { type: 'dial', value: targetExt },
+      }),
+    )
+  } else {
+    const confRoomNumber = '8001'
+    const memberCount = currentRoomMembers.value.length || 3
+    if (
+      confirm(
+        `Khởi tạo cuộc gọi hội nghị cho nhóm [${currentRoom.value.title}] (${memberCount} thành viên)?\n\nHệ thống sẽ kết nối bạn vào phòng hội nghị nội bộ số máy ${confRoomNumber} và gửi thông báo mời các thành viên tham gia.`
+      )
+    ) {
+      chatService.sendMessage(
+        currentRoom.value.id,
+        `🔔 [${currentUserName.value}] đã bắt đầu cuộc gọi hội nghị thoại nhóm (Số phòng họp: ${confRoomNumber}). Mọi người vui lòng nhấn nút Gọi để cùng tham gia!`,
+        'Hệ thống Tổng đài'
+      )
+      const target = rooms.value.find((r) => r.id === currentRoom.value.id)
+      if (target) {
+        target.updatedAt = Date.now()
+      }
+      rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      chatService.getRooms().then((res) => {
+        rooms.value = [...res]
+        const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
+        if (updated) currentRoom.value = updated
+        scrollToBottom()
+      })
+      window.dispatchEvent(
+        new CustomEvent('app-action', {
+          detail: { type: 'dial', value: confRoomNumber },
+        }),
+      )
+    }
+  }
 }
 
 const startVideoCall = () => {
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: 'Khởi tạo cuộc gọi Video WebRTC tới nhóm...' },
-    }),
-  )
+  if (!currentRoom.value) return
+  if (currentRoom.value.isDirect) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `Khởi tạo cuộc gọi Video 1-1 tới máy lẻ ${currentRoom.value.ext || '1002'}...`,
+          type: 'info',
+        },
+      }),
+    )
+    window.dispatchEvent(
+      new CustomEvent('app-action', {
+        detail: { type: 'dial', value: currentRoom.value.ext || '1002' },
+      }),
+    )
+  } else {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message:
+            'Tính năng Video nhóm yêu cầu máy chủ Media SFU (Janus/Jitsi Gateway). Hiện tại hệ thống hỗ trợ họp thoại nhóm qua phòng hội nghị 8001.',
+          type: 'warning',
+        },
+      }),
+    )
+  }
 }
 </script>
 
@@ -662,6 +756,17 @@ const startVideoCall = () => {
 
 .btn-action:hover {
   background: #f1f5f9;
+}
+
+.header-action-svg {
+  width: 16px;
+  height: 16px;
+  fill: #475569;
+  transition: fill 0.15s;
+}
+
+.btn-action:hover .header-action-svg {
+  fill: #1e88e5;
 }
 
 .btn-manage-members {

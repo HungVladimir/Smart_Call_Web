@@ -21,7 +21,7 @@
       <!-- Trạng thái 1: Chưa kết nối tổng đài -->
       <div v-if="phoneStatus === 'disconnected'" class="state disconnected">
         <div class="icon">⚠️</div>
-        <p>Chưa kết nối Wazo Server</p>
+        <p>Chưa kết nối Máy chủ Tổng đài</p>
         <small>Vui lòng kiểm tra mạng hoặc SSL</small>
       </div>
 
@@ -131,10 +131,10 @@ const panelStatusClass = computed(() => {
 })
 
 const panelTitle = computed(() => {
-  if (props.phoneStatus === 'disconnected') return 'Wazo: Disconnected'
-  if (props.phoneStatus === 'connecting') return 'Wazo: Connecting...'
-  if (hasActiveCall.value) return 'Wazo: Active Call'
-  return 'Wazo: Ready'
+  if (props.phoneStatus === 'disconnected') return 'Tổng đài: Chưa kết nối'
+  if (props.phoneStatus === 'connecting') return 'Tổng đài: Đang kết nối...'
+  if (hasActiveCall.value) return 'SmartCall: Đang đàm thoại'
+  return 'SmartCall: Sẵn sàng'
 })
 
 // Thông tin cuộc gọi
@@ -216,8 +216,8 @@ const getAvatarColor = (name) => {
 /* Container chính */
 .call-panel {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  bottom: 80px;
+  right: 24px;
   width: 320px;
   background: white;
   border-radius: 12px;
