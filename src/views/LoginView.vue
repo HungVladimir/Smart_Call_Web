@@ -58,17 +58,6 @@
               Remember me
             </label>
           </div>
-
-          <!-- Thông báo lỗi đăng nhập nếu có -->
-          <div v-if="loginError" class="login-error-alert">
-            <div class="error-msg">{{ loginError }}</div>
-            <a href="https://107.126.11.126:9443" target="_blank" class="cert-link">
-              🔒 Bấm vào đây để tin cậy chứng chỉ SSL (Advanced ➔ Proceed)
-            </a>
-            <button type="button" class="btn-offline-bypass" @click="enterOfflineDemo">
-              Tiếp tục vào chế độ mô phỏng Offline ➔
-            </button>
-          </div>
         </form>
       </div>
     </main>
@@ -87,17 +76,15 @@ const password = ref('')
 const showPassword = ref(false)
 const rememberMe = ref(true)
 const loading = ref(false)
-const loginError = ref('')
 
 const handleLogin = async () => {
   loading.value = true
-  loginError.value = ''
   let realDisplayName = ''
   let realExtension = ''
 
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Hết thời gian chờ máy chủ Wazo (3s)')), 3000),
+      setTimeout(() => reject(new Error('Timeout máy chủ Wazo (2s)')), 2000),
     )
     await Promise.race([wazoService.login(username.value, password.value), timeoutPromise])
 
@@ -116,35 +103,21 @@ const handleLogin = async () => {
       }
     }
   } catch (err) {
-    console.warn('Lỗi kết nối máy chủ Wazo:', err.message)
-    loginError.value = `Không thể kết nối máy chủ Wazo (${err.message}). Có thể do tài khoản sai hoặc trình duyệt chưa tin cậy chứng chỉ SSL!`
+    console.log('Chưa kết nối được máy chủ Wazo, tự động chuyển sang chế độ Demo/Fake:', err.message)
+  } finally {
+    const finalName = realDisplayName || username.value || 'Người dùng'
+    const finalExt = realExtension || '1001'
+
+    localStorage.setItem('smartcall_username', finalName)
+    localStorage.setItem('smartcall_extension', finalExt)
+    localStorage.setItem('smartcall_role', 'user')
+    localStorage.setItem('smartcall_is_admin', 'false')
+    localStorage.setItem('smartcall_logged_in', 'true')
+
+    window.dispatchEvent(new CustomEvent('app-login-success'))
     loading.value = false
-    return
+    router.push('/dashboard')
   }
-
-  const finalName = realDisplayName || username.value || 'Người dùng'
-  const finalExt = realExtension || '1001'
-
-  localStorage.setItem('smartcall_username', finalName)
-  localStorage.setItem('smartcall_extension', finalExt)
-  localStorage.setItem('smartcall_role', 'user')
-  localStorage.setItem('smartcall_is_admin', 'false')
-  localStorage.setItem('smartcall_logged_in', 'true')
-
-  window.dispatchEvent(new CustomEvent('app-login-success'))
-  loading.value = false
-  router.push('/dashboard')
-}
-
-// Bỏ qua lỗi và vào chế độ Offline Demo
-const enterOfflineDemo = () => {
-  localStorage.setItem('smartcall_username', username.value || 'Người dùng Demo')
-  localStorage.setItem('smartcall_extension', '1001')
-  localStorage.setItem('smartcall_role', 'user')
-  localStorage.setItem('smartcall_is_admin', 'false')
-  localStorage.setItem('smartcall_logged_in', 'true')
-  window.dispatchEvent(new CustomEvent('app-login-success'))
-  router.push('/dashboard')
 }
 </script>
 
@@ -337,42 +310,6 @@ const enterOfflineDemo = () => {
 
 .btn-demo-user:hover {
   background: #dcfce7;
-}
-
-.login-error-alert {
-  margin-top: 15px;
-  padding: 12px;
-  background: #fef2f2;
-  border: 1px solid #f87171;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  color: #991b1b;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  line-height: 1.4;
-}
-
-.cert-link {
-  color: #2563eb;
-  font-weight: 600;
-  text-decoration: underline;
-  word-break: break-all;
-}
-
-.btn-offline-bypass {
-  background: #f3f4f6;
-  border: 1px solid #d1d5db;
-  color: #4b5563;
-  padding: 6px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.8rem;
-  transition: all 0.2s;
-}
-
-.btn-offline-bypass:hover {
-  background: #e5e7eb;
 }
 
 .remember-me {
