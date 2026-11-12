@@ -645,6 +645,10 @@ VITE_APP_MODE=wazo_lan
    - **Máy 1:** Đăng nhập `alice` / `Test@123` (Máy lẻ 1001) $\rightarrow$ Cấp quyền Micro $\rightarrow$ Header hiện `🟢 Trực tuyến (1001)`.
    - **Máy 2:** Đăng nhập `bob` / `Test@123` (Máy lẻ 1002) $\rightarrow$ Cấp quyền Micro $\rightarrow$ Header hiện `🟢 Trực tuyến (1002)`.
    - Máy 1 quay số 1002 $\rightarrow$ Máy 2 đổ chuông và hiện modal cuộc gọi đến $\rightarrow$ Bấm Nghe máy $\rightarrow$ Kiểm tra âm thanh 2 chiều $\rightarrow$ Bấm Cúp máy $\rightarrow$ Kiểm tra bản ghi CDR lưu tự động vào Lịch sử.
+6. **Tách biệt 2 trạng thái cuộc gọi (Đang đổ chuông & Đang đàm thoại) và cơ chế bộ đếm thời gian:**
+   - **Trạng thái Đang đổ chuông (`ringing`):** Khi bấm gọi, chuông chờ `tút... tút...` phát liên tục theo chu kỳ chuẩn ITU-T, avatar chuyển sang hiệu ứng sáng vàng cam, thời lượng hiển thị `📞 Đang đổ chuông...` và đồng hồ **KHÔNG ĐẾM GIỜ**.
+   - **Trạng thái Đang đàm thoại (`connected`):** Khi đối phương nhấc máy (nhận sự kiện `wazo-accepted` từ Wazo hoặc sau 2.5s mô phỏng khi test một mình), chuông tút dừng lại, avatar chuyển sang xanh ngọc, và đồng hồ đếm thời gian thực tế mới bắt đầu chạy (`00:01, 00:02...`).
+   - **Bảo toàn cả 2 cơ chế:** Vừa giữ nguyên tính năng kiểm thử độc lập một mình (mô phỏng đổ chuông 2.5s rồi tự nhấc máy), vừa tuân thủ chuẩn mực viễn thông khi kết nối thật với máy chủ Wazo.
 
 ---
 

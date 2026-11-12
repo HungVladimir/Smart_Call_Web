@@ -57,15 +57,17 @@
       </div>
 
       <!-- Màn hình trạng thái cuộc gọi -->
-      <div class="call-status-box" :class="{ inCall: isCalling, onHold: isHeld }">
-        <div class="call-avatar" :class="{ pulsing: isCalling }">
+      <div class="call-status-box" :class="{ inCall: isCalling, onHold: isHeld, isRinging: callState === 'ringing' }">
+        <div class="call-avatar" :class="{ pulsing: isCalling, ringingPulse: callState === 'ringing' }">
           <span>{{ callAvatarInitials }}</span>
         </div>
 
         <div class="caller-details">
           <h3>{{ callerName }}</h3>
           <p class="sip-uri">{{ callerSip }}</p>
-          <p v-if="isCalling" class="duration-text">{{ formattedDuration }}</p>
+          <p v-if="isCalling" class="duration-text" :class="{ ringingText: callState === 'ringing' }">
+            {{ durationText }}
+          </p>
           <p v-else class="idle-text">Sẵn sàng thực hiện cuộc gọi</p>
         </div>
 
@@ -147,12 +149,17 @@ import { contactService } from '@/services/contactService'
 
 const route = useRoute()
 const extension = ref('1002')
-const isCalling = ref(false)
+
+// Quản lý trạng thái cuộc gọi: 'idle' (sẵn sàng), 'ringing' (đang đổ chuông), 'connected' (đang đàm thoại)
+const callState = ref('idle')
+const isCalling = computed(() => callState.value !== 'idle')
+
 const isMuted = ref(false)
 const isHeld = ref(false)
 const isSpeaker = ref(false)
 const callSeconds = ref(0)
 let timer = null
+let mockAnswerTimer = null
 
 const keys = [
   { num: '1', sub: '' },
@@ -170,7 +177,10 @@ const keys = [
 ]
 
 const callerName = computed(() => {
-  if (isCalling.value) {
+  if (callState.value === 'ringing') {
+    return `Đang đổ chuông tới máy lẻ ${extension.value}...`
+  }
+  if (callState.value === 'connected') {
     if (isHeld.value) return `Máy lẻ ${extension.value} (Tạm giữ - Hold)`
     return `Đang đàm thoại: Máy lẻ ${extension.value}`
   }
@@ -193,6 +203,16 @@ const formattedDuration = computed(() => {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 })
 
+const durationText = computed(() => {
+  if (callState.value === 'ringing') {
+    return '📞 Đang đổ chuông...'
+  }
+  if (callState.value === 'connected') {
+    return formattedDuration.value
+  }
+  return '00:00'
+})
+
 const pressKey = (key) => {
   audioService.playDtmfTone(key)
   if (extension.value.length < 6) {
@@ -204,42 +224,12 @@ const clearDigit = () => {
   extension.value = extension.value.slice(0, -1)
 }
 
-const handleDial = async () => {
-  const ext = extension.value.trim()
-  if (!ext) return
-
-  audioService.playRingbackTone()
-
-  isCalling.value = true
-  isHeld.value = false
+// Bắt đầu đếm giây đàm thoại khi đối phương đã nhấc máy
+const startCallTimer = () => {
+  callState.value = 'connected'
+  audioService.stopRingbackTone()
   callSeconds.value = 0
   clearInterval(timer)
-
-  // Gọi thật qua Wazo WebRTC
-  try {
-    const session = await wazoService.makeCall(ext)
-    if (session) {
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: {
-            message: `📞 Đang thiết lập cuộc gọi WebRTC tới máy lẻ ${ext}...`,
-            type: 'info',
-          },
-        }),
-      )
-    }
-  } catch (e) {
-    console.log('Chưa kết nối được máy lẻ thật qua WebRTC (Chế độ mô phỏng):', e)
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `📞 Đang kết nối tín hiệu cuộc gọi thoại tới máy lẻ ${ext}...`,
-          type: 'info',
-        },
-      }),
-    )
-  }
-
   timer = setInterval(() => {
     if (!isHeld.value) {
       callSeconds.value++
@@ -247,8 +237,64 @@ const handleDial = async () => {
   }, 1000)
 }
 
+const handleDial = async () => {
+  const ext = extension.value.trim()
+  if (!ext) return
+
+  clearTimeout(mockAnswerTimer)
+  clearInterval(timer)
+  callSeconds.value = 0
+  isHeld.value = false
+  isMuted.value = false
+
+  // Bước 1: Chuyển sang trạng thái Đang đổ chuông (Chưa tính giờ)
+  callState.value = 'ringing'
+  audioService.startRingbackTone()
+
+  let isRealWazoCall = false
+
+  // Thử gọi thật qua Wazo WebRTC
+  try {
+    const session = await wazoService.makeCall(ext)
+    if (session) {
+      isRealWazoCall = true
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `📞 Đang gửi tín hiệu cuộc gọi WebRTC tới máy lẻ ${ext}...`,
+            type: 'info',
+          },
+        }),
+      )
+    }
+  } catch (e) {
+    console.info('Cuộc gọi khởi chạy ở chế độ mô phỏng offline:', e)
+  }
+
+  // Nếu là chế độ thử nghiệm offline (khi test 1 máy đơn lẻ không có Wazo thật):
+  // Giữ cơ chế test: Tự động giả lập đối phương nhấc máy sau 2.5s đổ chuông để vẫn test được thời lượng
+  if (!isRealWazoCall || localStorage.getItem('smartcall_offline_mode') === 'true') {
+    mockAnswerTimer = setTimeout(() => {
+      if (callState.value === 'ringing') {
+        startCallTimer()
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: {
+              message: `🎉 [Mô phỏng] Đối phương đã nhấc máy! Bắt đầu đàm thoại...`,
+              type: 'success',
+            },
+          }),
+        )
+      }
+    }, 2500)
+  }
+}
+
 const hangupCall = () => {
+  clearTimeout(mockAnswerTimer)
+  audioService.stopRingbackTone()
   audioService.playCallEndedTone()
+
   try {
     wazoService.hangup()
   } catch (e) {
@@ -256,7 +302,7 @@ const hangupCall = () => {
   }
 
   // Tự động ghi nhận bản ghi vào Lịch sử cuộc gọi (CDR)
-  if (isCalling.value) {
+  if (callState.value !== 'idle') {
     const ext = extension.value.trim()
     const contact = contactService.findContactByExtension(ext)
     const callName =
@@ -264,19 +310,22 @@ const hangupCall = () => {
     const callDept = (route.query && route.query.dept) || contact?.dept || 'Khối Kỹ thuật'
     const direction = route.query && route.query.direction === 'inbound' ? 'inbound' : 'outbound'
 
+    const wasConnected = callState.value === 'connected'
+
     historyService.addRecord({
       name: callName,
       extension: ext,
       dept: callDept,
-      duration: callSeconds.value,
+      duration: wasConnected ? callSeconds.value : 0,
       direction: direction,
-      status: 'success',
-      answered: true,
+      status: wasConnected ? 'success' : 'declined',
+      answered: wasConnected,
     })
   }
 
-  isCalling.value = false
+  callState.value = 'idle'
   isHeld.value = false
+  isMuted.value = false
   clearInterval(timer)
 }
 
@@ -310,6 +359,8 @@ const toggleHold = () => {
 
 // Xử lý các sự kiện cuộc gọi thật từ máy chủ Wazo
 const onRemoteAccepted = () => {
+  clearTimeout(mockAnswerTimer)
+  startCallTimer()
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: { message: `🎉 Cuộc gọi đã được kết nối thành công! Đang đàm thoại...`, type: 'success' },
@@ -347,15 +398,8 @@ watch(
         }, 150)
       } else if (newQuery.active === 'true') {
         // Cuộc gọi đến vừa được nghe máy -> Đang đàm thoại trực tiếp
-        isCalling.value = true
-        isHeld.value = false
-        callSeconds.value = 0
-        clearInterval(timer)
-        timer = setInterval(() => {
-          if (!isHeld.value) {
-            callSeconds.value++
-          }
-        }, 1000)
+        audioService.stopRingbackTone()
+        startCallTimer()
       }
     }
   },
@@ -369,6 +413,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearTimeout(mockAnswerTimer)
+  audioService.stopRingbackTone()
   window.removeEventListener('wazo-accepted', onRemoteAccepted)
   window.removeEventListener('wazo-ended', onRemoteEnded)
   window.removeEventListener('wazo-failed', onRemoteFailed)
@@ -592,6 +638,12 @@ onUnmounted(() => {
   animation: pulse-ring 2s infinite;
 }
 
+.call-avatar.ringingPulse {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.25);
+  animation: pulse-ring-amber 1.5s infinite;
+}
+
 @keyframes pulse-ring {
   0% {
     box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
@@ -601,6 +653,18 @@ onUnmounted(() => {
   }
   100% {
     box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes pulse-ring-amber {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(245, 158, 11, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
   }
 }
 
@@ -625,6 +689,13 @@ onUnmounted(() => {
   font-family: monospace;
   margin: 10px 0 24px 0;
   letter-spacing: 1px;
+}
+
+.duration-text.ringingText {
+  color: #fbbf24;
+  font-size: 1.05rem;
+  letter-spacing: 0.5px;
+  animation: pulse-ring-amber 1.5s infinite;
 }
 
 .idle-text {

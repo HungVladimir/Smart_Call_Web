@@ -86,6 +86,32 @@ class AudioService {
   }
 
   /**
+   * Phát chu kỳ chuông chờ cuộc gọi đi lặp lại liên tục (Ringback Tone: Tút... Tút...)
+   */
+  startRingbackTone() {
+    if (this.isRingbackActive) return
+    this.isRingbackActive = true
+
+    const playTone = () => {
+      if (!this.isRingbackActive) return
+      this.playRingbackTone()
+    }
+    playTone()
+    this.ringbackInterval = setInterval(playTone, 3000)
+  }
+
+  /**
+   * Dừng chuông chờ cuộc gọi đi
+   */
+  stopRingbackTone() {
+    this.isRingbackActive = false
+    if (this.ringbackInterval) {
+      clearInterval(this.ringbackInterval)
+      this.ringbackInterval = null
+    }
+  }
+
+  /**
    * Phát âm thanh chuông chờ cuộc gọi đi (Ringback Tone: Tút... Tút...)
    */
   playRingbackTone() {
