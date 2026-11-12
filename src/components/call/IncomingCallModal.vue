@@ -78,11 +78,11 @@ const callerName = computed(() => {
 const callerSip = computed(() => {
   if (props.callData?.sipUri) return props.callData.sipUri
   const ext = props.callData?.extension || '1007'
-  return `sip:${ext}@192.168.1.50`
+  return `sip:${ext}@107.126.11.126`
 })
 
 const callerDept = computed(() => {
-  return props.callData?.dept || 'Nội bộ SDV LAN'
+  return props.callData?.dept || 'Nội bộ công ty'
 })
 
 const initials = computed(() => {

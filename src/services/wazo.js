@@ -3,9 +3,9 @@ import Wazo from '@wazo/sdk'
 class WazoService {
   constructor() {
     this.session = null
-    // Lấy IP từ file môi trường .env hoặc dùng mặc định máy chủ Wazo LAN nội bộ SDV
-    this.host = import.meta.env.VITE_WAZO_HOST || '192.168.1.50:9443'
-    this.clientId = import.meta.env.VITE_WAZO_CLIENT_ID || 'sdv-webapp-vue'
+    // Lấy IP từ file môi trường .env hoặc dùng mặc định máy chủ tổng đài
+    this.host = import.meta.env.VITE_WAZO_HOST || '107.126.11.126:9443'
+    this.clientId = import.meta.env.VITE_WAZO_CLIENT_ID || 'webapp-vue'
   }
 
   init() {

@@ -13,7 +13,7 @@
             v-for="room in rooms"
             :key="room.id"
             class="room-item"
-            :class="{ active: currentRoom.id === room.id }"
+            :class="{ active: currentRoom && currentRoom.id === room.id }"
             @click="selectRoom(room)"
           >
             <div class="avatar-sm" :style="{ backgroundColor: room.avatarBg }">
@@ -25,7 +25,7 @@
                 <span class="room-title">
                   {{ room.title }}
                   <small v-if="!room.isDirect" class="member-tag">
-                    ({{ room.id === currentRoom.id ? currentRoomMembers.length : (room.memberCount || 3) }})
+                    ({{ currentRoom && room.id === currentRoom.id ? currentRoomMembers.length : (room.memberCount || (room.members ? room.members.length : 3)) }})
                   </small>
                 </span>
                 <span class="room-time">{{ room.time }}</span>
@@ -40,7 +40,7 @@
       </div>
 
       <!-- 2. CỘT KHUNG CHAT CHI TIẾT -->
-      <div class="chat-main-col">
+      <div v-if="currentRoom" class="chat-main-col">
         <!-- Chat Header -->
         <div class="chat-header">
           <div class="chat-title-group">
@@ -108,6 +108,14 @@
             @keyup.enter="sendMessage"
           />
           <button class="btn-send" @click="sendMessage">Gửi ➤</button>
+        </div>
+      </div>
+
+      <!-- Khung chờ nếu chưa chọn phòng -->
+      <div v-else class="chat-main-col empty-box">
+        <div class="empty-hint">
+          <span class="empty-icon">💬</span>
+          <p>Chọn một cuộc trò chuyện ở danh sách bên trái hoặc từ Danh bạ để bắt đầu nhắn tin.</p>
         </div>
       </div>
     </div>
@@ -217,7 +225,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { chatService } from '@/services/chatService'
 import { websocketService } from '@/services/websocketService'
@@ -240,117 +248,38 @@ const currentIsAdmin = computed(() => localStorage.getItem('smartcall_is_admin')
 const currentUserName = computed(() => localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const currentUserExt = computed(() => localStorage.getItem('smartcall_extension') || '1001')
 
-const rooms = reactive([
-  {
-    id: 1,
-    title: 'Nhóm Kỹ thuật LAN',
-    memberCount: 4,
-    preview: 'Lương Đức Anh: ok anh ơi, để em kiểm tra kết nối',
-    time: '15:33',
-    unread: 0,
-    avatarBg: '#3b82f6',
-    icon: '👥',
-    isDirect: false,
-    messages: [
-      {
-        id: 101,
-        sender: 'theirs',
-        senderName: 'Lương Đức Anh (Kỹ sư Phần mềm)',
-        text: 'Mọi người kiểm tra giúp em line 1002 có gọi sang được phân xưởng không ạ?',
-        time: '15:28',
-        readStatus: 'Read (12)',
-        readers: ['Quản trị viên', 'Nguyễn Hữu Hiếu', 'Trần Văn Bình'],
-      },
-      {
-        id: 102,
-        sender: 'mine',
-        senderName: 'Tôi',
-        text: 'Đã thử kiểm tra gọi thoại qua WebRTC, âm thanh đều thông suốt rồi nhé!',
-        time: '15:30',
-        readStatus: 'Read (2)',
-        readers: ['Lương Đức Anh', 'Trần Văn Bình'],
-      },
-      {
-        id: 103,
-        sender: 'theirs',
-        senderName: 'Nguyễn Hữu Hiếu',
-        text: 'Tuyệt vời, tí nữa cập nhật lại bảng danh bạ để mọi người cùng dùng nhé.',
-        time: '15:32',
-        readStatus: 'Read (1)',
-        readers: ['Quản trị viên'],
-      },
-    ],
-  },
-  {
-    id: 2,
-    title: 'Vận hành Phân xưởng MFQ',
-    memberCount: 8,
-    preview: 'Báo cáo ca làm việc hôm nay bình thường.',
-    time: '15:58',
-    unread: 3,
-    avatarBg: '#10b981',
-    icon: '🏭',
-    isDirect: false,
-    messages: [
-      {
-        id: 201,
-        sender: 'theirs',
-        senderName: 'Trần Văn Bình',
-        text: 'Báo cáo ca làm việc hôm nay bình thường.',
-        time: '15:58',
-        readStatus: 'Read (5)',
-        readers: ['Quản trị viên'],
-      },
-    ],
-  },
-  {
-    id: 3,
-    title: 'Nguyễn Hữu Hiếu',
-    memberCount: 2,
-    preview: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
-    time: '14:15',
-    unread: 0,
-    avatarBg: '#f59e0b',
-    icon: 'NH',
-    isDirect: true,
-    ext: '1007',
-    messages: [
-      {
-        id: 301,
-        sender: 'theirs',
-        senderName: 'Nguyễn Hữu Hiếu',
-        text: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
-        time: '14:15',
-        readStatus: 'Read (1)',
-        readers: ['Quản trị viên'],
-      },
-    ],
-  },
-])
+const rooms = ref([])
+const currentRoom = ref(null)
 
-const currentRoom = ref(rooms[0])
-
-const currentRoomMembers = reactive([
-  { id: 1, name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
-  { id: 2, name: 'Nguyễn Văn An', dept: 'Nhóm Ứng dụng', ext: '1002', isAdmin: false },
-  { id: 3, name: 'Trần Văn Bình', dept: 'Phân xưởng MFQ', ext: '1003', isAdmin: false },
-  { id: 4, name: 'Lương Đức Anh', dept: 'Phòng Phát triển', ext: '1006', isAdmin: false },
-])
+const currentRoomMembers = computed(() => {
+  return currentRoom.value?.members || []
+})
 
 const selectedMsgReaders = computed(() => {
   return selectedMsg.value?.readers || [currentUserName.value]
 })
 
+const loadRooms = async () => {
+  rooms.value = await chatService.getRooms()
+  if (!currentRoom.value && rooms.value.length > 0) {
+    currentRoom.value = rooms.value[0]
+  }
+}
+
 const selectRoom = (room) => {
   currentRoom.value = room
   room.unread = 0
+  chatService.saveRooms()
   scrollToBottom()
 }
 
 // Ghim tin nhắn bất kỳ lên đầu phòng chat
-const pinMessage = (msg) => {
+const pinMessage = async (msg) => {
   pinnedNotice.value = `${msg.senderName}: "${msg.text}"`
   showPinned.value = true
+  if (currentRoom.value) {
+    await chatService.updatePinnedMessage(currentRoom.value.id, pinnedNotice.value)
+  }
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: {
@@ -363,25 +292,13 @@ const pinMessage = (msg) => {
 
 const sendMessage = async () => {
   const text = inputText.value.trim()
-  if (!text) return
+  if (!text || !currentRoom.value) return
 
   inputText.value = ''
-  currentRoom.value.messages.push({
-    id: Date.now(),
-    sender: 'mine',
-    senderName: currentUserName.value,
-    text,
-    time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-    readStatus: 'Read (0)',
-    readers: [],
-  })
-  currentRoom.value.preview = text
-
-  try {
-    await chatService.sendMessage(currentRoom.value.id, text)
-  } catch (e) {
-    /* ignore */
-  }
+  await chatService.sendMessage(currentRoom.value.id, text, currentUserName.value)
+  rooms.value = await chatService.getRooms()
+  const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
+  if (updated) currentRoom.value = updated
   scrollToBottom()
 }
 
@@ -394,44 +311,14 @@ const scrollToBottom = () => {
 }
 
 // Xử lý mở hội thoại 1-1 trực tiếp khi người dùng chuyển từ Danh bạ sang
-const checkDirectChatRoute = () => {
+const checkDirectChatRoute = async () => {
   if (route.query && route.query.ext) {
     const ext = String(route.query.ext)
     const name = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
 
-    let found = rooms.find(
-      (r) => r.ext === ext || (r.title && r.title.includes(ext)) || (r.title && r.title.includes(name)),
-    )
-
-    if (!found) {
-      const newRoom = {
-        id: `direct-${ext}-${Date.now()}`,
-        title: `${name}`,
-        preview: 'Bắt đầu cuộc trò chuyện trực tiếp...',
-        time: 'Mới',
-        unread: 0,
-        avatarBg: '#0284c7',
-        icon: name.slice(0, 2).toUpperCase(),
-        isDirect: true,
-        ext: ext,
-        memberCount: 2,
-        messages: [
-          {
-            id: Date.now(),
-            sender: 'theirs',
-            senderName: name,
-            text: `Xin chào! Bạn có thể trao đổi trực tiếp với tôi qua máy lẻ ${ext}.`,
-            time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-            readStatus: 'Read',
-            readers: [currentUserName.value],
-          },
-        ],
-      }
-      rooms.unshift(newRoom)
-      found = newRoom
-    }
-
-    currentRoom.value = found
+    const directRoom = await chatService.getDirectRoom(ext, name, currentUserName.value)
+    rooms.value = await chatService.getRooms()
+    currentRoom.value = directRoom
     scrollToBottom()
   }
 }
@@ -447,8 +334,9 @@ watch(
 // Lắng nghe tin nhắn mới từ WebSocket
 const handleRealtimeMessage = (data) => {
   if (!data) return
-  const targetRoom = rooms.find((r) => r.id === data.room_uuid)
+  const targetRoom = rooms.value.find((r) => r.id === data.room_uuid)
   if (targetRoom) {
+    if (!targetRoom.messages) targetRoom.messages = []
     targetRoom.messages.push({
       id: data.uuid || `msg-${Date.now()}`,
       sender: 'theirs',
@@ -459,7 +347,8 @@ const handleRealtimeMessage = (data) => {
       readers: [],
     })
     targetRoom.preview = data.content
-    if (currentRoom.value.id === targetRoom.id) {
+    chatService.saveRooms()
+    if (currentRoom.value && currentRoom.value.id === targetRoom.id) {
       scrollToBottom()
     } else {
       targetRoom.unread = (targetRoom.unread || 0) + 1
@@ -468,6 +357,8 @@ const handleRealtimeMessage = (data) => {
 }
 
 onMounted(async () => {
+  await loadRooms()
+  await checkDirectChatRoute()
   websocketService.connect()
   websocketService.on('chatd_user_room_message_created', handleRealtimeMessage)
 })
@@ -478,21 +369,24 @@ onUnmounted(() => {
 
 // Modal Quản lý thành viên
 const openAddMemberModal = () => {
+  if (!currentRoom.value) return
   editGroupTitle.value = currentRoom.value.title
   isTitleChanged.value = false
   showMemberModal.value = true
 }
 
 const checkTitleChange = () => {
+  if (!currentRoom.value) return
   isTitleChanged.value =
     editGroupTitle.value.trim() !== '' && editGroupTitle.value !== currentRoom.value.title
 }
 
 const saveGroupTitle = async () => {
-  if (!currentIsAdmin.value) return
+  if (!currentIsAdmin.value || !currentRoom.value) return
   try {
     await chatService.updateRoomTitle(currentRoom.value.id, editGroupTitle.value)
     currentRoom.value.title = editGroupTitle.value.trim()
+    rooms.value = await chatService.getRooms()
     showMemberModal.value = false
   } catch (err) {
     alert(err.message)
@@ -501,17 +395,20 @@ const saveGroupTitle = async () => {
 
 const searchAndAdd = async () => {
   const q = searchQuery.value.trim()
-  if (!q) return
+  if (!q || !currentRoom.value) return
 
   if (confirm(`Thêm nhân viên có số máy lẻ [${q}] vào nhóm này?`)) {
     const newEmp = {
-      id: Date.now(),
+      id: `emp-${q}-${Date.now()}`,
       name: `Nhân viên ${q}`,
       dept: 'Khối Kỹ thuật',
       ext: q,
       isAdmin: false,
     }
-    currentRoomMembers.push(newEmp)
+    await chatService.addMember(currentRoom.value.id, newEmp)
+    rooms.value = await chatService.getRooms()
+    const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
+    if (updated) currentRoom.value = updated
     searchQuery.value = ''
     window.dispatchEvent(
       new CustomEvent('app-toast', {
@@ -522,16 +419,20 @@ const searchAndAdd = async () => {
 }
 
 const removeMember = async (m) => {
-  if (!currentIsAdmin.value) return
+  if (!currentIsAdmin.value || !currentRoom.value) return
   if (confirm(`Bạn có chắc chắn muốn Xóa [${m.name}] khỏi nhóm không?`)) {
-    const idx = currentRoomMembers.findIndex((item) => item.id === m.id)
-    if (idx !== -1) {
-      currentRoomMembers.splice(idx, 1)
+    try {
+      await chatService.removeMember(currentRoom.value.id, m.id)
+      rooms.value = await chatService.getRooms()
+      const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
+      if (updated) currentRoom.value = updated
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: { message: `Đã xóa [${m.name}] khỏi nhóm!`, type: 'info' },
         }),
       )
+    } catch (err) {
+      alert(err.message)
     }
   }
 }
@@ -542,6 +443,7 @@ const openReadIdModal = (msg) => {
 }
 
 const startVoiceCall = () => {
+  if (!currentRoom.value) return
   window.dispatchEvent(
     new CustomEvent('app-action', {
       detail: { type: 'dial', value: currentRoom.value.ext || '1002' },
@@ -699,6 +601,24 @@ const startVideoCall = () => {
   display: flex;
   flex-direction: column;
   background: #f8fafc;
+}
+
+.empty-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-hint {
+  text-align: center;
+  color: #94a3b8;
+  max-width: 320px;
+}
+
+.empty-icon {
+  font-size: 3rem;
+  display: block;
+  margin-bottom: 12px;
 }
 
 .chat-header {

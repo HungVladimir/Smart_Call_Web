@@ -9,8 +9,8 @@
         <div class="banner-text">
           <h1>Xin chào, {{ userName }}! 👋</h1>
           <p class="sub-text">
-            Hệ thống liên lạc hợp nhất SmartCall UC • Mạng LAN nội bộ SDV • Máy lẻ SIP:
-            <strong>{{ userExtension }}@192.168.1.50</strong>
+            Hệ thống liên lạc hợp nhất SmartCall UC • Mạng LAN nội bộ • Máy lẻ SIP:
+            <strong>{{ userExtension }}@107.126.11.126</strong>
           </p>
         </div>
       </div>
@@ -40,7 +40,7 @@
         <div class="stat-icon icon-green">📶</div>
         <div class="stat-info">
           <h4>Máy chủ Wazo</h4>
-          <p class="stat-number">192.168.1.50</p>
+          <p class="stat-number">107.126.11.126</p>
           <span class="stat-badge badge-green">Cổng 9443 SSL Ready</span>
         </div>
       </div>
@@ -183,7 +183,7 @@
         <!-- Bảng trạng thái Microservices Wazo Platform 26.10 -->
         <div class="dash-card">
           <div class="card-header">
-            <h3>⚙️ Trạng thái dịch vụ Wazo (LAN 192.168.1.50)</h3>
+            <h3>⚙️ Trạng thái dịch vụ Wazo (Host: 107.126.11.126)</h3>
             <span class="status-indicator-live">● Đang hoạt động</span>
           </div>
 
@@ -282,8 +282,8 @@ const simulateCall = () => {
         id: `call-${Date.now()}`,
         name: 'Nguyễn Hữu Hiếu',
         extension: '1007',
-        sipUri: 'sip:1007@192.168.1.50',
-        dept: 'SDV MES Application Group Lead',
+        sipUri: 'sip:1007@107.126.11.126',
+        dept: 'Trưởng nhóm Phát triển Hệ thống',
       },
     }),
   )

@@ -138,7 +138,7 @@ const callerName = computed(() => {
 })
 
 const callerSip = computed(() => {
-  if (isCalling.value) return `sip:${extension.value}@192.168.1.50`
+  if (isCalling.value) return `sip:${extension.value}@107.126.11.126`
   return 'WebRTC SIP Line 1001'
 })
 

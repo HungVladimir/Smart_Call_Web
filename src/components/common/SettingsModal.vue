@@ -113,9 +113,9 @@
         <div class="wazo-info-card">
           <div class="info-label">Thông tin kết nối tổng đài Wazo:</div>
           <div class="info-content">
-            <strong>Tài khoản:</strong> vdung.le • <strong>Máy lẻ SIP:</strong> 1001
+            <strong>Tài khoản:</strong> admin • <strong>Máy lẻ SIP:</strong> 1001
           </div>
-          <div class="info-sip">sip:1001@192.168.1.50 • Tenant: lan-company</div>
+          <div class="info-sip">sip:1001@107.126.11.126 • Tenant: lan-company</div>
         </div>
 
         <div class="st-field-group">

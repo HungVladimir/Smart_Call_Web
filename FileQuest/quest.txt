@@ -20,3 +20,4 @@ Thêm nữa, hãy tạo file gitignore, mỗi lần tôi push lên thì nó push
 Cuối cùng, rà soát lại toàn bộ prj, bỏ hết các từ app1,app2,app3,app4,app5, anh dũng, bạn hùng, anh hải, tất cả mọi thứ liên quan hay refer , đang comment giải thích thì xóa giúp tôi, tại vì prj này phải đưa cho người khác nên không nên để những từ như thế, các từ như làm ở nhà cũng vậy, lược bỏ hết đi giúp tôi
 Nếu dài quá thì hãy viết hết vào md, và từ đó hãy phân tích từ từ , cố gắng đừng bỏ sót ý nào của tôi.
 
+============

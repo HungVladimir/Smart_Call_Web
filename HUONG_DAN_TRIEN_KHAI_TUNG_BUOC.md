@@ -19,7 +19,8 @@
 | **06** | Popup Cuộc gọi đến toàn cục (Incoming Call Modal) & Âm thanh Web Audio API | Thiết kế cuộc gọi đến | **HOÀN THÀNH** ✅ | Modal cuộc gọi đến (Registered, INCOMING CALL, Avatar radar), chuông reo Web Audio, DTMF phím bấm, nút `🔔 Test Gọi Đến`. |
 | **06.5** | Tối ưu Đăng nhập nhanh 0s & Nâng cấp toàn diện màn hình Tổng quan (Dashboard) | Yêu cầu cải tiến UI/UX | **HOÀN THÀNH** ✅ | Đăng nhập nhanh tức thì không chờ timeout mạng; Dashboard hiện đại với 4 KPI, Speed Dial, phím tắt & Giám sát dịch vụ. |
 | **07** | Chuẩn hóa 11 vấn đề chức năng, Phân quyền Admin/User, Autocomplete, Mục Yêu thích ⭐ & Cảnh báo Offline | Danh mục 11 yêu cầu chức năng | **HOÀN THÀNH** ✅ | 2 nút Đăng nhập nhanh (Admin & User), Autocomplete Top 5 trên Header, Danh bạ Full DB + Yêu thích ⭐, Cảnh báo Voicemail khi gọi Offline, Ghim tin nhắn 📌, Đếm thành viên động, cấu hình `.gitignore`. |
-| **08** | Đấu nối môi trường LAN Wazo thật & Kết nối API CSDL Backend | `dev_guide.md` mục 1, 2, 7 | **SẴN SÀNG** 🚀 | Cài chứng chỉ CA `wazo-ca.crt` vào Windows, trỏ IP máy chủ LAN `192.168.1.50`, cắm endpoint API nhân viên từ backend. |
+| **07.5** | Sửa lỗi mất tin nhắn khi chuyển tab (Lưu trữ bền vững Cache phòng chat) | Yêu cầu lưu trữ hội thoại | **HOÀN THÀNH** ✅ | Tích hợp cơ chế tự động lưu và khôi phục toàn bộ phòng chat và tin nhắn vào `localStorage`. Khi chuyển tab hoặc F5, hội thoại và tin nhắn luôn được bảo toàn 100%. |
+| **08** | Đấu nối môi trường Wazo thật (`107.126.11.126:9443`) & CSDL Backend | `dev_guide.md` mục 1, 2, 9 | **SẴN SÀNG** 🚀 | Mở tường lửa IP `107.126.11.126:9443`, cấu hình `.env`, tài khoản admin `root`/`Wazo2026Root`, tài khoản test `alice`/`bob`/`carol`, hướng dẫn import CA `wazo-ca.crt` 5 bước tuần tự. |
 
 ---
 
@@ -363,29 +364,98 @@ Headers: { 'X-Auth-Token': token }
 
 ## 4. KẾ HOẠCH HÀNH ĐỘNG KHI LÊN CÔNG TY & CHUẨN BỊ CHO TƯƠNG LAI
 
-### 4.1. Nhiệm vụ cụ thể khi bạn lên công ty
-Khi bạn mang máy tính lên công ty cắm vào mạng LAN nội bộ, hãy thực hiện theo đúng 5 bước sau:
+### 4.1. Hướng dẫn chi tiết từng bước khi lên công ty (Máy chủ Wazo: 107.126.11.126:9443)
 
-1. **Bước 1 — Kiểm tra kết nối mạng tới Server Wazo (`192.168.1.50`):**
-   ```bash
-   ping 192.168.1.50
-   curl -k https://192.168.1.50:9443/api/auth/0.1/status
+Máy chủ tổng đài Wazo Platform đã được mở tường lửa với thông số kỹ thuật chính thức:
+* **Địa chỉ máy chủ (HOST):** `107.126.11.126:9443`
+* **Trang quản trị hệ thống (Admin Portal):** `https://107.126.11.126:9443`
+* **Tài khoản Quản trị cấp cao:** User `root` | Mật khẩu: `Wazo2026Root` *(Dành riêng cho công cụ Admin để quản lý máy lẻ, không nhúng vào app)*
+* **Tài khoản người dùng kiểm thử (Test accounts theo dev_guide.md):**
+  * `alice` / `Test@123` (Máy lẻ 1001)
+  * `bob` / `Test@123` (Máy lẻ 1002)
+  * `carol` / `Test@123` (Máy lẻ 1003)
+
+Bạn hãy thực hiện tuần tự theo đúng 5 bước kỹ thuật sau:
+
+---
+
+#### BƯỚC 1: TẢI VÀ CÀI ĐẶT CHỨNG CHỈ SSL CA (`wazo-ca.crt`) VÀO WINDOWS
+> **Tại sao bắt buộc phải làm?** Tổng đài Wazo sử dụng giao thức bảo mật SIP over WSS (`wss://107.126.11.126:9443/api/asterisk/ws`). Trình duyệt Chrome/Edge không cho phép kết nối WebSocket bảo mật nếu chứng chỉ CA của máy chủ chưa được hệ điều hành Windows tin cậy (Trusted).
+
+1. Mở PowerShell và tải file chứng chỉ trực tiếp từ máy chủ:
+   ```powershell
+   curl.exe -k -o wazo-ca.crt https://107.126.11.126:9443/wazo-ca.crt
    ```
-2. **Bước 2 — Cài đặt chứng chỉ SSL CA tự ký (`wazo-ca.crt`):**
-   - Lấy file `wazo-ca.crt`, click đúp vào file $\rightarrow$ Chọn *Install Certificate* $\rightarrow$ *Local Machine* $\rightarrow$ *Place all certificates in the following store* $\rightarrow$ Chọn **Trusted Root Certification Authorities** (Cơ quan chứng nhận gốc đáng tin cậy) $\rightarrow$ Finish.
-3. **Bước 3 — Tạo file cấu hình môi trường `.env`:**
-   - Trong thư mục dự án, copy file `.env.example` thành file `.env`:
-     ```bash
-     cp .env.example .env
-     ```
-   - Đảm bảo dòng `VITE_WAZO_HOST=192.168.1.50:9443`.
-4. **Bước 4 — Chạy dự án và thử đăng nhập tài khoản thật:**
-   - Chạy lệnh: `npm run dev`
-   - Truy cập vào web, tại màn hình Login: Gõ tài khoản máy lẻ (ví dụ `1001` hoặc `1002`) kèm mật khẩu thật do máy chủ cấp $\rightarrow$ Bấm nút **LOGIN**.
-5. **Bước 5 — Thực hiện cuộc gọi thoại WebRTC thử nghiệm đầu tiên:**
-   - Dùng 1 máy tính thứ 2 đăng nhập máy lẻ `1002`.
-   - Tại máy của bạn, vào màn hình **Quay số** (`/calls`), gõ `1002` và bấm 📞 Gọi.
-   - Máy thứ 2 sẽ bật popup **INCOMING CALL** và đổ chuông $\rightarrow$ Bấm **NGHE MÁY** để đàm thoại thử âm thanh 2 chiều qua micro!
+2. Click đúp chuột vào file `wazo-ca.crt` vừa tải về máy.
+3. Chọn nút **Install Certificate...** (Cài đặt Chứng chỉ).
+4. Chọn **Local Machine** (Máy cục bộ) $\rightarrow$ Bấm **Next**.
+5. Chọn dòng thứ 2: **Place all certificates in the following store** (Đặt tất cả chứng chỉ vào kho sau) $\rightarrow$ Bấm nút **Browse...**
+6. Chọn thư mục: **Trusted Root Certification Authorities** (Cơ quan chứng nhận gốc đáng tin cậy) $\rightarrow$ Bấm **OK** $\rightarrow$ Bấm **Next** $\rightarrow$ Bấm **Finish**.
+7. Xuất hiện thông báo *"The import was successful"* là hoàn tất.
+
+---
+
+#### BƯỚC 2: KIỂM TRA MẠNG & THỬ LẤY TOKEN ĐĂNG NHẬP (THEO MỤC 2.1 DEV_GUIDE.MD)
+Mở cửa sổ PowerShell / Terminal và chạy lệnh cURL sau để kiểm tra xem hệ thống đã cấp phát Token xác thực thành công chưa:
+
+```powershell
+curl.exe -k -X POST -u alice:Test@123 `
+  -H "Content-Type: application/json" `
+  -d '{\"expiration\": 3600, \"access_type\": \"offline\", \"client_id\": \"smartcall-web\"}' `
+  https://107.126.11.126:9443/api/auth/0.1/token
+```
+
+* **Kết quả thành công trả về dạng JSON:**
+  ```json
+  {
+    "data": {
+      "token": "4f1c...-...",
+      "refresh_token": "a8b2...",
+      "expires_at": "2026-11-12T17:00:00",
+      "metadata": { "uuid": "...", "tenant_uuid": "..." }
+    }
+  }
+  ```
+* Nếu nhận được chuỗi JSON có chứa `"token"`, chúc mừng bạn: Máy chủ Wazo đang hoạt động hoàn hảo và sẵn sàng phục vụ Web!
+
+---
+
+#### BƯỚC 3: CẤU HÌNH BIẾN MÔI TRƯỜNG DỰ ÁN SMARTCALL WEB
+Đảm bảo file `.env` tại thư mục gốc dự án `d:\Project\Smart_Call_Web\.env` đã được cấu hình đúng:
+
+```env
+VITE_WAZO_HOST=107.126.11.126:9443
+VITE_WAZO_CLIENT_ID=webapp-vue
+VITE_COMPANY_API_URL=https://107.126.11.126:9443/api
+VITE_APP_MODE=wazo_lan
+```
+
+---
+
+#### BƯỚC 4: ĐĂNG NHẬP TRANG QUẢN TRỊ ADMIN ĐỂ XEM DANH SÁCH MÁY LẺ
+1. Mở trình duyệt Chrome/Edge truy cập: `https://107.126.11.126:9443`
+2. Nhập thông tin quản trị:
+   * **Username:** `root`
+   * **Password:** `Wazo2026Root`
+3. Tại giao diện quản trị Wazo UI: Bạn có thể xem danh sách các máy lẻ đã tạo (1001, 1002, 1003...), kiểm tra context nội bộ và đảm bảo các line mang giao thức **`webrtc`** (chỉ line có template webrtc mới gọi được trên trình duyệt).
+
+---
+
+#### BƯỚC 5: KHỞI ĐỘNG DỰ ÁN & THỰC HIỆN CUỘC GỌI THẬT
+1. Tại thư mục dự án `d:\Project\Smart_Call_Web`, chạy lệnh:
+   ```bash
+   npm run dev
+   ```
+2. Mở trình duyệt truy cập: `http://localhost:5173/`
+3. Tại màn hình Login:
+   * Nhập tài khoản: `alice`
+   * Mật khẩu: `Test@123`
+   * Bấm nút **LOGIN**.
+4. Quan sát Top Header: Máy lẻ `1001` sẽ hiện trạng thái `Registered` màu xanh lá!
+5. Dùng máy tính thứ 2 (hoặc mở cửa sổ Ẩn danh Incognito) đăng nhập tài khoản `bob` / `Test@123` (Máy lẻ `1002`).
+6. Từ máy 1001, vào tab **Gọi điện** (`/calls`), gõ `1002` và bấm 📞 **Gọi**:
+   * Máy `1002` sẽ bật popup **INCOMING CALL** và đổ chuông!
+   * Bấm **NGHE MÁY** để đàm thoại 2 chiều với micro và loa qua WebRTC!
 
 ---
 

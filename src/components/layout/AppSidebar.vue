@@ -40,7 +40,7 @@
     </ul>
 
     <div class="sidebar-footer">
-      <div>SIP: <code>1001@192.168.1.50</code></div>
+      <div>SIP: <code>1001@107.126.11.126</code></div>
       <div class="webrtc-status">● WebRTC Audio Ready</div>
     </div>
   </aside>

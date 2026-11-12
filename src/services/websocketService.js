@@ -10,7 +10,7 @@ class WebSocketService {
 
   /**
    * Kết nối tới wazo-websocketd theo mục 6 trong dev_guide.md
-   * URL: wss://192.168.1.50:9443/api/websocketd/?token=<token>&version=2
+   * URL: wss://<HOST>/api/websocketd/?token=<token>&version=2
    */
   connect() {
     const token = wazoService.getToken()

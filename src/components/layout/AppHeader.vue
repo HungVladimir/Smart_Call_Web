@@ -236,7 +236,7 @@ const triggerSimulatedIncomingCall = () => {
         id: `call-${Date.now()}`,
         name: 'Trần Văn Bình',
         extension: '1003',
-        sipUri: 'sip:1003@192.168.1.50',
+        sipUri: 'sip:1003@107.126.11.126',
         dept: 'Khối Vận hành / Phân xưởng MFQ',
       },
     }),

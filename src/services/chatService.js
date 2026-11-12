@@ -1,18 +1,22 @@
 import { wazoService } from './wazo'
 
+const STORAGE_KEY = 'smartcall_chat_rooms'
+
 /**
- * Dữ liệu phòng chat và tin nhắn mẫu chuẩn hệ thống LAN
+ * Dữ liệu phòng chat và tin nhắn mẫu ban đầu
  */
-const MOCK_ROOMS = [
+const INITIAL_MOCK_ROOMS = [
   {
     id: 'room-tech-part',
     title: 'Nhóm Kỹ thuật LAN',
     preview: 'ok bạn ơi, để mình kiểm tra thử',
     time: '15:32',
-    unread: 2,
+    unread: 0,
     pinned: 'Thông báo kỹ thuật: Kiểm tra định kỳ đường truyền SIP Trunk và line WebRTC phòng điều hành.',
     avatarBg: '#0284c7',
     icon: '👥',
+    isDirect: false,
+    memberCount: 4,
     members: [
       { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
       { id: '1006', name: 'Lương Đức Anh', dept: 'Phòng Phát triển Phần mềm', ext: '1006', isAdmin: false },
@@ -58,10 +62,12 @@ const MOCK_ROOMS = [
     title: 'Vận hành Phân xưởng MFQ',
     preview: 'Báo cáo ca làm việc hôm nay bình thường.',
     time: '15:58',
-    unread: 3,
+    unread: 0,
     pinned: 'Thông báo chuyển giao ca trực: Bàn giao hệ thống giám sát và tổng đài cho ca kế tiếp.',
     avatarBg: '#10b981',
     icon: '🏭',
+    isDirect: false,
+    memberCount: 3,
     members: [
       { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
       { id: '1005', name: 'Ngô Tiến Việt', dept: 'Phòng Phát triển Phần mềm', ext: '1005', isAdmin: false },
@@ -89,6 +95,9 @@ const MOCK_ROOMS = [
     pinned: '',
     avatarBg: '#f59e0b',
     icon: 'NH',
+    isDirect: true,
+    ext: '1007',
+    memberCount: 2,
     members: [
       { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
       { id: '1007', name: 'Nguyễn Hữu Hiếu', dept: 'Trưởng nhóm Phát triển Hệ thống', ext: '1007', isAdmin: false },
@@ -110,50 +119,126 @@ const MOCK_ROOMS = [
 
 class ChatService {
   constructor() {
-    this.rooms = [...MOCK_ROOMS]
+    this.rooms = this.loadSavedRooms()
   }
 
-  /**
-   * Lấy danh sách các phòng chat của user
-   * REST API: GET /api/chatd/1.0/users/me/rooms
-   */
-  async getRooms() {
+  // Tải dữ liệu phòng chat từ localStorage để không bao giờ bị mất khi chuyển tab / F5
+  loadSavedRooms() {
     try {
-      const token = wazoService.getToken()
-      if (!token) throw new Error('No token')
-
-      const host = wazoService.host.startsWith('http')
-        ? wazoService.host
-        : `https://${wazoService.host}`
-
-      const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms`, {
-        headers: { 'X-Auth-Token': token },
-      })
-
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`)
-      const data = await res.json()
-
-      if (data.items && data.items.length > 0) {
-        return data.items.map((room) => ({
-          id: room.uuid,
-          title: room.name || 'Phòng thảo luận',
-          preview: 'Cuộc trò chuyện mới',
-          time: '',
-          unread: 0,
-          avatarBg: '#3b82f6',
-          icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
-          messages: [],
-        }))
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+        }
       }
-      return this.rooms
-    } catch (err) {
-      return this.rooms
+    } catch (e) {
+      console.warn('Lỗi đọc cache phòng chat:', e)
+    }
+    return JSON.parse(JSON.stringify(INITIAL_MOCK_ROOMS))
+  }
+
+  // Lưu bền vững vào localStorage
+  saveRooms() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.rooms))
+    } catch (e) {
+      console.warn('Lỗi lưu cache phòng chat:', e)
     }
   }
 
   /**
+   * Lấy danh sách các phòng chat của user
+   */
+  async getRooms() {
+    try {
+      const token = wazoService.getToken()
+      if (token) {
+        const host = wazoService.host.startsWith('http')
+          ? wazoService.host
+          : `https://${wazoService.host}`
+
+        const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms`, {
+          headers: { 'X-Auth-Token': token },
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          if (data.items && data.items.length > 0) {
+            // Đồng bộ dữ liệu phòng thật
+            return data.items.map((room) => ({
+              id: room.uuid,
+              title: room.name || 'Phòng thảo luận',
+              preview: 'Cuộc trò chuyện mới',
+              time: '',
+              unread: 0,
+              avatarBg: '#3b82f6',
+              icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
+              messages: [],
+            }))
+          }
+        }
+      }
+    } catch (err) {
+      /* Fallback sang local rooms */
+    }
+
+    if (!this.rooms || this.rooms.length === 0) {
+      this.rooms = this.loadSavedRooms()
+    }
+    return this.rooms
+  }
+
+  /**
+   * Tìm hoặc tạo phòng chat 1-1 với một máy lẻ (Đảm bảo lưu bền vững không bị mất)
+   */
+  async getDirectRoom(ext, name, currentUserName = 'Quản trị viên') {
+    if (!this.rooms || this.rooms.length === 0) {
+      this.rooms = this.loadSavedRooms()
+    }
+
+    let found = this.rooms.find(
+      (r) => r.ext === ext || (r.title && (r.title === name || r.title.includes(ext))),
+    )
+
+    if (!found) {
+      found = {
+        id: `direct-${ext}-${Date.now()}`,
+        title: name,
+        preview: 'Bắt đầu cuộc trò chuyện trực tiếp...',
+        time: 'Mới',
+        unread: 0,
+        avatarBg: '#0284c7',
+        icon: (name || 'U').slice(0, 2).toUpperCase(),
+        isDirect: true,
+        ext: ext,
+        memberCount: 2,
+        members: [
+          { id: '1001', name: currentUserName, dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
+          { id: `emp-${ext}`, name: name, dept: 'Nội bộ công ty', ext: ext, isAdmin: false },
+        ],
+        messages: [
+          {
+            id: `msg-${Date.now()}`,
+            sender: 'theirs',
+            senderName: name,
+            text: `Xin chào! Bạn có thể trao đổi trực tiếp với tôi qua máy lẻ ${ext}.`,
+            time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+            readStatus: 'Read',
+            readers: [currentUserName],
+          },
+        ],
+      }
+      this.rooms.unshift(found)
+      this.saveRooms()
+    }
+
+    return found
+  }
+
+  /**
    * Gửi một tin nhắn mới vào phòng
-   * POST /api/chatd/1.0/users/me/rooms/{room_uuid}/messages
+   * Cập nhật vào mảng phòng và lưu ngay vào localStorage
    */
   async sendMessage(roomId, text, userAlias = 'Tôi') {
     const now = new Date()
@@ -190,14 +275,16 @@ class ChatService {
         })
       }
     } catch (e) {
-      // Bỏ qua khi chạy chế độ mô phỏng
+      // Bỏ qua khi chạy chế độ offline
     }
 
     const room = this.rooms.find((r) => r.id === roomId)
     if (room) {
+      if (!room.messages) room.messages = []
       room.messages.push(newMsg)
       room.preview = text
       room.time = timeStr
+      this.saveRooms()
     }
 
     return newMsg
@@ -220,6 +307,7 @@ class ChatService {
         ext: employee.number || employee.ext,
         isAdmin: false,
       })
+      this.saveRooms()
       return true
     }
     return false
@@ -243,13 +331,14 @@ class ChatService {
     const idx = room.members.findIndex((m) => m.id === memberId)
     if (idx !== -1) {
       room.members.splice(idx, 1)
+      this.saveRooms()
       return true
     }
     return false
   }
 
   /**
-   * Đổi tiêu đề phòng chat (Admin mới được đổi, tối đa 100 chữ)
+   * Đổi tiêu đề phòng chat
    */
   async updateRoomTitle(roomId, newTitle) {
     if (!newTitle || newTitle.trim().length === 0) {
@@ -262,6 +351,7 @@ class ChatService {
     const room = this.rooms.find((r) => r.id === roomId)
     if (room) {
       room.title = newTitle.trim()
+      this.saveRooms()
       return true
     }
     return false
@@ -274,6 +364,7 @@ class ChatService {
     const room = this.rooms.find((r) => r.id === roomId)
     if (room) {
       room.pinned = pinnedText
+      this.saveRooms()
       return true
     }
     return false
