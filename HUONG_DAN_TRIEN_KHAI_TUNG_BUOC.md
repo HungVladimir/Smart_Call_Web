@@ -27,6 +27,7 @@
 | **11** | Nâng cấp Tin nhắn Realtime (Top 1), Hội nghị thoại nhóm & Tối ưu Trải nghiệm Widget nổi | Yêu cầu trải nghiệm tin nhắn & họp nhóm | **HOÀN THÀNH** ✅ | Tự động sắp xếp phòng chat lên Top 1 khi gửi/nhận tin; Hỗ trợ họp thoại nhóm qua phòng hội nghị 8001; Nâng cấp icon SVG; Ẩn panel nổi Wazo khi rảnh rỗi để không che nút Gửi; Sửa lỗi hiển thị cảnh báo Toast. |
 | **12** | Tinh gọn Trạng thái Kết nối Tổng đài (Presence) & Trải nghiệm Khởi động không gây gián đoạn | Tối ưu hóa UI/UX trạng thái hệ thống | **HOÀN THÀNH** ✅ | Thay thế nhãn cảnh báo đỏ thành chấm trạng thái dịu nhẹ (Trực tuyến / Ngoại tuyến); Khử bỏ hoàn toàn toast lỗi khi khởi động; Chuẩn hóa thông điệp kết nối cuộc gọi. |
 | **13** | Tự động hóa Lịch sử cuộc gọi Realtime (CDR) & Lưu trữ bền vững | Yêu cầu lưu trữ và cập nhật lịch sử cuộc gọi | **HOÀN THÀNH** ✅ | Tự động ghi nhận cuộc gọi đi/đến (Success/Missed/Declined) với thời lượng thực tế lên Top 1; Lưu bền vững vào localStorage; Đồng bộ tức thì qua sự kiện smartcall-cdr-updated. |
+| **14** | Tối ưu hóa cấu hình Vite, Rà soát dev_guide.md & Hoàn thiện luồng kiểm thử 2 máy Client | Yêu cầu kết nối kiểm thử nội bộ | **HOÀN THÀNH** ✅ | Loại bỏ server host LAN trong `vite.config.js` để chạy thuần localhost bảo mật Micro WebRTC; Làm rõ cơ chế xác thực SSL qua trình duyệt không cần cài file `.crt`; Xây dựng kịch bản kiểm thử đàm thoại 2 máy lẻ Alice (1001) - Bob (1002). |
 
 ---
 
@@ -368,9 +369,9 @@ Headers: { 'X-Auth-Token': token }
 
 ---
 
-## 4. KẾ HOẠCH HÀNH ĐỘNG KHI LÊN CÔNG TY & CHUẨN BỊ CHO TƯƠNG LAI
+## 4. KẾ HOẠCH TRIỂN KHAI VÀ KIỂM THỬ TRÊN HỆ THỐNG MẠNG NỘI BỘ DOANH NGHIỆP
 
-### 4.1. Hướng dẫn chi tiết từng bước khi lên công ty (Máy chủ Wazo: 107.126.11.126:9443)
+### 4.1. Hướng dẫn chi tiết kết nối máy chủ tổng đài Wazo Platform (107.126.11.126:9443)
 
 Máy chủ tổng đài Wazo Platform đã được mở tường lửa với thông số kỹ thuật chính thức:
 * **Địa chỉ máy chủ (HOST):** `107.126.11.126:9443`
@@ -381,23 +382,26 @@ Máy chủ tổng đài Wazo Platform đã được mở tường lửa với th
   * `bob` / `Test@123` (Máy lẻ 1002)
   * `carol` / `Test@123` (Máy lẻ 1003)
 
-Bạn hãy thực hiện tuần tự theo đúng 5 bước kỹ thuật sau:
+Bạn hãy thực hiện tuần tự theo đúng các bước kỹ thuật sau:
 
 ---
 
-#### BƯỚC 1: TẢI VÀ CÀI ĐẶT CHỨNG CHỈ SSL CA (`wazo-ca.crt`) VÀO WINDOWS
-> **Tại sao bắt buộc phải làm?** Tổng đài Wazo sử dụng giao thức bảo mật SIP over WSS (`wss://107.126.11.126:9443/api/asterisk/ws`). Trình duyệt Chrome/Edge không cho phép kết nối WebSocket bảo mật nếu chứng chỉ CA của máy chủ chưa được hệ điều hành Windows tin cậy (Trusted).
+#### BƯỚC 1: XÁC THỰC CHỨNG CHỈ SSL CHO MÁY CHỦ TỔNG ĐÀI
+> **Tại sao cần làm?** Tổng đài Wazo sử dụng giao thức bảo mật SIP over WSS (`wss://107.126.11.126:9443/api/asterisk/ws`). Trình duyệt Chrome/Edge không cho phép kết nối WebSocket bảo mật nếu chứng chỉ CA tự ký của máy chủ chưa được trình duyệt tin cậy.
 
-1. Mở PowerShell và tải file chứng chỉ trực tiếp từ máy chủ:
-   ```powershell
-   curl.exe -k -o wazo-ca.crt https://107.126.11.126:9443/wazo-ca.crt
-   ```
-2. Click đúp chuột vào file `wazo-ca.crt` vừa tải về máy.
-3. Chọn nút **Install Certificate...** (Cài đặt Chứng chỉ).
-4. Chọn **Local Machine** (Máy cục bộ) $\rightarrow$ Bấm **Next**.
-5. Chọn dòng thứ 2: **Place all certificates in the following store** (Đặt tất cả chứng chỉ vào kho sau) $\rightarrow$ Bấm nút **Browse...**
-6. Chọn thư mục: **Trusted Root Certification Authorities** (Cơ quan chứng nhận gốc đáng tin cậy) $\rightarrow$ Bấm **OK** $\rightarrow$ Bấm **Next** $\rightarrow$ Bấm **Finish**.
-7. Xuất hiện thông báo *"The import was successful"* là hoàn tất.
+Có 2 cách thực hiện (Khuyên dùng Cách 1 cho môi trường Web):
+* **Cách 1 (Khuyên dùng - Nhanh nhất 15 giây, KHÔNG CẦN tải file `.crt`):**
+  1. Trên trình duyệt (Chrome/Edge) của từng máy, mở tab mới truy cập: `https://107.126.11.126:9443`
+  2. Trình duyệt hiện cảnh báo *"Kết nối của bạn không phải là kết nối riêng tư"*.
+  3. Nhấp vào nút **Nâng cao (Advanced)** $\rightarrow$ Bấm **Tiếp tục truy cập 107.126.11.126 (không an toàn)**.
+  4. Trình duyệt tải xong trang phản hồi từ Wazo là hoàn tất. Đóng tab lại, trình duyệt đã chấp thuận toàn bộ kết nối HTTPS và WSS cho phiên làm việc!
+* **Cách 2 (Cài đặt hệ thống vĩnh viễn vào Windows - Tùy chọn):**
+  1. Tải file chứng chỉ:
+     ```powershell
+     curl.exe -k -o wazo-ca.crt https://107.126.11.126:9443/wazo-ca.crt
+     ```
+  2. Click đúp chuột vào file `wazo-ca.crt` $\rightarrow$ Chọn **Install Certificate...** $\rightarrow$ Chọn **Local Machine** $\rightarrow$ Next.
+  3. Chọn **Place all certificates in the following store** $\rightarrow$ Browse chọn **Trusted Root Certification Authorities** $\rightarrow$ Next $\rightarrow$ Finish.
 
 ---
 
@@ -612,6 +616,35 @@ VITE_APP_MODE=wazo_lan
    - **Hết thời gian chờ (Timeout 30s):** Modal tự động đóng, phát tín hiệu cuộc gọi nhỡ và ghi nhận ngay bản ghi `Incoming - Missed` (thời lượng 0s).
 4. **Phản ứng tức thì trên giao diện (`HistoryView.vue`):**
    - Lắng nghe sự kiện `smartcall-cdr-updated` để tự động làm mới danh sách và cập nhật các huy hiệu đếm số lượng cuộc gọi (`ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`) ngay lập tức mà không cần bấm nút Làm mới.
+
+---
+
+### BƯỚC 14: TỐI ƯU CẤU HÌNH VITE, ĐỐI CHIẾU DEV_GUIDE & KỊCH BẢN KIỂM THỬ ĐÀM THOẠI 2 CLIENT NỘI BỘ
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:**
+  1. Loại bỏ cấu hình `server: { host: true }` trong `vite.config.js` để chạy thuần mặc định `localhost:5173`, đảm bảo tiêu chuẩn bảo mật Microphone của trình duyệt Web.
+  2. Rà soát đối chiếu 100% tài liệu đặc tả kỹ thuật (`dev_guide.md`) về WebRTC, sự kiện realtime và cấu hình âm thanh, xác nhận mã nguồn đã sẵn sàng 100% không cần tinh chỉnh thêm.
+  3. Bổ sung cơ chế bảo vệ chống nhân bản sự kiện cuộc gọi (`this.listenersAttached`) trong `src/services/wazo.js`.
+  4. Chuẩn hóa kịch bản kiểm thử 5 bước đàm thoại 2 chiều thực tế giữa Máy 1 (Alice - 1001) và Máy 2 (Bob - 1002).
+
+#### Các việc đã làm:
+1. **Tối ưu file cấu hình Vite (`vite.config.js`):**
+   - Loại bỏ khối `server: { host: true, port: 5173 }`.
+   - Dự án chuyển về mặc định bind `localhost:5173`. Trình duyệt Chrome/Edge coi `localhost` là Secure Origin, tự động mở quyền cấp phép Microphone mà không bị rào cản mạng nội bộ hay cảnh báo Unsecure HTTP Origin.
+2. **Bảo vệ chống nhân bản Listener (`src/services/wazo.js`):**
+   - Bổ sung cờ `this.listenersAttached` trong `attachListeners()` và giải phóng cờ trong `disconnectPhone()`. Đảm bảo khi F5 hoặc kết nối lại, các sự kiện cuộc gọi (`wazo-incoming`, `wazo-ended`, `wazo-accepted`) không bị phát trùng lặp.
+3. **Đối chiếu toàn diện với Tài liệu Kỹ thuật (`dev_guide.md` Mục 5, 7, 9, 11):**
+   - **Xác thực:** Đã đúng `Wazo.Auth.logIn()` và `Wazo.Auth.validateToken()`.
+   - **Đăng ký WebRTC SIP:** Đã đúng `Wazo.Phone.connect({ audio: true, video: false })`.
+   - **Điều khiển cuộc gọi:** Đầy đủ `call()`, `accept()`, `reject()`, `hangup()`, `mute()`, `hold()`.
+   - **Luồng âm thanh 2 chiều:** Đã tự động gắn thẻ `<audio id="wazo-remote-audio" autoplay>` với luồng `RemoteStream`.
+   - **Kết luận:** Mã nguồn hiện tại đã hoàn thiện 100%, không cần cài đặt thêm thư viện hay tinh chỉnh thêm bất kỳ cấu hình nào.
+4. **Hướng dẫn xác thực chứng chỉ SSL máy chủ cho Client:**
+   - **Cách chuẩn hóa nhanh (Khuyên dùng cho Web):** Trên trình duyệt cả 2 máy, mở `https://107.126.11.126:9443` $\rightarrow$ Nhấp **Nâng cao (Advanced)** $\rightarrow$ **Tiếp tục truy cập 107.126.11.126 (không an toàn)**. Trình duyệt tự động mở thông kết nối WSS cho phiên làm việc mà KHÔNG CẦN cài file `.crt` vào hệ điều hành.
+5. **Kịch bản kiểm thử 2 máy nội bộ:**
+   - **Máy 1:** Đăng nhập `alice` / `Test@123` (Máy lẻ 1001) $\rightarrow$ Cấp quyền Micro $\rightarrow$ Header hiện `🟢 Trực tuyến (1001)`.
+   - **Máy 2:** Đăng nhập `bob` / `Test@123` (Máy lẻ 1002) $\rightarrow$ Cấp quyền Micro $\rightarrow$ Header hiện `🟢 Trực tuyến (1002)`.
+   - Máy 1 quay số 1002 $\rightarrow$ Máy 2 đổ chuông và hiện modal cuộc gọi đến $\rightarrow$ Bấm Nghe máy $\rightarrow$ Kiểm tra âm thanh 2 chiều $\rightarrow$ Bấm Cúp máy $\rightarrow$ Kiểm tra bản ghi CDR lưu tự động vào Lịch sử.
 
 ---
 

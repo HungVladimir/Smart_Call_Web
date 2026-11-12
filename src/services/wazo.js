@@ -87,12 +87,16 @@ class WazoService {
     try {
       this.stopRemoteAudio()
       Wazo.Phone.disconnect()
+      this.listenersAttached = false
     } catch (e) {
       /* Ignore */
     }
   }
 
   attachListeners() {
+    if (this.listenersAttached) return
+    this.listenersAttached = true
+
     // Lắng nghe sự kiện từ SDK và phát ra event toàn cục qua window
     Wazo.Phone.on(Wazo.Phone.ON_REGISTERED, () => {
       console.log('Wazo WebRTC SIP Phone: Registered thành công!')
