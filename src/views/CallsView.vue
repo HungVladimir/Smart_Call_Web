@@ -231,8 +231,8 @@ const handleDial = async () => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `⚠️ Máy lẻ ${ext} chưa online trên tổng đài Wazo. Đang phát tín hiệu chờ.`,
-          type: 'warning',
+          message: `📞 Đang kết nối tín hiệu cuộc gọi thoại tới máy lẻ ${ext}...`,
+          type: 'info',
         },
       }),
     )

@@ -25,6 +25,7 @@
 | **09** | Nâng cấp toàn diện Màn hình Đăng nhập (Login) chuẩn Enterprise & Bổ sung Chế độ thử nghiệm Offline | Nâng cấp UI/UX & Tính năng Sandbox | **HOÀN THÀNH** ✅ | Thiết kế Card nổi khối bo góc 16px, tích hợp icon vector SVG (User, Lock, Toggle Eye), phân loại thông báo lỗi đăng nhập chi tiết (401, Timeout, SSL), bổ sung nút "Chạy chế độ thử nghiệm Offline" và điều hướng Router an toàn. |
 | **10** | Tinh chỉnh giao diện Nội bộ: Header, Dashboard & Bàn phím gọi thoại chuẩn Enterprise | Chuẩn hóa UI/UX & Tối ưu trải nghiệm người dùng | **HOÀN THÀNH** ✅ | Loại bỏ nhãn kỹ thuật LAN và IP nội bộ, nâng cấp 100% icon sang SVG vector sắc nét, tái cấu trúc Dashboard cân đối và chuẩn hóa bàn phím số gọi thoại đối xứng tâm. |
 | **11** | Nâng cấp Tin nhắn Realtime (Top 1), Hội nghị thoại nhóm & Tối ưu Trải nghiệm Widget nổi | Yêu cầu trải nghiệm tin nhắn & họp nhóm | **HOÀN THÀNH** ✅ | Tự động sắp xếp phòng chat lên Top 1 khi gửi/nhận tin; Hỗ trợ họp thoại nhóm qua phòng hội nghị 8001; Nâng cấp icon SVG; Ẩn panel nổi Wazo khi rảnh rỗi để không che nút Gửi; Sửa lỗi hiển thị cảnh báo Toast. |
+| **12** | Tinh gọn Trạng thái Kết nối Tổng đài (Presence) & Trải nghiệm Khởi động không gây gián đoạn | Tối ưu hóa UI/UX trạng thái hệ thống | **HOÀN THÀNH** ✅ | Thay thế nhãn cảnh báo đỏ thành chấm trạng thái dịu nhẹ (Trực tuyến / Ngoại tuyến); Khử bỏ hoàn toàn toast lỗi khi khởi động; Chuẩn hóa thông điệp kết nối cuộc gọi. |
 
 ---
 
@@ -571,6 +572,23 @@ VITE_APP_MODE=wazo_lan
 4. **Khắc phục lỗi hiển thị thông báo Toast cảnh báo (Warning):**
    - Bổ sung class `.toast-notification.warning` với màu nền hổ phách đậm (`#d97706`), viền nổi `#b45309`, chữ trắng sắc nét, khắc phục triệt để hiện tượng chữ trắng chìm trên nền trắng.
    - Tối ưu giới hạn độ rộng `max-width: 440px` và giãn dòng `line-height: 1.45` giúp các thông báo kỹ thuật dài hiển thị thanh lịch, dễ đọc.
+
+---
+
+### BƯỚC 12: TINH GỌN TRẠNG THÁI KẾT NỐI TỔNG ĐÀI (PRESENCE) & TRẢI NGHIỆM KHỞI ĐỘNG
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:** Thay thế nhãn cảnh báo đỏ gay gắt trên Header bằng chấm trạng thái dịu nhẹ, chuyên nghiệp chuẩn Microsoft Teams/Slack; tắt triệt để các thông báo toast lỗi tự động khi mở ứng dụng; chuẩn hóa trải nghiệm gọi thoại mượt mà không gây hoang mang cho người dùng cuối.
+
+#### Các việc đã làm:
+1. **Nâng cấp nhãn trạng thái tổng đài trên Header (`AppHeader.vue`):**
+   - Loại bỏ nhãn đỏ mang tính chất báo lỗi `SIP: Offline (Chưa kết nối)`.
+   - Chuyển thành nhãn trạng thái Presence nhã nhặn: `⚪ Ngoại tuyến` (nền xám nhạt dịu mắt, chấm tròn `7px`, không gây cảm giác ứng dụng bị sự cố khi chạy chế độ thử nghiệm nội bộ) và `🟢 Trực tuyến (1001)` (khi máy lẻ SIP đã đăng ký thành công).
+   - Chuẩn hóa nội dung hướng dẫn khi nhấp chuột: Hướng dẫn thân thiện, giải thích rõ các tính năng tin nhắn, danh bạ vẫn hoạt động 100% bình thường.
+2. **Khử bỏ Toast cảnh báo lỗi khi khởi động ứng dụng (`App.vue`):**
+   - Loại bỏ cơ chế tự động bắn toast cảnh báo màu vàng về WSS/SSL cổng 9443 khi vừa mở ứng dụng hoặc đăng nhập.
+   - Ứng dụng khởi động êm ái, chuyển thẳng vào Dashboard sạch sẽ, không có bất kỳ thông báo lỗi gián đoạn nào.
+3. **Chuẩn hóa thông báo khi gọi thoại ngoại tuyến (`CallsView.vue`):**
+   - Chuyển đổi câu thông báo từ cảnh báo lỗi *"Máy lẻ chưa online trên tổng đài Wazo"* thành thông điệp kết nối thân thiện: *"📞 Đang kết nối tín hiệu cuộc gọi thoại tới máy lẻ [số máy]..."* dạng info.
 
 ---
 

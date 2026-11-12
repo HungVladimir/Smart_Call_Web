@@ -126,7 +126,7 @@ onUnmounted(() => {
 const handleWazoRegistered = () => {
   isPhoneConnected.value = true
   phoneStatus.value = 'connected'
-  showToast('Tổng đài Wazo: WebRTC SIP Registered (Đã đăng ký máy lẻ)!', 'success')
+  showToast('Tổng đài: Đã kích hoạt máy lẻ WebRTC!', 'success')
 }
 
 // --- Logic xử lý sự kiện ---
@@ -146,14 +146,11 @@ const tryConnectPhone = async () => {
     await wazoService.connectPhone()
     isPhoneConnected.value = true
     phoneStatus.value = 'connected'
-    showToast('Tổng đài Wazo: WebRTC SIP kết nối thành công!', 'success')
+    showToast('Tổng đài: Kết nối thoại sẵn sàng!', 'success')
   } catch (err) {
-    phoneStatus.value = 'error'
-    console.warn('Lỗi kết nối WebRTC SIP tổng đài Wazo:', err.message)
-    showToast(
-      '⚠️ WebRTC chưa kết nối máy chủ Wazo. Vui lòng mở https://107.126.11.126:9443 và chọn Tiếp tục truy cập để tin cậy WSS!',
-      'warning',
-    )
+    phoneStatus.value = 'disconnected'
+    isPhoneConnected.value = false
+    console.info('Hệ thống khởi chạy ở chế độ ngoại tuyến dự phòng:', err.message)
   }
 }
 

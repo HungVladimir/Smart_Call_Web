@@ -9,10 +9,10 @@
         class="sip-status-badge"
         :class="{ online: isSipOnline, offline: !isSipOnline }"
         @click="showSipHelp"
-        :title="isSipOnline ? 'WebRTC SIP đã đăng ký thành công trên Asterisk' : 'Bấm vào đây để xem hướng dẫn tin cậy chứng chỉ SSL WSS'"
+        :title="isSipOnline ? `Tổng đài: Trực tuyến (${userExtension})` : 'Chế độ ngoại tuyến (Nhấp để xem thông tin)'"
       >
         <span class="sip-dot"></span>
-        <span>{{ isSipOnline ? `SIP: Online (${userExtension})` : 'SIP: Offline (Chưa kết nối)' }}</span>
+        <span class="sip-status-text">{{ isSipOnline ? `Trực tuyến (${userExtension})` : 'Ngoại tuyến' }}</span>
       </div>
     </div>
 
@@ -154,17 +154,18 @@ const handleRegistered = () => {
 const showSipHelp = () => {
   if (!isSipOnline.value) {
     alert(
-      '⚠️ SIP WebRTC chưa đăng ký được vào máy chủ Wazo (107.126.11.126:9443)!\n\n' +
-        'Cách khắc phục (chỉ mất 10 giây):\n' +
-        '1. Mở một tab trình duyệt mới truy cập: https://107.126.11.126:9443\n' +
-        '2. Chọn [Nâng cao / Advanced] -> Bấm [Tiếp tục truy cập / Proceed to 107.126.11.126].\n' +
-        '3. Cấp quyền Microphone khi trình duyệt hỏi.\n' +
-        '4. Quay lại trang này và nhấn F5 để tải lại.',
+      '💡 Thông tin kết nối máy chủ tổng đài:\n\n' +
+        '• Trạng thái hiện tại: Ngoại tuyến (Offline / Chế độ thử nghiệm).\n' +
+        '• Các tính năng tin nhắn nội bộ, danh bạ nhân sự và mô phỏng đàm thoại vẫn hoạt động bình thường.\n\n' +
+        'Nếu cần kích hoạt luồng gọi thoại WebRTC thật qua máy chủ nội bộ:\n' +
+        '1. Mở tab mới truy cập: https://107.126.11.126:9443\n' +
+        '2. Chọn Nâng cao -> Bấm Tiếp tục truy cập để xác nhận tin cậy cổng WSS.\n' +
+        '3. Tải lại trang (F5) để tổng đài tự động nhận máy lẻ.',
     )
   } else {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🟢 WebRTC SIP của máy lẻ ${userExtension.value} đang hoạt động tốt!`, type: 'success' },
+        detail: { message: `🟢 Tổng đài thoại máy lẻ ${userExtension.value} đang trực tuyến!`, type: 'success' },
       }),
     )
   }
@@ -339,25 +340,25 @@ const triggerSimulatedIncomingCall = () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   padding: 3px 10px;
   border-radius: 12px;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 500;
   transition: all 0.2s;
   user-select: none;
 }
 
 .sip-status-badge.online {
-  background: rgba(34, 197, 94, 0.15);
+  background: rgba(34, 197, 94, 0.12);
   color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.35);
+  border: 1px solid rgba(34, 197, 94, 0.25);
 }
 
 .sip-status-badge.offline {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
 }
 
 .sip-dot {
@@ -368,11 +369,11 @@ const triggerSimulatedIncomingCall = () => {
 
 .sip-status-badge.online .sip-dot {
   background: #22c55e;
-  box-shadow: 0 0 6px #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
 }
 
 .sip-status-badge.offline .sip-dot {
-  background: #ef4444;
+  background: #94a3b8;
 }
 
 /* Center Search Container with Dropdown */
