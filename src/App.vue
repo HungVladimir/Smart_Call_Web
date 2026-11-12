@@ -32,6 +32,7 @@
       :call-data="incomingCallData"
       @accept="onAcceptIncomingCall"
       @reject="onRejectIncomingCall"
+      @timeout="onMissedIncomingCall"
     />
 
     <!-- 5. Panel Điều khiển Cuộc gọi nổi (Chỉ hiển thị khi đang có cuộc gọi đàm thoại thực sự) -->
@@ -65,6 +66,8 @@ import AppSidebar from '@/components/layout/AppSidebar.vue'
 import SettingsModal from '@/components/common/SettingsModal.vue'
 import CallControlPanel from '@/components/call/CallControlPanel.vue'
 import IncomingCallModal from '@/components/call/IncomingCallModal.vue'
+import { historyService } from '@/services/historyService'
+import { contactService } from '@/services/contactService'
 
 const router = useRouter()
 const route = useRoute()
@@ -178,14 +181,17 @@ const onAcceptIncomingCall = (callData) => {
       console.log('Error accepting call:', e)
     }
   }
-  showToast(`Đã nhận cuộc gọi từ ${callData.name || callData.extension || 'Đồng nghiệp'}!`, 'success')
+  showToast(`Đã nhận cuộc gọi từ ${callData?.name || callData?.extension || 'Đồng nghiệp'}!`, 'success')
 
   // Chuyển sang màn hình CallsView với cờ active=true (Đang đàm thoại, không quay số lại)
   router.push({
     path: '/calls',
     query: {
-      number: callData.extension || '1002',
+      number: callData?.extension || '1002',
+      name: callData?.name || '',
+      dept: callData?.dept || '',
       active: 'true',
+      direction: 'inbound',
     },
   })
 }
@@ -201,7 +207,46 @@ const onRejectIncomingCall = (callData) => {
   }
   currentCall.value = null
   hasActiveCall.value = false
+
+  const ext = callData?.extension || '1003'
+  const contact = contactService.findContactByExtension(ext)
+  const name = callData?.name || contact?.name || `Máy lẻ ${ext}`
+  const dept = callData?.dept || contact?.dept || 'Khối Vận hành / Phân xưởng MFQ'
+
+  historyService.addRecord({
+    name,
+    extension: ext,
+    dept,
+    duration: 0,
+    direction: 'inbound',
+    status: 'declined',
+    answered: false,
+  })
+
   showToast('Đã từ chối cuộc gọi.', 'info')
+}
+
+const onMissedIncomingCall = (callData) => {
+  showIncomingModal.value = false
+  currentCall.value = null
+  hasActiveCall.value = false
+
+  const ext = callData?.extension || '1003'
+  const contact = contactService.findContactByExtension(ext)
+  const name = callData?.name || contact?.name || `Máy lẻ ${ext}`
+  const dept = callData?.dept || contact?.dept || 'Khối Vận hành / Phân xưởng MFQ'
+
+  historyService.addRecord({
+    name,
+    extension: ext,
+    dept,
+    duration: 0,
+    direction: 'inbound',
+    status: 'missed',
+    answered: false,
+  })
+
+  showToast(`Cuộc gọi nhỡ từ ${name}`, 'warning')
 }
 
 const handleCallEnded = () => {
@@ -235,7 +280,22 @@ const handleLogout = () => {
 }
 
 const onHangup = () => {
-  if (currentCall.value) wazoService.hangup(currentCall.value)
+  if (currentCall.value) {
+    wazoService.hangup(currentCall.value)
+    const ext = currentCall.value.extension || currentCall.value.number || '1002'
+    const contact = contactService.findContactByExtension(ext)
+    const name = currentCall.value.remote_name || currentCall.value.name || contact?.name || `Máy lẻ ${ext}`
+    const dept = currentCall.value.dept || contact?.dept || 'Khối Kỹ thuật'
+    historyService.addRecord({
+      name,
+      extension: ext,
+      dept,
+      duration: 15,
+      direction: currentCall.value.call_direction || 'outbound',
+      status: 'success',
+      answered: true,
+    })
+  }
   currentCall.value = null
   hasActiveCall.value = false
 }

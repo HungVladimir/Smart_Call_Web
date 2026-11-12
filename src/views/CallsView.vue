@@ -142,6 +142,8 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { wazoService } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
+import { historyService } from '@/services/historyService'
+import { contactService } from '@/services/contactService'
 
 const route = useRoute()
 const extension = ref('1002')
@@ -252,6 +254,27 @@ const hangupCall = () => {
   } catch (e) {
     /* ignore */
   }
+
+  // Tự động ghi nhận bản ghi vào Lịch sử cuộc gọi (CDR)
+  if (isCalling.value) {
+    const ext = extension.value.trim()
+    const contact = contactService.findContactByExtension(ext)
+    const callName =
+      (route.query && route.query.name) || contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
+    const callDept = (route.query && route.query.dept) || contact?.dept || 'Khối Kỹ thuật'
+    const direction = route.query && route.query.direction === 'inbound' ? 'inbound' : 'outbound'
+
+    historyService.addRecord({
+      name: callName,
+      extension: ext,
+      dept: callDept,
+      duration: callSeconds.value,
+      direction: direction,
+      status: 'success',
+      answered: true,
+    })
+  }
+
   isCalling.value = false
   isHeld.value = false
   clearInterval(timer)

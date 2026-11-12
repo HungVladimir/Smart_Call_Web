@@ -242,6 +242,19 @@ class ContactService {
   }
 
   /**
+   * Tìm kiếm thông tin liên hệ theo số máy lẻ
+   */
+  findContactByExtension(ext) {
+    if (!ext) return null
+    const str = String(ext).trim()
+    return (
+      this.localContacts.find(
+        (c) => String(c.number).trim() === str || String(c.id).includes(str),
+      ) || null
+    )
+  }
+
+  /**
    * Thêm liên hệ mới
    */
   async addContact(contact) {

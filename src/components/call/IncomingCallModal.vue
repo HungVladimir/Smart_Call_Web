@@ -68,7 +68,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['accept', 'reject'])
+const emit = defineEmits(['accept', 'reject', 'timeout'])
 
 // Lấy thông tin người gọi
 const callerName = computed(() => {
@@ -93,12 +93,19 @@ const initials = computed(() => {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 })
 
+let ringTimer = null
+
 // Tự động bật/tắt chuông cuộc gọi khi modal mở hoặc đóng
 watch(
   () => props.isOpen,
   (val) => {
+    clearTimeout(ringTimer)
     if (val) {
       audioService.startIncomingRingtone()
+      // Tự động chuyển thành cuộc gọi nhỡ nếu đổ chuông quá 30 giây
+      ringTimer = setTimeout(() => {
+        handleTimeout()
+      }, 30000)
     } else {
       audioService.stopIncomingRingtone()
     }
@@ -107,14 +114,22 @@ watch(
 )
 
 const handleAccept = () => {
+  clearTimeout(ringTimer)
   audioService.stopIncomingRingtone()
   emit('accept', props.callData)
 }
 
 const handleReject = () => {
+  clearTimeout(ringTimer)
   audioService.stopIncomingRingtone()
   audioService.playCallEndedTone()
   emit('reject', props.callData)
+}
+
+const handleTimeout = () => {
+  audioService.stopIncomingRingtone()
+  audioService.playCallEndedTone()
+  emit('timeout', props.callData)
 }
 </script>
 

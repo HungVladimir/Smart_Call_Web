@@ -98,9 +98,81 @@ const MOCK_HISTORY = [
   },
 ]
 
+const STORAGE_KEY = 'smartcall_call_history'
+
 class HistoryService {
   constructor() {
-    this.localHistory = [...MOCK_HISTORY]
+    this.localHistory = this.loadSavedHistory()
+  }
+
+  // Tải dữ liệu lịch sử cuộc gọi từ localStorage
+  loadSavedHistory() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+        }
+      }
+    } catch (e) {
+      console.warn('Lỗi đọc cache lịch sử cuộc gọi:', e)
+    }
+    const initial = JSON.parse(JSON.stringify(MOCK_HISTORY))
+    return initial
+  }
+
+  // Lưu bền vững vào localStorage
+  saveHistory() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.localHistory))
+    } catch (e) {
+      console.warn('Lỗi lưu cache lịch sử cuộc gọi:', e)
+    }
+  }
+
+  /**
+   * Thêm một bản ghi cuộc gọi mới vào đầu lịch sử (Top 1)
+   */
+  addRecord({
+    name = 'Ẩn danh',
+    extension = '',
+    dept = 'Khối Kỹ thuật',
+    duration = 0,
+    direction = 'outbound',
+    status = 'success',
+    answered = true,
+  } = {}) {
+    const now = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+
+    const directionLabel = direction === 'inbound' ? 'Incoming' : 'Outgoing'
+    let statusLabel = 'Success'
+    if (status === 'missed') {
+      statusLabel = 'Missed'
+    } else if (status === 'declined') {
+      statusLabel = 'Declined'
+    }
+
+    const newCdr = {
+      id: `cdr-${Date.now()}`,
+      date: dateStr,
+      name,
+      extension: String(extension || ''),
+      dept,
+      duration: Math.max(0, parseInt(duration, 10) || 0),
+      direction,
+      directionLabel,
+      status,
+      statusLabel,
+      answered: Boolean(answered),
+    }
+
+    this.localHistory.unshift(newCdr)
+    this.saveHistory()
+    window.dispatchEvent(new CustomEvent('smartcall-cdr-updated', { detail: newCdr }))
+    return newCdr
   }
 
   /**
@@ -210,6 +282,7 @@ class HistoryService {
    */
   async clearAllHistory() {
     this.localHistory = []
+    this.saveHistory()
     try {
       const token = wazoService.getToken()
       if (token) {
@@ -225,6 +298,7 @@ class HistoryService {
     } catch (e) {
       // Ignored in offline/mock mode
     }
+    window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
     return true
   }
 
@@ -235,6 +309,8 @@ class HistoryService {
     const idx = this.localHistory.findIndex((item) => item.id === id)
     if (idx !== -1) {
       this.localHistory.splice(idx, 1)
+      this.saveHistory()
+      window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
       return true
     }
     return false

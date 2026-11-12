@@ -185,7 +185,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { historyService } from '@/services/historyService'
 
@@ -213,6 +213,11 @@ const fetchHistory = async () => {
 
 onMounted(() => {
   fetchHistory()
+  window.addEventListener('smartcall-cdr-updated', fetchHistory)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('smartcall-cdr-updated', fetchHistory)
 })
 
 // Đếm số lượng cuộc gọi theo từng tab

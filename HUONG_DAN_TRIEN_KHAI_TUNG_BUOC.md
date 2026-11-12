@@ -26,6 +26,7 @@
 | **10** | Tinh chỉnh giao diện Nội bộ: Header, Dashboard & Bàn phím gọi thoại chuẩn Enterprise | Chuẩn hóa UI/UX & Tối ưu trải nghiệm người dùng | **HOÀN THÀNH** ✅ | Loại bỏ nhãn kỹ thuật LAN và IP nội bộ, nâng cấp 100% icon sang SVG vector sắc nét, tái cấu trúc Dashboard cân đối và chuẩn hóa bàn phím số gọi thoại đối xứng tâm. |
 | **11** | Nâng cấp Tin nhắn Realtime (Top 1), Hội nghị thoại nhóm & Tối ưu Trải nghiệm Widget nổi | Yêu cầu trải nghiệm tin nhắn & họp nhóm | **HOÀN THÀNH** ✅ | Tự động sắp xếp phòng chat lên Top 1 khi gửi/nhận tin; Hỗ trợ họp thoại nhóm qua phòng hội nghị 8001; Nâng cấp icon SVG; Ẩn panel nổi Wazo khi rảnh rỗi để không che nút Gửi; Sửa lỗi hiển thị cảnh báo Toast. |
 | **12** | Tinh gọn Trạng thái Kết nối Tổng đài (Presence) & Trải nghiệm Khởi động không gây gián đoạn | Tối ưu hóa UI/UX trạng thái hệ thống | **HOÀN THÀNH** ✅ | Thay thế nhãn cảnh báo đỏ thành chấm trạng thái dịu nhẹ (Trực tuyến / Ngoại tuyến); Khử bỏ hoàn toàn toast lỗi khi khởi động; Chuẩn hóa thông điệp kết nối cuộc gọi. |
+| **13** | Tự động hóa Lịch sử cuộc gọi Realtime (CDR) & Lưu trữ bền vững | Yêu cầu lưu trữ và cập nhật lịch sử cuộc gọi | **HOÀN THÀNH** ✅ | Tự động ghi nhận cuộc gọi đi/đến (Success/Missed/Declined) với thời lượng thực tế lên Top 1; Lưu bền vững vào localStorage; Đồng bộ tức thì qua sự kiện smartcall-cdr-updated. |
 
 ---
 
@@ -589,6 +590,28 @@ VITE_APP_MODE=wazo_lan
    - Ứng dụng khởi động êm ái, chuyển thẳng vào Dashboard sạch sẽ, không có bất kỳ thông báo lỗi gián đoạn nào.
 3. **Chuẩn hóa thông báo khi gọi thoại ngoại tuyến (`CallsView.vue`):**
    - Chuyển đổi câu thông báo từ cảnh báo lỗi *"Máy lẻ chưa online trên tổng đài Wazo"* thành thông điệp kết nối thân thiện: *"📞 Đang kết nối tín hiệu cuộc gọi thoại tới máy lẻ [số máy]..."* dạng info.
+
+---
+
+### BƯỚC 13: TỰ ĐỘNG HÓA LỊCH SỬ CUỘC GỌI REALTIME (CDR) & LƯU TRỮ BỀN VỮNG
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:** Chuyển đổi toàn bộ phân hệ Lịch sử cuộc gọi từ dạng dữ liệu mẫu cố định (Static Mock) sang cơ chế ghi nhận tự động theo thời gian thực (Realtime CDR) và lưu trữ bền vững; bắt trọn vẹn mọi trạng thái cuộc gọi đi/cuộc gọi đến (thành công, từ chối, nhỡ) kèm thời lượng đàm thoại thực tế.
+
+#### Các việc đã làm:
+1. **Lưu trữ bền vững trong `src/services/historyService.js`:**
+   - Tích hợp cơ chế tự động đọc và lưu lịch sử cuộc gọi vào `localStorage` (`STORAGE_KEY: 'smartcall_call_history'`), đảm bảo dữ liệu cuộc gọi mới thực hiện không bao giờ bị mất khi chuyển tab hoặc tải lại trang (F5).
+   - Bổ sung hàm `addRecord()` tự động sinh mã CDR, gán mốc thời gian thực (`YYYY-MM-DD HH:mm:ss`), xác định nhãn Hướng gọi (`Incoming` / `Outgoing`) và Trạng thái (`Success` / `Missed` / `Declined`).
+   - Đẩy bản ghi mới nhất lên vị trí Top 1 danh sách và phát sự kiện toàn cục `smartcall-cdr-updated`.
+2. **Tự động bắt sự kiện cuộc gọi đi (`CallsView.vue`):**
+   - Tích hợp tra cứu danh bạ qua `contactService.findContactByExtension(ext)`.
+   - Khi người dùng bấm **Cúp máy**, hệ thống lập tức chốt thời lượng đàm thoại thực tế (`callSeconds`), tự động ghi nhận bản ghi `Outgoing - Success` vào CDR.
+   - Khi cuộc gọi thất bại/bận (`onRemoteFailed`), tự động ghi nhận bản ghi `Outgoing - Declined` với thời lượng 0s.
+3. **Tự động bắt sự kiện cuộc gọi đến (`IncomingCallModal.vue` & `App.vue`):**
+   - **Bấm Nghe máy:** Điều hướng vào phòng thoại, khi cúp máy ghi nhận `Incoming - Success` kèm thời lượng đàm thoại thực tế.
+   - **Bấm Từ chối (Reject):** Ghi nhận ngay bản ghi `Incoming - Declined` (thời lượng 0s).
+   - **Hết thời gian chờ (Timeout 30s):** Modal tự động đóng, phát tín hiệu cuộc gọi nhỡ và ghi nhận ngay bản ghi `Incoming - Missed` (thời lượng 0s).
+4. **Phản ứng tức thì trên giao diện (`HistoryView.vue`):**
+   - Lắng nghe sự kiện `smartcall-cdr-updated` để tự động làm mới danh sách và cập nhật các huy hiệu đếm số lượng cuộc gọi (`ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`) ngay lập tức mà không cần bấm nút Làm mới.
 
 ---
 
