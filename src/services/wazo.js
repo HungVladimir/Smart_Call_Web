@@ -3,6 +3,7 @@ import Wazo from '@wazo/sdk'
 class WazoService {
   constructor() {
     this.session = null
+    this.currentCallSession = null
     // Lấy IP từ file môi trường .env hoặc dùng mặc định máy chủ tổng đài
     this.host = import.meta.env.VITE_WAZO_HOST || '107.126.11.126:9443'
     this.clientId = import.meta.env.VITE_WAZO_CLIENT_ID || 'webapp-vue'
@@ -29,6 +30,8 @@ class WazoService {
       Wazo.Auth.logout(this.session)
       this.session = null
     }
+    this.currentCallSession = null
+    this.stopRemoteAudio()
     this.disconnectPhone()
   }
 
@@ -44,7 +47,7 @@ class WazoService {
     if (!this.isLogged()) throw new Error('User must be logged in')
 
     try {
-      // Audio: true cần thiết cho WebRTC
+      // Audio: true cần thiết cho WebRTC (sẽ kích hoạt cấp quyền Mic từ trình duyệt)
       await Wazo.Phone.connect({ audio: true, video: false })
       this.attachListeners()
       return true
@@ -56,6 +59,7 @@ class WazoService {
 
   disconnectPhone() {
     try {
+      this.stopRemoteAudio()
       Wazo.Phone.disconnect()
     } catch (e) {
       /* Ignore */
@@ -64,42 +68,121 @@ class WazoService {
 
   attachListeners() {
     // Lắng nghe sự kiện từ SDK và phát ra event toàn cục qua window
+    Wazo.Phone.on(Wazo.Phone.ON_REGISTERED, () => {
+      console.log('Wazo WebRTC SIP Phone: Registered thành công!')
+      window.dispatchEvent(new CustomEvent('wazo-registered'))
+    })
+
     Wazo.Phone.on(Wazo.Phone.ON_CALL_INCOMING, (callSession) => {
+      this.currentCallSession = callSession
       window.dispatchEvent(new CustomEvent('wazo-incoming', { detail: callSession }))
     })
 
     Wazo.Phone.on(Wazo.Phone.ON_CALL_ENDED, (callSession) => {
+      this.currentCallSession = null
+      this.stopRemoteAudio()
       window.dispatchEvent(new CustomEvent('wazo-ended', { detail: callSession }))
     })
 
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_FAILED, (callSession) => {
+      this.currentCallSession = null
+      this.stopRemoteAudio()
+      window.dispatchEvent(new CustomEvent('wazo-failed', { detail: callSession }))
+    })
+
     Wazo.Phone.on(Wazo.Phone.ON_CALL_ACCEPTED, (callSession) => {
+      this.currentCallSession = callSession
+      try {
+        const stream = Wazo.Phone.getRemoteStream(callSession)
+        if (stream) {
+          this.playRemoteStream(stream)
+        }
+      } catch (err) {
+        console.warn('Lỗi gắn luồng âm thanh đàm thoại:', err)
+      }
       window.dispatchEvent(new CustomEvent('wazo-accepted', { detail: callSession }))
     })
   }
 
+  // Phát luồng âm thanh 2 chiều của người gọi từ xa qua thẻ <audio>
+  playRemoteStream(stream) {
+    let audioElement = document.getElementById('wazo-remote-audio')
+    if (!audioElement) {
+      audioElement = document.createElement('audio')
+      audioElement.id = 'wazo-remote-audio'
+      audioElement.autoplay = true
+      document.body.appendChild(audioElement)
+    }
+    audioElement.srcObject = stream
+    audioElement.play().catch((err) => {
+      console.log('Trình duyệt chặn Autoplay Audio (Cần tương tác người dùng):', err)
+    })
+  }
+
+  stopRemoteAudio() {
+    const audioElement = document.getElementById('wazo-remote-audio')
+    if (audioElement) {
+      audioElement.srcObject = null
+    }
+  }
+
   // Các hàm điều khiển cuộc gọi
-  makeCall(extension) {
-    return Wazo.Phone.call(extension)
+  async makeCall(extension) {
+    try {
+      this.currentCallSession = await Wazo.Phone.call(extension)
+      return this.currentCallSession
+    } catch (err) {
+      console.warn('Wazo Phone.call warning:', err)
+      throw err
+    }
   }
 
-  hangup(callSession) {
-    if (callSession) Wazo.Phone.hangup(callSession)
+  hangup(callSession = null) {
+    const session = callSession || this.currentCallSession
+    if (session) {
+      try {
+        Wazo.Phone.hangup(session)
+      } catch (e) {
+        /* ignore */
+      }
+      this.currentCallSession = null
+      this.stopRemoteAudio()
+    }
   }
 
-  accept(callSession) {
-    if (callSession) Wazo.Phone.accept(callSession)
+  accept(callSession = null) {
+    const session = callSession || this.currentCallSession
+    if (session) {
+      this.currentCallSession = session
+      try {
+        Wazo.Phone.accept(session)
+      } catch (e) {
+        /* ignore */
+      }
+    }
   }
 
-  reject(callSession) {
-    if (callSession) Wazo.Phone.reject(callSession)
+  reject(callSession = null) {
+    const session = callSession || this.currentCallSession
+    if (session) {
+      try {
+        Wazo.Phone.reject(session)
+      } catch (e) {
+        /* ignore */
+      }
+      this.currentCallSession = null
+      this.stopRemoteAudio()
+    }
   }
 
-  mute(callSession) {
-    if (callSession) Wazo.Phone.mute(callSession)
+  mute(callSession = null) {
+    const session = callSession || this.currentCallSession
+    if (session) Wazo.Phone.mute(session)
   }
 
-  hold(callSession) {
-    if (callSession) Wazo.Phone.hold(callSession)
+  hold(callSession = null) {
+    const session = callSession || this.currentCallSession
+    if (session) Wazo.Phone.hold(session)
   }
 }
 

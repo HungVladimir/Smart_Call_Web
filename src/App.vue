@@ -137,29 +137,37 @@ const tryConnectPhone = async () => {
 }
 
 const handleIncomingCall = (event) => {
-  incomingCallData.value = event.detail
+  const session = event.detail
+  const ext = session?.number || session?.callerNumber || ''
+  const name = session?.displayName || session?.realDisplayName || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
+  incomingCallData.value = {
+    rawSession: session,
+    name,
+    extension: ext,
+    sipUri: ext ? `sip:${ext}@107.126.11.126` : '',
+  }
   showIncomingModal.value = true
-  currentCall.value = event.detail
+  currentCall.value = session
   hasActiveCall.value = true
 }
 
 const onAcceptIncomingCall = (callData) => {
   showIncomingModal.value = false
-  if (wazoService.session && callData?.rawSession) {
+  if (callData?.rawSession || currentCall.value) {
     try {
-      wazoService.accept(callData.rawSession)
+      wazoService.accept(callData?.rawSession || currentCall.value)
     } catch (e) {
-      /* ignore */
+      console.log('Error accepting call:', e)
     }
   }
   showToast(`Đã nhận cuộc gọi từ ${callData.name || callData.extension || 'Đồng nghiệp'}!`, 'success')
 
-  // Chuyển sang màn hình CallsView để hiển thị cuộc gọi đang đàm thoại
+  // Chuyển sang màn hình CallsView với cờ active=true (Đang đàm thoại, không quay số lại)
   router.push({
     path: '/calls',
     query: {
-      number: callData.extension || '1007',
-      autocall: 'true',
+      number: callData.extension || '1002',
+      active: 'true',
     },
   })
 }

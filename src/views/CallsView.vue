@@ -164,23 +164,42 @@ const clearDigit = () => {
   extension.value = extension.value.slice(0, -1)
 }
 
-const handleDial = () => {
+const handleDial = async () => {
   const ext = extension.value.trim()
   if (!ext) return
 
   audioService.playRingbackTone()
 
-  // Thử gọi qua wazoService hoặc chạy chế độ mô phỏng WebRTC
-  try {
-    wazoService.makeCall(ext)
-  } catch (e) {
-    console.log('Chế độ mô phỏng cuộc gọi:', e)
-  }
-
   isCalling.value = true
   isHeld.value = false
   callSeconds.value = 0
   clearInterval(timer)
+
+  // Gọi thật qua Wazo WebRTC
+  try {
+    const session = await wazoService.makeCall(ext)
+    if (session) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `📞 Đang thiết lập cuộc gọi WebRTC tới máy lẻ ${ext}...`,
+            type: 'info',
+          },
+        }),
+      )
+    }
+  } catch (e) {
+    console.log('Chưa kết nối được máy lẻ thật qua WebRTC (Chế độ mô phỏng):', e)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `⚠️ Máy lẻ ${ext} chưa online trên tổng đài Wazo. Đang phát tín hiệu chờ.`,
+          type: 'warning',
+        },
+      }),
+    )
+  }
+
   timer = setInterval(() => {
     if (!isHeld.value) {
       callSeconds.value++
@@ -202,10 +221,20 @@ const hangupCall = () => {
 
 const toggleMute = () => {
   isMuted.value = !isMuted.value
+  try {
+    wazoService.mute()
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 const toggleHold = () => {
   isHeld.value = !isHeld.value
+  try {
+    wazoService.hold()
+  } catch (e) {
+    /* ignore */
+  }
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: {
@@ -214,6 +243,33 @@ const toggleHold = () => {
           : '▶️ Đã tiếp tục đàm thoại (Resume).',
         type: 'info',
       },
+    }),
+  )
+}
+
+// Xử lý các sự kiện cuộc gọi thật từ máy chủ Wazo
+const onRemoteAccepted = () => {
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: { message: `🎉 Cuộc gọi đã được kết nối thành công! Đang đàm thoại...`, type: 'success' },
+    }),
+  )
+}
+
+const onRemoteEnded = () => {
+  hangupCall()
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: { message: `Cuộc gọi đã kết thúc.`, type: 'info' },
+    }),
+  )
+}
+
+const onRemoteFailed = () => {
+  hangupCall()
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: { message: `Cuộc gọi không thành công (Máy bận hoặc đối phương chưa đăng nhập).`, type: 'warning' },
     }),
   )
 }
@@ -228,13 +284,33 @@ watch(
         setTimeout(() => {
           handleDial()
         }, 150)
+      } else if (newQuery.active === 'true') {
+        // Cuộc gọi đến vừa được nghe máy -> Đang đàm thoại trực tiếp
+        isCalling.value = true
+        isHeld.value = false
+        callSeconds.value = 0
+        clearInterval(timer)
+        timer = setInterval(() => {
+          if (!isHeld.value) {
+            callSeconds.value++
+          }
+        }, 1000)
       }
     }
   },
   { immediate: true },
 )
 
+onMounted(() => {
+  window.addEventListener('wazo-accepted', onRemoteAccepted)
+  window.addEventListener('wazo-ended', onRemoteEnded)
+  window.addEventListener('wazo-failed', onRemoteFailed)
+})
+
 onUnmounted(() => {
+  window.removeEventListener('wazo-accepted', onRemoteAccepted)
+  window.removeEventListener('wazo-ended', onRemoteEnded)
+  window.removeEventListener('wazo-failed', onRemoteFailed)
   clearInterval(timer)
 })
 </script>

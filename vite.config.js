@@ -10,6 +10,10 @@ export default defineConfig({
     vue(),
     vueDevTools(),
   ],
+  server: {
+    host: true, // Mở cho mạng LAN để đồng nghiệp cùng mạng có thể truy cập qua IP máy bạn
+    port: 5173,
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
