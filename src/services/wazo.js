@@ -55,6 +55,7 @@ class WazoService {
     }
     localStorage.removeItem('smartcall_wazo_token')
     localStorage.removeItem('smartcall_wazo_refreshToken')
+    localStorage.removeItem('smartcall_offline_mode')
     this.currentCallSession = null
     this.stopRemoteAudio()
     this.disconnectPhone()

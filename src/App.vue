@@ -92,8 +92,8 @@ onMounted(async () => {
   const storedLogin = localStorage.getItem('smartcall_logged_in')
   if (storedLogin !== 'false' && (storedLogin === 'true' || wazoService.isLogged())) {
     isLoggedIn.value = true
-    // Tự động khôi phục phiên Wazo từ Token lưu trữ
-    if (!wazoService.session) {
+    // Tự động khôi phục phiên Wazo từ Token lưu trữ khi có kết nối
+    if (!wazoService.session && localStorage.getItem('smartcall_offline_mode') !== 'true') {
       await wazoService.restoreSession()
     }
     tryConnectPhone()
@@ -136,6 +136,11 @@ const handleLoginSuccess = () => {
 }
 
 const tryConnectPhone = async () => {
+  if (localStorage.getItem('smartcall_offline_mode') === 'true') {
+    phoneStatus.value = 'disconnected'
+    isPhoneConnected.value = false
+    return
+  }
   phoneStatus.value = 'connecting'
   try {
     await wazoService.connectPhone()
@@ -224,6 +229,7 @@ const handleToastEvent = (event) => {
 const handleLogout = () => {
   wazoService.logout()
   localStorage.setItem('smartcall_logged_in', 'false')
+  localStorage.removeItem('smartcall_offline_mode')
   isLoggedIn.value = false
   isPhoneConnected.value = false
   currentCall.value = null

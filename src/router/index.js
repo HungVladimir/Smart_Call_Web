@@ -59,8 +59,12 @@ router.beforeEach((to) => {
     document.title = `${to.meta.title} - SmartCall Web`
   }
 
-  // Check login: ưu tiên cờ localStorage, nếu chưa có thì kiểm tra wazoService
-  const isLogged = localStorage.getItem('smartcall_logged_in') !== 'false' && wazoService.isLogged()
+  // Check login: kiểm tra cờ đăng nhập, token phiên làm việc hoặc chế độ thử nghiệm
+  const hasSavedToken = Boolean(localStorage.getItem('smartcall_wazo_token'))
+  const isOffline = localStorage.getItem('smartcall_offline_mode') === 'true'
+  const isLogged =
+    localStorage.getItem('smartcall_logged_in') === 'true' &&
+    (wazoService.isLogged() || hasSavedToken || isOffline)
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
 
   if (requiresAuth && !isLogged) {
@@ -70,7 +74,7 @@ router.beforeEach((to) => {
     }
   }
 
-  if (to.name === 'Login' && isLogged && localStorage.getItem('smartcall_logged_in') === 'true') {
+  if (to.name === 'Login' && isLogged) {
     return '/dashboard'
   }
 })
