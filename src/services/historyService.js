@@ -115,9 +115,9 @@ class HistoryService {
 
   /**
    * Lấy lịch sử cuộc gọi:
-   * 1. Thử gọi Wazo Call-Logd API (hoặc API DB của anh Hải sau này):
+   * 1. Thử gọi Wazo Call-Logd API (hoặc API Backend tổng đài):
    *    GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
-   * 2. Nếu thất bại (offline/chưa có DB) -> Fallback sang Mock Data chuẩn SDV.
+   * 2. Nếu không có kết nối -> Sử dụng dữ liệu dự phòng.
    */
   async getHistory({ tab = 'all', limit = 50 } = {}) {
     try {
@@ -213,7 +213,7 @@ class HistoryService {
     try {
       const token = wazoService.getToken()
       if (token) {
-        // Nếu backend Wazo hoặc API anh Hải hỗ trợ DELETE CDR
+        // Nếu backend tổng đài hỗ trợ DELETE CDR
         const host = wazoService.host.startsWith('http')
           ? wazoService.host
           : `https://${wazoService.host}`

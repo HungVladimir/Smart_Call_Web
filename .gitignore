@@ -1,0 +1,36 @@
+# Thư viện phụ thuộc (Dependencies)
+node_modules/
+.pnp/
+.pnp.js
+
+# Thư mục build đầu ra (Build Artifacts)
+dist/
+dist-ssr/
+*.local
+
+# Nhật ký lỗi (Logs)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Cấu hình IDE & Trình soạn thảo
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+
+# Biến môi trường cục bộ
+.env.local
+.env.*.local
+
+# Bộ nhớ tạm (Cache & Temp)
+.temp/
+.cache/

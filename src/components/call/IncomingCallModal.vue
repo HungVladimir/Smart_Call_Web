@@ -2,7 +2,7 @@
   <transition name="call-pop">
     <div v-if="isOpen" class="incoming-call-overlay">
       <div class="incoming-call-card">
-        <!-- 1. Thanh trạng thái trên cùng chuẩn app5.webp -->
+        <!-- 1. Thanh trạng thái trên cùng -->
         <div class="card-topbar">
           <div class="reg-status">
             <span class="reg-dot"></span>
@@ -13,7 +13,7 @@
           </div>
         </div>
 
-        <!-- 2. Tiêu đề INCOMING CALL chuẩn app5.webp -->
+        <!-- 2. Tiêu đề INCOMING CALL -->
         <div class="call-type-banner">
           <h2>INCOMING CALL</h2>
         </div>
@@ -34,7 +34,7 @@
           </div>
         </div>
 
-        <!-- 5. Hai nút hành động chuẩn app5.webp (Từ chối & Chấp nhận) -->
+        <!-- 5. Hai nút hành động (Từ chối & Chấp nhận) -->
         <div class="action-footer">
           <!-- Nút Từ chối (Bên trái, màu xám/đỏ có biểu tượng cúp máy) -->
           <button class="btn-call-action btn-reject" title="Từ chối cuộc gọi" @click="handleReject">
@@ -153,7 +153,7 @@ const handleReject = () => {
   }
 }
 
-/* 1. Top bar chuẩn app5.webp */
+/* 1. Top bar */
 .card-topbar {
   background-color: #0284c7;
   color: #ffffff;
@@ -184,7 +184,7 @@ const handleReject = () => {
   opacity: 0.85;
 }
 
-/* 2. Banner INCOMING CALL chuẩn app5.webp */
+/* 2. Banner INCOMING CALL */
 .call-type-banner {
   background-color: #f1f5f9;
   padding: 12px 16px;
@@ -284,7 +284,7 @@ const handleReject = () => {
   }
 }
 
-/* 5. Hai nút hành động ở chân modal chuẩn app5.webp */
+/* 5. Hai nút hành động ở chân modal */
 .action-footer {
   display: grid;
   grid-template-columns: 1fr 1fr;

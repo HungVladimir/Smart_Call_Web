@@ -1,57 +1,57 @@
 import { wazoService } from './wazo'
 
-// Mock Data chuẩn doanh nghiệp SDV dự phòng khi chưa có server Wazo LAN hoặc API anh Hải
+// Dữ liệu danh bạ mẫu chuẩn doanh nghiệp
 const MOCK_CONTACTS = [
   {
     id: 'emp-1002',
-    name: 'Alice Nguyễn',
-    email: 'alice@company.local',
-    dept: 'SDV MES 1 / SDV Application Group',
+    name: 'Nguyễn Văn An',
+    email: 'an.nguyen@company.local',
+    dept: 'Khối Kỹ thuật / Nhóm Ứng dụng',
     number: '1002',
     status: 'online',
     unreadCount: 2,
   },
   {
     id: 'emp-1003',
-    name: 'Bob Trần',
-    email: 'bob@company.local',
-    dept: 'SDV MES 2 / Vận hành MFQ/MP',
+    name: 'Trần Văn Bình',
+    email: 'binh.tran@company.local',
+    dept: 'Khối Vận hành / Phân xưởng MFQ',
     number: '1003',
     status: 'online',
     unreadCount: 0,
   },
   {
     id: 'emp-1004',
-    name: 'Carol Lê',
-    email: 'carol@company.local',
-    dept: 'MOS Part (SDV)',
+    name: 'Lê Cẩm Tú',
+    email: 'tu.le@company.local',
+    dept: 'Khối Quản trị Chất lượng',
     number: '1004',
     status: 'offline',
     unreadCount: 0,
   },
   {
     id: 'emp-1005',
-    name: 'Ngô Tiến Việt (Storm)',
+    name: 'Ngô Tiến Việt',
     email: 'viet.ngo@company.local',
-    dept: 'SDV MES Development Part',
+    dept: 'Phòng Phát triển Phần mềm',
     number: '1005',
     status: 'online',
     unreadCount: 1,
   },
   {
     id: 'emp-1006',
-    name: 'Lương Đức Anh (ducanh)',
+    name: 'Lương Đức Anh',
     email: 'ducanh.luong@company.local',
-    dept: 'SDV MES Development Part',
+    dept: 'Phòng Phát triển Phần mềm',
     number: '1006',
     status: 'online',
     unreadCount: 3,
   },
   {
     id: 'emp-1007',
-    name: 'Nguyễn Hữu Hiếu (Kaito)',
+    name: 'Nguyễn Hữu Hiếu',
     email: 'hieu.nguyen@company.local',
-    dept: 'SDV MES Application Group Lead',
+    dept: 'Trưởng nhóm Phát triển Hệ thống',
     number: '1007',
     status: 'online',
     unreadCount: 0,
@@ -63,12 +63,39 @@ class ContactService {
     this.localContacts = [...MOCK_CONTACTS]
   }
 
+  // Quản lý danh sách Yêu thích (Favorites)
+  getFavoriteIds() {
+    try {
+      const raw = localStorage.getItem('smartcall_favorites')
+      return raw ? JSON.parse(raw) : ['emp-1002', 'emp-1007']
+    } catch (e) {
+      return ['emp-1002']
+    }
+  }
+
+  toggleFavorite(id) {
+    const list = this.getFavoriteIds()
+    const idx = list.indexOf(id)
+    if (idx !== -1) {
+      list.splice(idx, 1)
+    } else {
+      list.push(id)
+    }
+    localStorage.setItem('smartcall_favorites', JSON.stringify(list))
+    return list.includes(id)
+  }
+
+  isFavorite(id) {
+    return this.getFavoriteIds().includes(id)
+  }
+
   /**
-   * Lấy danh bạ nhân viên:
-   * 1. Thử gọi API thật của Wazo Dird (hoặc API của anh Hải sau này).
-   * 2. Nếu thất bại hoặc đang dev offline -> Tự động dùng Mock Data dự phòng để UI luôn hiển thị đẹp.
+   * Lấy danh bạ toàn bộ nhân viên:
+   * 1. Thử gọi API máy chủ tổng đài Wazo Dird.
+   * 2. Nếu không có kết nối máy chủ -> Sử dụng dữ liệu dự phòng.
    */
   async getContacts() {
+    const favorites = this.getFavoriteIds()
     try {
       const token = wazoService.getToken()
       if (!token) throw new Error('No token available')
@@ -77,7 +104,7 @@ class ContactService {
         ? wazoService.host
         : `https://${wazoService.host}`
 
-      // 1. Thử lấy nguồn danh bạ Wazo Dird
+      // 1. Lấy nguồn danh bạ tổng đài
       const sourceRes = await fetch(
         `${host}/api/dird/0.1/directories/default/sources?backend=wazo`,
         {
@@ -88,12 +115,15 @@ class ContactService {
       if (!sourceRes.ok) throw new Error('Cannot fetch sources')
       const sourcesData = await sourceRes.json()
       if (!sourcesData.items || sourcesData.items.length === 0) {
-        return this.localContacts
+        return this.localContacts.map((c) => ({
+          ...c,
+          isFavorite: favorites.includes(c.id),
+        }))
       }
 
       const sourceUuid = sourcesData.items[0].uuid
 
-      // 2. Thử lấy danh sách liên hệ từ nguồn
+      // 2. Lấy toàn bộ danh sách liên hệ từ nguồn (lấy full danh bạ)
       const contactsRes = await fetch(
         `${host}/api/dird/0.1/backends/wazo/sources/${sourceUuid}/contacts?limit=1000`,
         {
@@ -104,24 +134,29 @@ class ContactService {
       if (!contactsRes.ok) throw new Error('Cannot fetch contacts')
       const contactsData = await contactsRes.json()
 
-      // Map dữ liệu Wazo sang schema chuẩn của hệ thống
-      return contactsData.items.map((item, index) => ({
-        id: item.uuid || `wazo-${index}`,
-        name: item.name || 'Ẩn danh',
-        email: item.email || '',
-        dept: item.department || 'Nhân viên SDV',
-        number: item.number || item.phone_number || '',
-        status: 'online',
-        unreadCount: 0,
-      }))
+      return contactsData.items.map((item, index) => {
+        const id = item.uuid || `wazo-${index}`
+        return {
+          id,
+          name: item.name || 'Ẩn danh',
+          email: item.email || '',
+          dept: item.department || 'Khối Kỹ thuật',
+          number: item.number || item.phone_number || '',
+          status: 'online',
+          unreadCount: 0,
+          isFavorite: favorites.includes(id),
+        }
+      })
     } catch (err) {
-      // Khi dev offline hoặc chưa có server -> Fallback dữ liệu mock
-      return this.localContacts
+      return this.localContacts.map((c) => ({
+        ...c,
+        isFavorite: favorites.includes(c.id),
+      }))
     }
   }
 
   /**
-   * Xóa một liên hệ khỏi danh bạ gần đây
+   * Xóa một liên hệ khỏi danh bạ
    */
   async deleteContact(id) {
     const idx = this.localContacts.findIndex((c) => c.id === id)
@@ -140,6 +175,7 @@ class ContactService {
       id: `custom-${Date.now()}`,
       status: 'offline',
       unreadCount: 0,
+      isFavorite: false,
       ...contact,
     })
     return true
@@ -147,4 +183,3 @@ class ContactService {
 }
 
 export const contactService = new ContactService()
-

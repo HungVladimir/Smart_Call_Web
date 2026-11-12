@@ -1,0 +1,22 @@
+
+Sáng nay tôi đã trao đổi về giao diện, trước mắt giao diện hiện tại đã oke, tuy nhiên về mặt chức năng  tôi thấy hiện tại đang không ổn, không biết là do code sai, hay cố tình làm vậy, hay là do không có db nên chỉ đang fake,
+Nhưng hiện tại tôi test các chức năng đang thấy không ổn,
+Tôi sẽ liệt kê như sau, sau đó hãy phân tích thật kỹ, phân tích cho tôi xong nếu tôi oke thì bắt đầu sửa code và update .md
+1. Hiện tại giao diện và code đang dành cho tài khoản admin đúng không? vậy nếu không phải admin mà là user thì sẽ sử dụng được những quyền gì, nên thêm cho tôi ở menu đăng nhập , là đăng nhập nhanh với admin, và đăng nhập nhanh với user, tùy vào đăng nhập như nào thì sẽ có các quyền tương ứng, về quyền thì check xem guide hoặc ảnh xem có nói tới không? nếu không thì hãy nghĩ giúp tôi
+2. Giải thích giúp tôi tính năng hold khi gọi nghĩa là như nào?
+3. Nếu tôi đang ở tab danh bạ, mà tôi ấn button call để gọi cho 1 người thì nó sẽ nhảy sang màn hình thứ 2 là Tab Gọi điện & bàn phím, nhưng lúc này giao diện ở tab đó không phải là cuộc gọi, nó vẫn hiển thị chưa có cuộc gọi, khi ấn vào button gọi thì chỉ có toast thông báo đang gọi: 1002 nhưng màn hình không hiển thị gì thêm?
+4. Cái Wazo: ready có tác dụng gì, khi tôi nhập 1009 vào thì nó cũng báo toast đang gọi :1009 nhưng cũng không có gì xảy ra, mục đích của wazo:ready là gì, đúng ra logic sẽ phải như nào?
+5. Về phần button tin nhắn khi đang ở danh bạ, nếu ấn vào thì nó hiện thị sang tab tin nhắn, nhưng không phải tin nhắn với người đó? ví dụ tôi ấn button nhắn tin với số 1002, thì sau khi ấn button nó lại hiện list tin nhắn chứ không vào thẳng tin nhắn để nhắn tin với 1002?
+6. Về Button Call video, hiện tại cũng đang không có giao diện, chỉ có toast show lên, phần này thì tạm thời bỏ qua
+7. Về tính năng search ở trong tab danh ba, hiện tại tôi muốn thay đổi như sau: Tab danh bạ sẽ hiện thị tất cả các số lấy từ db lên, cái này do a Hải bảo đang chỉ có 1 bảng để query, nếu muốn lưu mỗi tài khoản có 1 list bạn riêng thì phải tạo bảng db khác để lưu trữ, phân tích cho tôi như thế có ổn không? có làm được không?
+Và hiện tại tôi đang muốn tìm kiếm là tìm kiếm full trong db, ví dụ db có 100 người thì hiện hết lên,  thế thì có ổn không nhỉ? như thế thì lại mất tính năng kết bạn nhỉ, hay chỉ cần hiện thị hết lên rồi search mà gọi thôi không cần kết bạn, chỉ cần tin nhắn lưu trữ là được rồi nhỉ? phân tích giúp tôi
+8. Những liên hệ offline hiện tại vẫn call được thì phải, check giúp tôi phần này
+9. Về phần tin nhắn, tuy đã có hiện thị tin nhắn ghim, nhưng nếu tôi ấn x đi để ghim tin nhắn khác thì lại không thấy button ghim ở đâu
+10. Về phần thêm thành viên, sau khi tôi thêm thành viên thì không bên ngoài không cập nhập số thành viên, có phải do đang fake cứng data không?
+11. Về thanh search tìm nhanh : hiện tại ví dụ tôi nhập số 9999 vào rồi ấn enter thì nó chuyển tới tab danh bạ, sau này nên làm thành search và hiện thị ngay bên dưới để người dùng ấn luôn, ví dụ ấn nút 100 thì nó sẽ hiện 1001-> 1009 , hoặc nhập tên thì nó cũng hiện list 5 người, và có nút xem thêm chẳng hạn, hoặc sau này bỏ luôn thanh search này đi nếu phức tạp quá.
+
+Trên đó  là 11 câu hỏi của tôi về quá trình sử dụng web hiện tại, hãy trả lời chi tiết giúp tôi
+Thêm nữa, hãy tạo file gitignore, mỗi lần tôi push lên thì nó push cả thu viện cũng như rất nhiều thứ khác, hãy check xem phần nào không bao giờ thay đổi, mà nó chứa rất nhiều thứ, thì hiện tại tôi đã get prj này về rồi, nếu không update thì nên ignore nó đi giúp tôi
+Cuối cùng, rà soát lại toàn bộ prj, bỏ hết các từ app1,app2,app3,app4,app5, anh dũng, bạn hùng, anh hải, tất cả mọi thứ liên quan hay refer , đang comment giải thích thì xóa giúp tôi, tại vì prj này phải đưa cho người khác nên không nên để những từ như thế, các từ như làm ở nhà cũng vậy, lược bỏ hết đi giúp tôi
+Nếu dài quá thì hãy viết hết vào md, và từ đó hãy phân tích từ từ , cố gắng đừng bỏ sót ý nào của tôi.
+

@@ -1,109 +1,108 @@
 import { wazoService } from './wazo'
 
 /**
- * MOCK DATA PHÒNG CHAT & TIN NHẮN CHUẨN DOANH NGHIỆP SDV LAN
- * Bám sát nghiệp vụ trong ảnh app1.webp, app2.webp, app3.webp
+ * Dữ liệu phòng chat và tin nhắn mẫu chuẩn hệ thống LAN
  */
 const MOCK_ROOMS = [
   {
-    id: 'room-mos-part',
-    title: 'MOS PART (31 thành viên)',
-    preview: 'ok anh ơi, để em ngâm cứu thử',
+    id: 'room-tech-part',
+    title: 'Nhóm Kỹ thuật LAN',
+    preview: 'ok bạn ơi, để mình kiểm tra thử',
     time: '15:32',
     unread: 2,
-    pinned: 'Nếu Scan TRAY ID hoặc cột TRAY ID phần NEW không bị null thì run thêm query này khi save: DELETE FROM WP1MOD_TBL_ISSUE_CELL WHERE 1=1 AND STOCKERID = #WT5FE05-004 AND TRAY_LOT IS NULL',
+    pinned: 'Thông báo kỹ thuật: Kiểm tra định kỳ đường truyền SIP Trunk và line WebRTC phòng điều hành.',
     avatarBg: '#0284c7',
     icon: '👥',
     members: [
-      { id: '1001', name: 'Lê Việt Dũng', dept: 'SDV MES 1', ext: '1001', isAdmin: true },
-      { id: '1006', name: 'Lương Đức Anh (ducanh)', dept: 'SDV MES Development Part', ext: '1006', isAdmin: false },
-      { id: '1007', name: 'Nguyễn Hữu Hiếu (Kaito)', dept: 'SDV MES Application Group Lead', ext: '1007', isAdmin: false },
-      { id: '1002', name: 'Alice Nguyễn', dept: 'SDV MES 1 / SDV Application Group', ext: '1002', isAdmin: false },
-      { id: '1003', name: 'Bob Trần', dept: 'SDV MES 2 / Vận hành MFQ/MP', ext: '1003', isAdmin: false },
+      { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
+      { id: '1006', name: 'Lương Đức Anh', dept: 'Phòng Phát triển Phần mềm', ext: '1006', isAdmin: false },
+      { id: '1007', name: 'Nguyễn Hữu Hiếu', dept: 'Trưởng nhóm Phát triển Hệ thống', ext: '1007', isAdmin: false },
+      { id: '1002', name: 'Nguyễn Văn An', dept: 'Khối Kỹ thuật / Nhóm Ứng dụng', ext: '1002', isAdmin: false },
+      { id: '1003', name: 'Trần Văn Bình', dept: 'Khối Vận hành / Phân xưởng MFQ', ext: '1003', isAdmin: false },
     ],
     messages: [
       {
         id: 'msg-101',
         sender: 'theirs',
-        senderName: 'Lương Đức Anh (ducanh)',
-        dept: 'Engineer / SDV MES Development Part, SDV',
-        text: 'Các anh kiểm tra giúp em line 1002 có gọi sang được bên phân xưởng không ạ?',
+        senderName: 'Lương Đức Anh',
+        dept: 'Kỹ sư Phần mềm',
+        text: 'Mọi người kiểm tra giúp em line 1002 có gọi sang được phân xưởng không ạ?',
         time: '15:28',
         readStatus: 'Read (12)',
-        readers: ['Lê Việt Dũng', 'Nguyễn Hữu Hiếu', 'Alice Nguyễn', 'Bob Trần', 'Ngô Tiến Việt'],
+        readers: ['Quản trị viên', 'Nguyễn Hữu Hiếu', 'Nguyễn Văn An', 'Trần Văn Bình'],
       },
       {
         id: 'msg-102',
         sender: 'mine',
-        senderName: 'Tôi (Lê Việt Dũng)',
-        dept: 'SDV MES 1',
-        text: 'Anh vừa thử test gọi thoại qua WebRTC Wazo, mic và âm thanh đều thông suốt rồi nhé!',
+        senderName: 'Tôi',
+        dept: 'Khối Kỹ thuật',
+        text: 'Mình vừa thử kiểm tra gọi thoại qua WebRTC, mic và âm thanh đều thông suốt rồi nhé!',
         time: '15:30',
         readStatus: 'Read (4)',
-        readers: ['Lương Đức Anh', 'Bob Trần', 'Nguyễn Hữu Hiếu'],
+        readers: ['Lương Đức Anh', 'Trần Văn Bình', 'Nguyễn Hữu Hiếu'],
       },
       {
         id: 'msg-103',
         sender: 'theirs',
-        senderName: 'Lương Đức Anh (ducanh)',
-        dept: 'Engineer / SDV MES Development Part, SDV',
-        text: 'ok anh ơi, để em ngâm cứu thử',
+        senderName: 'Lương Đức Anh',
+        dept: 'Kỹ sư Phần mềm',
+        text: 'ok bạn ơi, để mình kiểm tra thử',
         time: '15:32',
         readStatus: 'Read (1)',
-        readers: ['Lê Việt Dũng'],
+        readers: ['Quản trị viên'],
       },
     ],
   },
   {
     id: 'room-mfq-mp',
-    title: '[QD Project] Vận hành MFQ/MP',
-    preview: 'There are new messages. (3)',
+    title: 'Vận hành Phân xưởng MFQ',
+    preview: 'Báo cáo ca làm việc hôm nay bình thường.',
     time: '15:58',
     unread: 3,
-    pinned: 'Thông báo chuyển giao ca trực 2: Kiểm tra kết nối SIP Trunk và line WebRTC phòng điều hành.',
+    pinned: 'Thông báo chuyển giao ca trực: Bàn giao hệ thống giám sát và tổng đài cho ca kế tiếp.',
     avatarBg: '#10b981',
     icon: '🏭',
     members: [
-      { id: '1001', name: 'Lê Việt Dũng', dept: 'SDV MES 1', ext: '1001', isAdmin: true },
-      { id: '1005', name: 'Ngô Tiến Việt (Storm)', dept: 'SDV MES Development Part', ext: '1005', isAdmin: false },
-      { id: '1008', name: 'Trịnh Thế Duyệt', dept: 'MFQ Operator', ext: '1008', isAdmin: false },
+      { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
+      { id: '1005', name: 'Ngô Tiến Việt', dept: 'Phòng Phát triển Phần mềm', ext: '1005', isAdmin: false },
+      { id: '1008', name: 'Trịnh Thế Duyệt', dept: 'Tổ Vận hành Phân xưởng', ext: '1008', isAdmin: false },
     ],
     messages: [
       {
         id: 'msg-201',
         sender: 'theirs',
         senderName: 'Trịnh Thế Duyệt',
-        dept: 'MFQ Operator',
+        dept: 'Tổ Vận hành Phân xưởng',
         text: 'Báo cáo ca làm việc hôm nay bình thường.',
         time: '15:58',
         readStatus: 'Read (5)',
-        readers: ['Lê Việt Dũng'],
+        readers: ['Quản trị viên'],
       },
     ],
   },
   {
     id: 'room-direct-1007',
-    title: 'Nguyễn Hữu Hiếu (Kaito)',
-    preview: 'Anh test thử cuộc gọi trên máy 1002 nhé',
+    title: 'Nguyễn Hữu Hiếu',
+    preview: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
     time: '14:15',
     unread: 0,
     pinned: '',
     avatarBg: '#f59e0b',
     icon: 'NH',
     members: [
-      { id: '1001', name: 'Lê Việt Dũng', dept: 'SDV MES 1', ext: '1001', isAdmin: true },
-      { id: '1007', name: 'Nguyễn Hữu Hiếu (Kaito)', dept: 'SDV MES Application Group Lead', ext: '1007', isAdmin: false },
+      { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
+      { id: '1007', name: 'Nguyễn Hữu Hiếu', dept: 'Trưởng nhóm Phát triển Hệ thống', ext: '1007', isAdmin: false },
     ],
     messages: [
       {
         id: 'msg-301',
         sender: 'theirs',
         senderName: 'Nguyễn Hữu Hiếu',
-        dept: 'SDV MES Application Group Lead',
-        text: 'Anh test thử cuộc gọi trên máy 1002 nhé',
+        dept: 'Trưởng nhóm Phát triển Hệ thống',
+        text: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
         time: '14:15',
         readStatus: 'Read (1)',
-        readers: ['Lê Việt Dũng'],
+        readers: ['Quản trị viên'],
       },
     ],
   },
@@ -116,7 +115,7 @@ class ChatService {
 
   /**
    * Lấy danh sách các phòng chat của user
-   * Bám sát mục 4.6 trong dev_guide.md: GET /api/chatd/1.0/users/me/rooms
+   * REST API: GET /api/chatd/1.0/users/me/rooms
    */
   async getRooms() {
     try {
@@ -135,73 +134,28 @@ class ChatService {
       const data = await res.json()
 
       if (data.items && data.items.length > 0) {
-        // Map từ Wazo Chatd Room sang chuẩn SmartCall
         return data.items.map((room) => ({
           id: room.uuid,
-          title: room.name || 'Phòng chat Wazo',
+          title: room.name || 'Phòng thảo luận',
           preview: 'Cuộc trò chuyện mới',
           time: '',
           unread: 0,
-          pinned: '',
-          avatarBg: '#0284c7',
-          icon: '👥',
-          members: [],
+          avatarBg: '#3b82f6',
+          icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
           messages: [],
         }))
       }
       return this.rooms
-    } catch (e) {
-      // Fallback sang Mock Data chuẩn SDV khi offline
+    } catch (err) {
       return this.rooms
     }
-  }
-
-  /**
-   * Lấy danh sách tin nhắn trong một phòng chat
-   * GET /api/chatd/1.0/users/me/rooms/{room_uuid}/messages?limit=50
-   */
-  async getMessages(roomId) {
-    try {
-      const token = wazoService.getToken()
-      if (!token) throw new Error('No token')
-
-      const host = wazoService.host.startsWith('http')
-        ? wazoService.host
-        : `https://${wazoService.host}`
-
-      const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms/${roomId}/messages?limit=50`, {
-        headers: { 'X-Auth-Token': token },
-      })
-
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`)
-      const data = await res.json()
-
-      if (data.items) {
-        return data.items.map((msg) => ({
-          id: msg.uuid,
-          sender: msg.user_uuid === wazoService.session?.uuid ? 'mine' : 'theirs',
-          senderName: msg.alias || 'Đồng nghiệp',
-          dept: 'Nội bộ SDV',
-          text: msg.content,
-          time: msg.created_at ? msg.created_at.substring(11, 16) : '',
-          readStatus: 'Read',
-          readers: [],
-        }))
-      }
-    } catch (e) {
-      // Offline fallback
-    }
-
-    const room = this.rooms.find((r) => r.id === roomId)
-    return room ? room.messages : []
   }
 
   /**
    * Gửi một tin nhắn mới vào phòng
    * POST /api/chatd/1.0/users/me/rooms/{room_uuid}/messages
-   * body: { content: "...", alias: "..." }
    */
-  async sendMessage(roomId, text, userAlias = 'Tôi (Lê Việt Dũng)') {
+  async sendMessage(roomId, text, userAlias = 'Tôi') {
     const now = new Date()
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 
@@ -209,14 +163,13 @@ class ChatService {
       id: `msg-${Date.now()}`,
       sender: 'mine',
       senderName: userAlias,
-      dept: 'SDV MES 1',
+      dept: 'Khối Kỹ thuật',
       text,
       time: timeStr,
       readStatus: 'Read (0)',
       readers: [],
     }
 
-    // Cố gắng gửi qua API thật
     try {
       const token = wazoService.getToken()
       if (token) {
@@ -237,10 +190,9 @@ class ChatService {
         })
       }
     } catch (e) {
-      // Ignored in offline mode
+      // Bỏ qua khi chạy chế độ mô phỏng
     }
 
-    // Cập nhật local
     const room = this.rooms.find((r) => r.id === roomId)
     if (room) {
       room.messages.push(newMsg)
@@ -252,7 +204,7 @@ class ChatService {
   }
 
   /**
-   * Thêm thành viên vào phòng (theo nghiệp vụ app3.webp)
+   * Thêm thành viên vào phòng
    */
   async addMember(roomId, employee) {
     const room = this.rooms.find((r) => r.id === roomId)
@@ -274,7 +226,7 @@ class ChatService {
   }
 
   /**
-   * Xóa thành viên khỏi phòng (Ràng buộc: Không xóa Admin, không xóa nếu Recent < 3)
+   * Xóa thành viên khỏi phòng
    */
   async removeMember(roomId, memberId) {
     const room = this.rooms.find((r) => r.id === roomId)
@@ -297,7 +249,7 @@ class ChatService {
   }
 
   /**
-   * Đổi tiêu đề phòng chat (Admin mới được đổi, tối đa 100 chữ theo app3.webp)
+   * Đổi tiêu đề phòng chat (Admin mới được đổi, tối đa 100 chữ)
    */
   async updateRoomTitle(roomId, newTitle) {
     if (!newTitle || newTitle.trim().length === 0) {
@@ -316,7 +268,7 @@ class ChatService {
   }
 
   /**
-   * Ghim hoặc hủy ghim thông báo (Thanh ghim theo app2.webp)
+   * Ghim hoặc hủy ghim thông báo
    */
   async updatePinnedMessage(roomId, pinnedText) {
     const room = this.rooms.find((r) => r.id === roomId)
@@ -329,4 +281,3 @@ class ChatService {
 }
 
 export const chatService = new ChatService()
-

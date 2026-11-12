@@ -89,10 +89,15 @@
             </label>
           </div>
 
-          <!-- Quick Test Demo Login Button -->
-          <button type="button" class="btn-demo" @click="handleQuickDemo">
-            ⚡ Đăng nhập nhanh (Chế độ Demo/Test)
-          </button>
+          <!-- 2 Nút Đăng nhập nhanh kiểm thử phân quyền -->
+          <div class="demo-buttons-group">
+            <button type="button" class="btn-demo btn-demo-admin" @click="handleQuickLogin('admin')">
+              ⚡ Đăng nhập Quản trị viên (Admin)
+            </button>
+            <button type="button" class="btn-demo btn-demo-user" @click="handleQuickLogin('user')">
+              👤 Đăng nhập Nhân viên (User thường)
+            </button>
+          </div>
         </form>
       </div>
     </main>
@@ -106,7 +111,7 @@ import { wazoService } from '@/services/wazo'
 
 const router = useRouter()
 
-const username = ref('vdung.le')
+const username = ref('admin')
 const password = ref('Test@123')
 const showPassword = ref(false)
 const rememberMe = ref(true)
@@ -114,18 +119,19 @@ const loading = ref(false)
 
 const handleLogin = async () => {
   loading.value = true
+  const isAdmin = username.value.toLowerCase().includes('admin')
   try {
-    // Thử kết nối Wazo Auth với timeout 2s để tránh bị treo khi không có LAN
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Timeout server Wazo LAN')), 2000),
     )
     await Promise.race([wazoService.login(username.value, password.value), timeoutPromise])
   } catch (err) {
-    console.log('Chưa kết nối được server Wazo LAN (hoặc dev offline), chuyển sang phiên Demo:', err.message)
+    console.log('Chưa kết nối được server Wazo LAN, chuyển sang phiên Demo:', err.message)
   } finally {
-    // Lưu session cục bộ để khi F5 không bị mất đăng nhập
-    localStorage.setItem('smartcall_username', username.value || 'Lê Việt Dũng')
-    localStorage.setItem('smartcall_extension', '1001')
+    localStorage.setItem('smartcall_username', username.value || (isAdmin ? 'Quản trị viên' : 'Nhân viên Kỹ thuật'))
+    localStorage.setItem('smartcall_extension', isAdmin ? '1001' : '1002')
+    localStorage.setItem('smartcall_role', isAdmin ? 'admin' : 'user')
+    localStorage.setItem('smartcall_is_admin', isAdmin ? 'true' : 'false')
     localStorage.setItem('smartcall_logged_in', 'true')
 
     window.dispatchEvent(new CustomEvent('app-login-success'))
@@ -134,12 +140,18 @@ const handleLogin = async () => {
   }
 }
 
-// Đăng nhập nhanh 1 chạm: Vào ngay lập tức (0 giây) phục vụ kiểm thử giao diện
-const handleQuickDemo = () => {
-  username.value = 'Lê Việt Dũng'
+// Đăng nhập nhanh kiểm thử phân quyền Admin hoặc User
+const handleQuickLogin = (role) => {
+  const isAdmin = role === 'admin'
+  const uName = isAdmin ? 'Quản trị viên' : 'Nhân viên Kỹ thuật'
+  const ext = isAdmin ? '1001' : '1002'
+
+  username.value = isAdmin ? 'admin' : 'user1002'
   password.value = '123456'
-  localStorage.setItem('smartcall_username', 'Lê Việt Dũng')
-  localStorage.setItem('smartcall_extension', '1001')
+  localStorage.setItem('smartcall_username', uName)
+  localStorage.setItem('smartcall_extension', ext)
+  localStorage.setItem('smartcall_role', role)
+  localStorage.setItem('smartcall_is_admin', isAdmin ? 'true' : 'false')
   localStorage.setItem('smartcall_logged_in', 'true')
 
   window.dispatchEvent(new CustomEvent('app-login-success'))
@@ -283,21 +295,44 @@ const handleQuickDemo = () => {
   background-color: #1565c0;
 }
 
+.demo-buttons-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 .btn-demo {
   background: transparent;
   color: #1e88e5;
   border: 1px dashed #1e88e5;
-  padding: 8px;
+  padding: 8px 10px;
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
   border-radius: 4px;
-  margin-top: 10px;
   transition: all 0.2s;
+  text-align: center;
 }
 
-.btn-demo:hover {
-  background: #e3f2fd;
+.btn-demo-admin {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #f59e0b;
+}
+
+.btn-demo-admin:hover {
+  background: #fef3c7;
+}
+
+.btn-demo-user {
+  background: #f0fdf4;
+  color: #047857;
+  border-color: #10b981;
+}
+
+.btn-demo-user:hover {
+  background: #dcfce7;
 }
 
 .remember-me {

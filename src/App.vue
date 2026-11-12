@@ -26,7 +26,7 @@
     <!-- 3. Modal Cài đặt hệ thống (Settings Modal) -->
     <SettingsModal :is-open="showSettings" @close="showSettings = false" />
 
-    <!-- 4. Modal Cuộc gọi đến chuẩn app5.webp -->
+    <!-- 4. Modal Cuộc gọi đến WebRTC -->
     <IncomingCallModal
       :is-open="showIncomingModal"
       :call-data="incomingCallData"

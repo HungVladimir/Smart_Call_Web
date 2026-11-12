@@ -40,8 +40,8 @@
         </div>
       </div>
 
-      <!-- Màn hình trạng thái cuộc gọi (Theo app5.webp) -->
-      <div class="call-status-box" :class="{ inCall: isCalling }">
+      <!-- Màn hình trạng thái cuộc gọi WebRTC -->
+      <div class="call-status-box" :class="{ inCall: isCalling, onHold: isHeld }">
         <div class="call-avatar">
           <span>{{ callAvatarInitials }}</span>
         </div>
@@ -100,7 +100,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { wazoService } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
@@ -130,8 +130,11 @@ const keys = [
 ]
 
 const callerName = computed(() => {
-  if (isCalling.value) return `Máy lẻ ${extension.value}`
-  return 'Chưa có cuộc gọi'
+  if (isCalling.value) {
+    if (isHeld.value) return `Máy lẻ ${extension.value} (Tạm giữ - Hold)`
+    return `Đang đàm thoại: Máy lẻ ${extension.value}`
+  }
+  return 'Sẵn sàng kết nối cuộc gọi'
 })
 
 const callerSip = computed(() => {
@@ -167,18 +170,21 @@ const handleDial = () => {
 
   audioService.playRingbackTone()
 
-  // Thử gọi qua wazoService hoặc giả lập gọi nếu đang dev offline
+  // Thử gọi qua wazoService hoặc chạy chế độ mô phỏng WebRTC
   try {
     wazoService.makeCall(ext)
   } catch (e) {
-    console.log('Chế độ giả lập cuộc gọi:', e)
+    console.log('Chế độ mô phỏng cuộc gọi:', e)
   }
 
   isCalling.value = true
+  isHeld.value = false
   callSeconds.value = 0
   clearInterval(timer)
   timer = setInterval(() => {
-    callSeconds.value++
+    if (!isHeld.value) {
+      callSeconds.value++
+    }
   }, 1000)
 }
 
@@ -190,6 +196,7 @@ const hangupCall = () => {
     /* ignore */
   }
   isCalling.value = false
+  isHeld.value = false
   clearInterval(timer)
 }
 
@@ -199,17 +206,36 @@ const toggleMute = () => {
 
 const toggleHold = () => {
   isHeld.value = !isHeld.value
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message: isHeld.value
+          ? '⏸️ Đang giữ máy (Hold). Luồng âm thanh tạm dừng.'
+          : '▶️ Đã tiếp tục đàm thoại (Resume).',
+        type: 'info',
+      },
+    }),
+  )
 }
 
-onMounted(() => {
-  if (route.query.number) {
-    extension.value = String(route.query.number)
-    if (route.query.autocall === 'true') {
-      setTimeout(() => {
-        handleDial()
-      }, 300)
+// Lắng nghe thay đổi query param từ danh bạ hoặc thanh tìm kiếm
+watch(
+  () => route.query,
+  (newQuery) => {
+    if (newQuery && newQuery.number) {
+      extension.value = String(newQuery.number)
+      if (newQuery.autocall === 'true') {
+        setTimeout(() => {
+          handleDial()
+        }, 150)
+      }
     }
-  }
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  clearInterval(timer)
 })
 </script>
 

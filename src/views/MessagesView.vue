@@ -1,7 +1,7 @@
 <template>
   <div class="messages-view">
     <div class="chat-container">
-      <!-- 1. CỘT DANH SÁCH PHÒNG CHAT (THEO APP1) -->
+      <!-- 1. CỘT DANH SÁCH PHÒNG CHAT -->
       <div class="chat-rooms-col">
         <div class="rooms-header">
           <h2>Tin nhắn</h2>
@@ -22,7 +22,12 @@
 
             <div class="room-info">
               <div class="room-top">
-                <span class="room-title">{{ room.title }}</span>
+                <span class="room-title">
+                  {{ room.title }}
+                  <small v-if="!room.isDirect" class="member-tag">
+                    ({{ room.id === currentRoom.id ? currentRoomMembers.length : (room.memberCount || 3) }})
+                  </small>
+                </span>
                 <span class="room-time">{{ room.time }}</span>
               </div>
               <div class="room-bottom">
@@ -34,13 +39,15 @@
         </div>
       </div>
 
-      <!-- 2. CỘT KHUNG CHAT CHI TIẾT (THEO APP2) -->
+      <!-- 2. CỘT KHUNG CHAT CHI TIẾT -->
       <div class="chat-main-col">
         <!-- Chat Header -->
         <div class="chat-header">
           <div class="chat-title-group">
             <h3>{{ currentRoom.title }}</h3>
-            <span class="online-indicator">● Đang hoạt động (31 thành viên)</span>
+            <span class="online-indicator">
+              ● Đang hoạt động ({{ currentRoom.isDirect ? 2 : currentRoomMembers.length }} thành viên)
+            </span>
           </div>
 
           <div class="chat-header-actions">
@@ -50,15 +57,13 @@
           </div>
         </div>
 
-        <!-- Thanh thông báo ghim (Theo app2.webp) -->
+        <!-- Thanh thông báo ghim -->
         <div v-if="showPinned" class="pinned-bar">
           <div class="pinned-content">
             <span class="pinned-tag">📌 Ghim:</span>
-            <span class="pinned-text">
-              Nếu Scan TRAY ID hoặc cột TRAYID phần NEW không bị null thì run query này khi save...
-            </span>
+            <span class="pinned-text">{{ pinnedNotice }}</span>
           </div>
-          <button class="btn-close-pin" @click="showPinned = false">✖</button>
+          <button class="btn-close-pin" title="Ẩn thông báo ghim" @click="showPinned = false">✖</button>
         </div>
 
         <!-- Danh sách tin nhắn -->
@@ -82,6 +87,13 @@
               >
                 {{ msg.readStatus }}
               </span>
+              <button
+                class="btn-pin-msg"
+                title="Ghim tin nhắn này lên đầu phòng chat"
+                @click="pinMessage(msg)"
+              >
+                📌 Ghim
+              </button>
             </div>
           </div>
         </div>
@@ -100,29 +112,35 @@
       </div>
     </div>
 
-    <!-- ==================== MODAL: ADD MEMBER (THEO APP3.WEBP) ==================== -->
+    <!-- MODAL: ADD / QUẢN LÝ THÀNH VIÊN VÀ PHÂN QUYỀN ADMIN -->
     <div v-if="showMemberModal" class="modal-overlay" @click.self="showMemberModal = false">
       <div class="modal-card">
         <div class="modal-head">
-          <span>ADD MEMBER (THÊM / QUẢN LÝ THÀNH VIÊN)</span>
+          <span>QUẢN LÝ THÀNH VIÊN PHÒNG CHAT</span>
           <button class="btn-close" @click="showMemberModal = false">✖</button>
         </div>
 
         <div class="modal-body">
-          <!-- Đổi tên nhóm (TITLE) -->
+          <!-- Đổi tên nhóm (TITLE - Phân quyền Admin) -->
+          <div class="admin-perm-notice" v-if="!currentIsAdmin">
+            🔒 Bạn đang đăng nhập quyền Nhân viên (User thường). Chỉ Quản trị viên mới được đổi tên nhóm và xóa thành viên.
+          </div>
+
           <label class="form-label">
-            TITLE (TÊN NHÓM - CHỈ ADMIN ĐƯỢC ĐỔI, TỐI ĐA 100 KÝ TỰ):
+            TITLE (TÊN NHÓM {{ currentIsAdmin ? '- BẠN CÓ QUYỀN SỬA' : '- KHÓA (CẦN ADMIN)' }}):
           </label>
           <input
             v-model="editGroupTitle"
             type="text"
             maxlength="100"
             class="form-input"
+            :disabled="!currentIsAdmin"
+            :placeholder="currentIsAdmin ? 'Nhập tên nhóm mới...' : 'Chỉ Quản trị viên mới được sửa tên nhóm'"
             @input="checkTitleChange"
           />
 
-          <!-- Tìm kiếm nhân viên -->
-          <label class="form-label">TÌM KIẾM NHÂN VIÊN ĐỂ THÊM:</label>
+          <!-- Tìm kiếm nhân viên để thêm -->
+          <label class="form-label">TÌM KIẾM NHÂN VIÊN ĐỂ THÊM VÀO NHÓM:</label>
           <div class="search-add-row">
             <input
               v-model="searchQuery"
@@ -131,11 +149,13 @@
               class="form-input"
               @keyup.enter="searchAndAdd"
             />
-            <button class="btn-action-add" @click="searchAndAdd">+</button>
+            <button class="btn-action-add" title="Thêm vào nhóm" @click="searchAndAdd">+</button>
           </div>
 
           <!-- Danh sách thành viên hiện tại -->
-          <label class="form-label">DANH SÁCH THÀNH VIÊN HIỆN TẠI (RECENT):</label>
+          <label class="form-label">
+            DANH SÁCH THÀNH VIÊN HIỆN TẠI ({{ currentRoomMembers.length }} THÀNH VIÊN):
+          </label>
           <div class="member-list-box">
             <div
               v-for="m in currentRoomMembers"
@@ -147,10 +167,10 @@
                 <small>{{ m.dept }} • Máy lẻ: {{ m.ext }}</small>
               </div>
 
-              <!-- Ràng buộc Admin & Xóa theo app3.webp -->
+              <!-- Ràng buộc Quyền Admin & Xóa -->
               <span v-if="m.isAdmin" class="admin-badge">👑 Admin</span>
               <button
-                v-else-if="currentRoomMembers.length >= 3"
+                v-else-if="currentIsAdmin && currentRoomMembers.length >= 3"
                 class="btn-remove-member"
                 title="Xóa thành viên này"
                 @click="removeMember(m)"
@@ -165,7 +185,7 @@
           <button class="btn-secondary" @click="showMemberModal = false">Đóng</button>
           <button
             class="btn-primary"
-            :disabled="!isTitleChanged"
+            :disabled="!isTitleChanged || !currentIsAdmin"
             @click="saveGroupTitle"
           >
             OK (Lưu thay đổi)
@@ -174,7 +194,7 @@
       </div>
     </div>
 
-    <!-- ==================== MODAL: READ ID POPUP (THEO APP2.WEBP) ==================== -->
+    <!-- MODAL: DANH SÁCH NGƯỜI ĐÃ ĐỌC TIN NHẮN (READ ID) -->
     <div v-if="showReadModal" class="modal-overlay" @click.self="showReadModal = false">
       <div class="modal-card modal-sm">
         <div class="modal-head">
@@ -197,11 +217,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { chatService } from '@/services/chatService'
 import { websocketService } from '@/services/websocketService'
 
+const route = useRoute()
+
 const showPinned = ref(true)
+const pinnedNotice = ref('Thông báo: Mọi thắc mắc kỹ thuật vui lòng liên hệ bộ phận hỗ trợ LAN.')
 const showMemberModal = ref(false)
 const showReadModal = ref(false)
 const inputText = ref('')
@@ -211,82 +235,94 @@ const isTitleChanged = ref(false)
 const selectedMsg = ref(null)
 const msgContainerRef = ref(null)
 
+// Phân quyền Quản trị viên vs Người dùng thường
+const currentIsAdmin = computed(() => localStorage.getItem('smartcall_is_admin') === 'true')
+const currentUserName = computed(() => localStorage.getItem('smartcall_username') || 'Quản trị viên')
+const currentUserExt = computed(() => localStorage.getItem('smartcall_extension') || '1001')
+
 const rooms = reactive([
   {
     id: 1,
-    title: 'MOS PART (31 thành viên)',
-    preview: 'Lương Đức Anh: ok anh ơi, để em ngâm cứu thử',
+    title: 'Nhóm Kỹ thuật LAN',
+    memberCount: 4,
+    preview: 'Lương Đức Anh: ok anh ơi, để em kiểm tra kết nối',
     time: '15:33',
     unread: 0,
     avatarBg: '#3b82f6',
     icon: '👥',
+    isDirect: false,
     messages: [
       {
         id: 101,
         sender: 'theirs',
-        senderName: 'Lương Đức Anh (Engineer / SDV MES)',
-        text: 'Các anh kiểm tra giúp em line 1002 có gọi sang được bên phân xưởng không ạ?',
+        senderName: 'Lương Đức Anh (Kỹ sư Phần mềm)',
+        text: 'Mọi người kiểm tra giúp em line 1002 có gọi sang được phân xưởng không ạ?',
         time: '15:28',
         readStatus: 'Read (12)',
-        readers: ['Lê Việt Dũng', 'Nguyễn Hữu Hiếu', 'Alice Nguyễn', 'Bob Trần'],
+        readers: ['Quản trị viên', 'Nguyễn Hữu Hiếu', 'Trần Văn Bình'],
       },
       {
         id: 102,
         sender: 'mine',
-        senderName: 'Tôi (Lê Việt Dũng)',
-        text: 'Anh vừa thử test gọi thoại qua WebRTC Wazo, mic và âm thanh đều thông suốt rồi nhé!',
+        senderName: 'Tôi',
+        text: 'Đã thử kiểm tra gọi thoại qua WebRTC, âm thanh đều thông suốt rồi nhé!',
         time: '15:30',
         readStatus: 'Read (2)',
-        readers: ['Lương Đức Anh', 'Bob Trần'],
+        readers: ['Lương Đức Anh', 'Trần Văn Bình'],
       },
       {
         id: 103,
         sender: 'theirs',
-        senderName: 'Nguyễn Hữu Hiếu (Kaito)',
-        text: 'Tuyệt vời, tí nữa Dũng cập nhật lại bảng danh bạ để anh em cùng dùng nhé.',
+        senderName: 'Nguyễn Hữu Hiếu',
+        text: 'Tuyệt vời, tí nữa cập nhật lại bảng danh bạ để mọi người cùng dùng nhé.',
         time: '15:32',
         readStatus: 'Read (1)',
-        readers: ['Lê Việt Dũng'],
+        readers: ['Quản trị viên'],
       },
     ],
   },
   {
     id: 2,
-    title: '[QD Project] Vận hành MFQ/MP',
-    preview: 'There are new messages. (3)',
+    title: 'Vận hành Phân xưởng MFQ',
+    memberCount: 8,
+    preview: 'Báo cáo ca làm việc hôm nay bình thường.',
     time: '15:58',
     unread: 3,
     avatarBg: '#10b981',
     icon: '🏭',
+    isDirect: false,
     messages: [
       {
         id: 201,
         sender: 'theirs',
-        senderName: 'Trịnh Thế Duyệt',
+        senderName: 'Trần Văn Bình',
         text: 'Báo cáo ca làm việc hôm nay bình thường.',
         time: '15:58',
         readStatus: 'Read (5)',
-        readers: ['Lê Việt Dũng'],
+        readers: ['Quản trị viên'],
       },
     ],
   },
   {
     id: 3,
-    title: 'Nguyễn Hữu Hiếu (Kaito)',
-    preview: 'Anh test thử cuộc gọi trên máy 1002 nhé',
+    title: 'Nguyễn Hữu Hiếu',
+    memberCount: 2,
+    preview: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
     time: '14:15',
     unread: 0,
     avatarBg: '#f59e0b',
     icon: 'NH',
+    isDirect: true,
+    ext: '1007',
     messages: [
       {
         id: 301,
         sender: 'theirs',
         senderName: 'Nguyễn Hữu Hiếu',
-        text: 'Anh test thử cuộc gọi trên máy 1002 nhé',
+        text: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
         time: '14:15',
         readStatus: 'Read (1)',
-        readers: ['Lê Việt Dũng'],
+        readers: ['Quản trị viên'],
       },
     ],
   },
@@ -295,14 +331,14 @@ const rooms = reactive([
 const currentRoom = ref(rooms[0])
 
 const currentRoomMembers = reactive([
-  { id: 1, name: 'Lê Việt Dũng', dept: 'SDV MES 1', ext: '1001', isAdmin: true },
-  { id: 2, name: 'Alice Nguyễn', dept: 'SDV MES 2', ext: '1002', isAdmin: false },
-  { id: 3, name: 'Bob Trần', dept: 'SDV MES 2', ext: '1003', isAdmin: false },
-  { id: 4, name: 'Lương Đức Anh', dept: 'SDV MES 1', ext: '1005', isAdmin: false },
+  { id: 1, name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
+  { id: 2, name: 'Nguyễn Văn An', dept: 'Nhóm Ứng dụng', ext: '1002', isAdmin: false },
+  { id: 3, name: 'Trần Văn Bình', dept: 'Phân xưởng MFQ', ext: '1003', isAdmin: false },
+  { id: 4, name: 'Lương Đức Anh', dept: 'Phòng Phát triển', ext: '1006', isAdmin: false },
 ])
 
 const selectedMsgReaders = computed(() => {
-  return selectedMsg.value?.readers || ['Lê Việt Dũng']
+  return selectedMsg.value?.readers || [currentUserName.value]
 })
 
 const selectRoom = (room) => {
@@ -311,12 +347,41 @@ const selectRoom = (room) => {
   scrollToBottom()
 }
 
+// Ghim tin nhắn bất kỳ lên đầu phòng chat
+const pinMessage = (msg) => {
+  pinnedNotice.value = `${msg.senderName}: "${msg.text}"`
+  showPinned.value = true
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message: `📌 Đã ghim tin nhắn của [${msg.senderName}] lên đầu phòng chat!`,
+        type: 'success',
+      },
+    }),
+  )
+}
+
 const sendMessage = async () => {
   const text = inputText.value.trim()
   if (!text) return
 
   inputText.value = ''
-  await chatService.sendMessage(currentRoom.value.id, text)
+  currentRoom.value.messages.push({
+    id: Date.now(),
+    sender: 'mine',
+    senderName: currentUserName.value,
+    text,
+    time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+    readStatus: 'Read (0)',
+    readers: [],
+  })
+  currentRoom.value.preview = text
+
+  try {
+    await chatService.sendMessage(currentRoom.value.id, text)
+  } catch (e) {
+    /* ignore */
+  }
   scrollToBottom()
 }
 
@@ -328,6 +393,57 @@ const scrollToBottom = () => {
   })
 }
 
+// Xử lý mở hội thoại 1-1 trực tiếp khi người dùng chuyển từ Danh bạ sang
+const checkDirectChatRoute = () => {
+  if (route.query && route.query.ext) {
+    const ext = String(route.query.ext)
+    const name = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
+
+    let found = rooms.find(
+      (r) => r.ext === ext || (r.title && r.title.includes(ext)) || (r.title && r.title.includes(name)),
+    )
+
+    if (!found) {
+      const newRoom = {
+        id: `direct-${ext}-${Date.now()}`,
+        title: `${name}`,
+        preview: 'Bắt đầu cuộc trò chuyện trực tiếp...',
+        time: 'Mới',
+        unread: 0,
+        avatarBg: '#0284c7',
+        icon: name.slice(0, 2).toUpperCase(),
+        isDirect: true,
+        ext: ext,
+        memberCount: 2,
+        messages: [
+          {
+            id: Date.now(),
+            sender: 'theirs',
+            senderName: name,
+            text: `Xin chào! Bạn có thể trao đổi trực tiếp với tôi qua máy lẻ ${ext}.`,
+            time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+            readStatus: 'Read',
+            readers: [currentUserName.value],
+          },
+        ],
+      }
+      rooms.unshift(newRoom)
+      found = newRoom
+    }
+
+    currentRoom.value = found
+    scrollToBottom()
+  }
+}
+
+watch(
+  () => route.query,
+  () => {
+    checkDirectChatRoute()
+  },
+  { immediate: true },
+)
+
 // Lắng nghe tin nhắn mới từ WebSocket
 const handleRealtimeMessage = (data) => {
   if (!data) return
@@ -337,7 +453,6 @@ const handleRealtimeMessage = (data) => {
       id: data.uuid || `msg-${Date.now()}`,
       sender: 'theirs',
       senderName: data.alias || 'Đồng nghiệp',
-      dept: 'SDV LAN',
       text: data.content,
       time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
       readStatus: 'Read',
@@ -353,13 +468,6 @@ const handleRealtimeMessage = (data) => {
 }
 
 onMounted(async () => {
-  const loadedRooms = await chatService.getRooms()
-  if (loadedRooms && loadedRooms.length > 0) {
-    rooms.splice(0, rooms.length, ...loadedRooms)
-    currentRoom.value = rooms[0]
-  }
-
-  // Kết nối WebSocket theo mục 6 trong dev_guide.md
   websocketService.connect()
   websocketService.on('chatd_user_room_message_created', handleRealtimeMessage)
 })
@@ -368,7 +476,7 @@ onUnmounted(() => {
   websocketService.off('chatd_user_room_message_created', handleRealtimeMessage)
 })
 
-// Modal Add Member (app3.webp logic)
+// Modal Quản lý thành viên
 const openAddMemberModal = () => {
   editGroupTitle.value = currentRoom.value.title
   isTitleChanged.value = false
@@ -381,6 +489,7 @@ const checkTitleChange = () => {
 }
 
 const saveGroupTitle = async () => {
+  if (!currentIsAdmin.value) return
   try {
     await chatService.updateRoomTitle(currentRoom.value.id, editGroupTitle.value)
     currentRoom.value.title = editGroupTitle.value.trim()
@@ -394,31 +503,35 @@ const searchAndAdd = async () => {
   const q = searchQuery.value.trim()
   if (!q) return
 
-  if (confirm(`Thêm ID nhân viên: [${q}] vào nhóm này?`)) {
+  if (confirm(`Thêm nhân viên có số máy lẻ [${q}] vào nhóm này?`)) {
     const newEmp = {
       id: Date.now(),
       name: `Nhân viên ${q}`,
-      dept: 'SDV New Member',
-      number: q,
-    }
-    await chatService.addMember(currentRoom.value.id, newEmp)
-    currentRoomMembers.push({
-      ...newEmp,
+      dept: 'Khối Kỹ thuật',
       ext: q,
       isAdmin: false,
-    })
+    }
+    currentRoomMembers.push(newEmp)
     searchQuery.value = ''
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `Đã thêm thành viên máy lẻ ${q} vào nhóm thành công!`, type: 'success' },
+      }),
+    )
   }
 }
 
 const removeMember = async (m) => {
+  if (!currentIsAdmin.value) return
   if (confirm(`Bạn có chắc chắn muốn Xóa [${m.name}] khỏi nhóm không?`)) {
-    try {
-      await chatService.removeMember(currentRoom.value.id, m.id)
-      const idx = currentRoomMembers.findIndex((item) => item.id === m.id)
-      if (idx !== -1) currentRoomMembers.splice(idx, 1)
-    } catch (err) {
-      alert(err.message)
+    const idx = currentRoomMembers.findIndex((item) => item.id === m.id)
+    if (idx !== -1) {
+      currentRoomMembers.splice(idx, 1)
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: { message: `Đã xóa [${m.name}] khỏi nhóm!`, type: 'info' },
+        }),
+      )
     }
   }
 }
@@ -431,13 +544,17 @@ const openReadIdModal = (msg) => {
 const startVoiceCall = () => {
   window.dispatchEvent(
     new CustomEvent('app-action', {
-      detail: { type: 'dial', value: '1002' },
+      detail: { type: 'dial', value: currentRoom.value.ext || '1002' },
     }),
   )
 }
 
 const startVideoCall = () => {
-  alert('Khởi tạo cuộc gọi Video WebRTC tới nhóm...')
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: { message: 'Khởi tạo cuộc gọi Video WebRTC tới nhóm...' },
+    }),
+  )
 }
 </script>
 
@@ -541,6 +658,11 @@ const startVideoCall = () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.member-tag {
+  color: #64748b;
+  font-weight: normal;
 }
 
 .room-time {
@@ -659,6 +781,11 @@ const startVideoCall = () => {
   border: none;
   cursor: pointer;
   opacity: 0.6;
+  font-size: 0.9rem;
+}
+
+.btn-close-pin:hover {
+  opacity: 1;
 }
 
 /* Messages */
@@ -721,6 +848,7 @@ const startVideoCall = () => {
 
 .msg-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
   font-size: 0.7rem;
   color: #94a3b8;
@@ -734,6 +862,20 @@ const startVideoCall = () => {
 }
 
 .read-tag:hover {
+  text-decoration: underline;
+}
+
+.btn-pin-msg {
+  background: none;
+  border: none;
+  color: #b45309;
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.btn-pin-msg:hover {
   text-decoration: underline;
 }
 
@@ -778,7 +920,7 @@ const startVideoCall = () => {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
+  z-index: 2000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -788,17 +930,16 @@ const startVideoCall = () => {
   background: white;
   border-radius: 10px;
   width: 480px;
-  max-width: 90vw;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
   overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
 
 .modal-sm {
-  width: 360px;
+  width: 380px;
 }
 
 .modal-head {
-  padding: 14px 20px;
+  padding: 16px 20px;
   background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
   display: flex;
@@ -806,10 +947,129 @@ const startVideoCall = () => {
   align-items: center;
   font-weight: 700;
   color: #1e293b;
+  font-size: 0.95rem;
+}
+
+.btn-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
 }
 
 .modal-body {
   padding: 20px;
+}
+
+.admin-perm-notice {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 6px;
+  margin-top: 12px;
+}
+
+.form-label:first-of-type {
+  margin-top: 0;
+}
+
+.form-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.form-input:disabled {
+  background: #f1f5f9;
+  cursor: not-allowed;
+  color: #94a3b8;
+}
+
+.search-add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-action-add {
+  background: #1e88e5;
+  color: white;
+  border: none;
+  width: 38px;
+  border-radius: 6px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.member-list-box {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+.member-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.member-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.member-info strong {
+  font-size: 0.88rem;
+  color: #1e293b;
+}
+
+.member-info small {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.admin-badge {
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-weight: 700;
+}
+
+.btn-remove-member {
+  background: #fee2e2;
+  color: #ef4444;
+  border: 1px solid #fecaca;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-remove-member:hover {
+  background: #ef4444;
+  color: white;
 }
 
 .modal-foot {
@@ -821,87 +1081,9 @@ const startVideoCall = () => {
   gap: 10px;
 }
 
-.form-label {
-  font-size: 0.8rem;
-  font-weight: 700;
+.btn-secondary {
+  background: #e2e8f0;
   color: #475569;
-  display: block;
-  margin-bottom: 4px;
-}
-
-.form-input {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  margin-bottom: 15px;
-  font-size: 0.9rem;
-  outline: none;
-}
-
-.form-input:focus {
-  border-color: #1e88e5;
-}
-
-.search-add-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 15px;
-}
-
-.btn-action-add {
-  background: #22c55e;
-  color: white;
-  border: none;
-  width: 40px;
-  height: 38px;
-  border-radius: 6px;
-  font-size: 1.2rem;
-  cursor: pointer;
-}
-
-.member-list-box {
-  max-height: 180px;
-  overflow-y: auto;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-}
-
-.member-row {
-  padding: 10px 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.member-info strong {
-  display: block;
-  font-size: 0.88rem;
-}
-
-.member-info small {
-  color: #64748b;
-  font-size: 0.75rem;
-}
-
-.admin-badge {
-  color: #3b82f6;
-  font-weight: bold;
-  font-size: 0.8rem;
-}
-
-.btn-remove-member {
-  background: none;
-  border: none;
-  color: #ef4444;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-.btn-primary {
-  background: #1e88e5;
-  color: white;
   border: none;
   padding: 8px 16px;
   border-radius: 6px;
@@ -909,29 +1091,23 @@ const startVideoCall = () => {
   cursor: pointer;
 }
 
+.btn-primary {
+  background: #1e88e5;
+  color: white;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .btn-primary:disabled {
-  opacity: 0.5;
+  background: #cbd5e1;
   cursor: not-allowed;
 }
 
-.btn-secondary {
-  background: #94a3b8;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.btn-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1.1rem;
-}
-
 .read-time-hint {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: #64748b;
   margin-bottom: 12px;
 }
@@ -940,6 +1116,8 @@ const startVideoCall = () => {
   list-style: none;
   padding: 0;
   margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .readers-list li {
@@ -948,10 +1126,12 @@ const startVideoCall = () => {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 0.88rem;
+  color: #1e293b;
 }
 
 .check-icon {
-  color: #22c55e;
+  color: #16a34a;
+  font-weight: bold;
 }
 </style>
-

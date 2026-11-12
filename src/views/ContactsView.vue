@@ -4,7 +4,7 @@
     <div class="contacts-header">
       <div class="header-left">
         <h1>Danh bạ nhân viên</h1>
-        <span class="sub-title">Danh sách máy lẻ nội bộ SDV LAN Directory</span>
+        <span class="sub-title">Danh sách máy lẻ nội bộ hệ thống tổng đài LAN</span>
       </div>
 
       <div class="header-actions">
@@ -23,6 +23,24 @@
       </div>
     </div>
 
+    <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ -->
+    <div class="filter-tabs-bar">
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'all' }"
+        @click="activeTab = 'all'"
+      >
+        👥 Tất cả nhân viên ({{ contacts.length }})
+      </button>
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'favorites' }"
+        @click="activeTab = 'favorites'"
+      >
+        ⭐ Mục yêu thích ({{ favoriteCount }})
+      </button>
+    </div>
+
     <!-- Loading State -->
     <div v-if="loading" class="state-message">
       <div class="spinner"></div>
@@ -31,23 +49,41 @@
 
     <!-- Empty State -->
     <div v-else-if="filteredContacts.length === 0" class="state-message empty">
-      <p>Không tìm thấy nhân viên nào phù hợp với từ khóa "{{ searchTerm }}".</p>
+      <p v-if="activeTab === 'favorites'">
+        Chưa có liên hệ nào trong mục Yêu thích. Hãy bấm vào biểu tượng ⭐ trên dòng nhân viên để ghim nhanh.
+      </p>
+      <p v-else>
+        Không tìm thấy nhân viên nào phù hợp với từ khóa "{{ searchTerm }}".
+      </p>
     </div>
 
-    <!-- Contact Table (Chuẩn Desktop UI) -->
+    <!-- Contact Table -->
     <div v-else class="table-card">
       <table class="contact-table">
         <thead>
           <tr>
+            <th style="width: 44px; text-align: center;">⭐</th>
             <th>Nhân viên</th>
             <th>Bộ phận / Phòng ban</th>
             <th>Số máy lẻ</th>
             <th>Trạng thái</th>
-            <th style="text-align: right; width: 180px;">4 Nút Chức Năng (App4)</th>
+            <th style="text-align: right; width: 180px;">Thao tác nhanh</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="contact in filteredContacts" :key="contact.id">
+            <!-- 0. Favorite Star Toggle -->
+            <td style="text-align: center;">
+              <button
+                class="btn-star"
+                :class="{ active: contact.isFavorite }"
+                :title="contact.isFavorite ? 'Bỏ khỏi yêu thích' : 'Thêm vào yêu thích'"
+                @click="toggleFavorite(contact)"
+              >
+                {{ contact.isFavorite ? '⭐' : '☆' }}
+              </button>
+            </td>
+
             <!-- 1. Tên & Avatar -->
             <td>
               <div class="contact-user-cell">
@@ -56,14 +92,14 @@
                 </div>
                 <div class="user-meta">
                   <strong class="user-hname">{{ contact.name }}</strong>
-                  <span class="user-email">{{ contact.email || 'Nội bộ SDV' }}</span>
+                  <span class="user-email">{{ contact.email || 'Nội bộ công ty' }}</span>
                 </div>
               </div>
             </td>
 
-            <!-- 2. Phòng ban (DEPTNAME) -->
+            <!-- 2. Phòng ban -->
             <td>
-              <span class="dept-badge">{{ contact.dept || 'SDV MES Group' }}</span>
+              <span class="dept-badge">{{ contact.dept || 'Khối Kỹ thuật' }}</span>
             </td>
 
             <!-- 3. Số máy lẻ -->
@@ -84,22 +120,22 @@
               </div>
             </td>
 
-            <!-- 5. BỐN NÚT CHỨC NĂNG CHUẨN THEO ẢNH APP4.WEBP -->
+            <!-- 5. Bốn Nút Chức Năng Thao Tác -->
             <td style="text-align: right;">
               <div class="action-buttons-group">
                 <!-- Nút 1: Gọi thoại -->
                 <button
                   class="btn-icon btn-call"
-                  title="1. Gọi thoại (Voice Call)"
-                  @click="handleCall(contact.number)"
+                  title="Gọi thoại qua WebRTC"
+                  @click="handleCall(contact)"
                 >
                   📞
                 </button>
 
-                <!-- Nút 2: Nhắn tin (kèm Badge tin chưa đọc NOT_READ) -->
+                <!-- Nút 2: Nhắn tin -->
                 <button
                   class="btn-icon btn-msg"
-                  title="2. Nhắn tin (Chat)"
+                  title="Mở cuộc trò chuyện"
                   @click="handleMessage(contact)"
                 >
                   💬
@@ -111,16 +147,16 @@
                 <!-- Nút 3: Gọi Video -->
                 <button
                   class="btn-icon btn-video"
-                  title="3. Gọi Video (Video Call)"
+                  title="Gọi Video"
                   @click="handleVideoCall(contact)"
                 >
                   🎥
                 </button>
 
-                <!-- Nút 4: Xóa liên hệ (có popup hỏi xóa) -->
+                <!-- Nút 4: Xóa liên hệ -->
                 <button
                   class="btn-icon btn-delete"
-                  title="4. Xóa khỏi liên hệ gần đây"
+                  title="Xóa khỏi danh bạ"
                   @click="handleDelete(contact)"
                 >
                   ❌
@@ -153,7 +189,7 @@
 
           <div class="form-group">
             <label>Bộ phận / Phòng ban</label>
-            <input v-model="newContact.dept" placeholder="VD: SDV MES 2 / Vận hành" class="form-input" />
+            <input v-model="newContact.dept" placeholder="VD: Khối Kỹ thuật / Nhóm Ứng dụng" class="form-input" />
           </div>
 
           <div class="form-group">
@@ -173,15 +209,17 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { contactService } from '@/services/contactService'
 
 const router = useRouter()
+const route = useRoute()
 
 const searchTerm = ref('')
 const contacts = ref([])
 const loading = ref(false)
 const showAddModal = ref(false)
+const activeTab = ref('all') // 'all' | 'favorites'
 
 const newContact = ref({
   name: '',
@@ -191,6 +229,9 @@ const newContact = ref({
 })
 
 onMounted(() => {
+  if (route.query.q) {
+    searchTerm.value = String(route.query.q)
+  }
   loadContacts()
 })
 
@@ -203,11 +244,36 @@ const loadContacts = async () => {
   }
 }
 
-// Lọc danh bạ theo từ khóa tìm kiếm
+const favoriteCount = computed(() => {
+  return contacts.value.filter((c) => c.isFavorite).length
+})
+
+// Bật/tắt trạng thái Yêu thích
+const toggleFavorite = (contact) => {
+  contact.isFavorite = contactService.toggleFavorite(contact.id)
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message: contact.isFavorite
+          ? `Đã thêm [${contact.name}] vào mục Yêu thích ⭐`
+          : `Đã bỏ [${contact.name}] khỏi mục Yêu thích`,
+        type: 'info',
+      },
+    }),
+  )
+}
+
+// Lọc danh bạ theo tab và từ khóa tìm kiếm
 const filteredContacts = computed(() => {
-  if (!searchTerm.value.trim()) return contacts.value
+  let list = contacts.value
+
+  if (activeTab.value === 'favorites') {
+    list = list.filter((c) => c.isFavorite)
+  }
+
+  if (!searchTerm.value.trim()) return list
   const q = searchTerm.value.toLowerCase().trim()
-  return contacts.value.filter(
+  return list.filter(
     (c) =>
       c.name.toLowerCase().includes(q) ||
       (c.dept && c.dept.toLowerCase().includes(q)) ||
@@ -215,27 +281,38 @@ const filteredContacts = computed(() => {
   )
 })
 
-// --- XỬ LÝ 4 NÚT HÀNH ĐỘNG (APP4.WEBP) ---
+// 1. Gọi thoại (Kiểm tra Offline cảnh báo Voicemail, chuyển sang CallsView)
+const handleCall = (contact) => {
+  if (!contact || !contact.number) return
 
-// 1. Gọi thoại
-const handleCall = (extension) => {
-  if (!extension) return
-  // Phát event cuộc gọi lên App.vue
-  window.dispatchEvent(
-    new CustomEvent('app-action', {
-      detail: { type: 'dial', value: extension },
-    }),
-  )
-  // Chuyển sang màn hình bàn phím cuộc gọi
-  router.push('/calls')
+  // Nếu đối phương đang offline -> Hiển thị hộp thoại xác nhận Voicemail
+  if (contact.status === 'offline') {
+    const confirmVoicemail = confirm(
+      `Máy lẻ [${contact.name} - ${contact.number}] hiện đang Offline (Không kết nối mạng tổng đài).\nBạn có muốn chuyển tiếp vào Hộp thư thoại (Voicemail) không?`,
+    )
+    if (!confirmVoicemail) return
+  }
+
+  // Chuyển sang màn hình bàn phím gọi điện và tự động kích hoạt cuộc gọi
+  router.push({
+    path: '/calls',
+    query: {
+      number: contact.number,
+      autocall: 'true',
+    },
+  })
 }
 
-// 2. Nhắn tin (Chat)
+// 2. Nhắn tin (Chuyển sang MessagesView và mở thẳng hội thoại 1-1)
 const handleMessage = (contact) => {
-  // Đánh dấu đã đọc
   contact.unreadCount = 0
-  // Chuyển sang màn hình Tin nhắn
-  router.push('/messages')
+  router.push({
+    path: '/messages',
+    query: {
+      ext: contact.number,
+      name: contact.name,
+    },
+  })
 }
 
 // 3. Gọi Video
@@ -247,7 +324,7 @@ const handleVideoCall = (contact) => {
   )
 }
 
-// 4. Xóa liên hệ (Xóa khỏi Recent có hỏi xác nhận)
+// 4. Xóa liên hệ
 const handleDelete = async (contact) => {
   const isConfirmed = confirm(`Hỏi xóa liên hệ: Bạn có chắc chắn muốn xóa [${contact.name}] khỏi danh bạ không?`)
   if (isConfirmed) {
@@ -310,7 +387,7 @@ const getAvatarColor = (name) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
   gap: 16px;
 }
@@ -380,6 +457,37 @@ const getAvatarColor = (name) => {
   background: #1565c0;
 }
 
+/* Filter Tabs Bar */
+.filter-tabs-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tab-btn {
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab-btn:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.tab-btn.active {
+  background: #1e88e5;
+  color: white;
+  border-color: #1e88e5;
+  box-shadow: 0 2px 6px rgba(30, 136, 229, 0.25);
+}
+
 /* Table Card */
 .table-card {
   background: white;
@@ -413,6 +521,27 @@ const getAvatarColor = (name) => {
 
 .contact-table tr:hover {
   background: #f8fafc;
+}
+
+/* Star Button */
+.btn-star {
+  background: none;
+  border: none;
+  font-size: 1.15rem;
+  cursor: pointer;
+  color: #cbd5e1;
+  transition: transform 0.15s, color 0.15s;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.btn-star:hover {
+  transform: scale(1.2);
+  color: #f59e0b;
+}
+
+.btn-star.active {
+  color: #f59e0b;
 }
 
 /* User Meta Cell */
@@ -503,7 +632,7 @@ const getAvatarColor = (name) => {
   font-weight: 600;
 }
 
-/* 4 Action Buttons Group (Theo app4.webp) */
+/* Action Buttons Group */
 .action-buttons-group {
   display: flex;
   gap: 8px;

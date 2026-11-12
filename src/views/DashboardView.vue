@@ -18,7 +18,7 @@
       <div class="banner-actions">
         <!-- Nút Test mô phỏng cuộc gọi đến -->
         <button class="btn-test-call-banner" @click="simulateCall">
-          🔔 Thử cuộc gọi đến (app5.webp)
+          🔔 Thử cuộc gọi đến
         </button>
       </div>
     </div>
@@ -221,7 +221,7 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 
-const userName = ref(localStorage.getItem('smartcall_username') || 'Lê Việt Dũng')
+const userName = ref(localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const userExtension = ref(localStorage.getItem('smartcall_extension') || '1001')
 const quickDialNumber = ref('')
 
@@ -236,18 +236,18 @@ const userInitials = computed(() => {
 
 // Danh bạ gọi nhanh
 const quickContacts = [
-  { name: 'Alice Nguyễn', ext: '1002' },
-  { name: 'Bob Trần', ext: '1003' },
-  { name: 'Storm', ext: '1005' },
-  { name: 'Đức Anh', ext: '1006' },
-  { name: 'Kaito Hiếu', ext: '1007' },
+  { name: 'Nguyễn Văn An', ext: '1002' },
+  { name: 'Trần Văn Bình', ext: '1003' },
+  { name: 'Ngô Tiến Việt', ext: '1005' },
+  { name: 'Lương Đức Anh', ext: '1006' },
+  { name: 'Nguyễn Hữu Hiếu', ext: '1007' },
 ]
 
 // Cuộc gọi gần đây
 const recentCalls = [
-  { id: 1, name: '조창연 (이윤수)', ext: '1002', direction: 'inbound', time: '15:39', duration: '00:09' },
-  { id: 2, name: 'Nguyễn Hữu Hiếu (Kaito)', ext: '1007', direction: 'inbound', time: '15:00', duration: '00:24' },
-  { id: 3, name: 'Bob Trần', ext: '1003', direction: 'outbound', time: '13:28', duration: '03:02' },
+  { id: 1, name: 'Nguyễn Văn An', ext: '1002', direction: 'inbound', time: '15:39', duration: '00:09' },
+  { id: 2, name: 'Nguyễn Hữu Hiếu', ext: '1007', direction: 'inbound', time: '15:00', duration: '00:24' },
+  { id: 3, name: 'Trần Văn Bình', ext: '1003', direction: 'outbound', time: '13:28', duration: '03:02' },
 ]
 
 const navigateTo = (path) => {
@@ -274,13 +274,13 @@ const callQuickContact = (ext) => {
   })
 }
 
-// Bấm thử giả lập cuộc gọi đến (app5.webp)
+// Bấm thử giả lập cuộc gọi đến
 const simulateCall = () => {
   window.dispatchEvent(
     new CustomEvent('wazo-incoming', {
       detail: {
         id: `call-${Date.now()}`,
-        name: 'Nguyễn Hữu Hiếu (Kaito)',
+        name: 'Nguyễn Hữu Hiếu',
         extension: '1007',
         sipUri: 'sip:1007@192.168.1.50',
         dept: 'SDV MES Application Group Lead',

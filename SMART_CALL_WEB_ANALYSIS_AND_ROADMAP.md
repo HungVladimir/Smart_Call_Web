@@ -1,4 +1,4 @@
-# SMARTCALL WEB — PHÂN TÍCH TOÀN DIỆN DỰ ÁN & LỘ TRÌNH TRIỂN KHAI
+﻿# SMARTCALL WEB — PHÂN TÍCH TOÀN DIỆN DỰ ÁN & LỘ TRÌNH TRIỂN KHAI
 
 > **Tài liệu phân tích kỹ thuật và định hướng phát triển dành cho nhóm phát triển Web SmartCall**  
 > *Dự án:* SmartCall Web (Client UC nội bộ)  
@@ -11,7 +11,7 @@
 1. [Tổng Quan Dự Án & Bối Cảnh Lịch Sử](#1-tổng-quan-dự-án--bối-cảnh-lịch-sử)
 2. [Từ Điển Công Nghệ & Thuật Ngữ Cốt Lõi (Dành Cho Người Mới)](#2-từ-điển-công-nghệ--thuật-ngữ-cốt-lõi-dành-cho-người-mới)
    - 2.1. Bản chất của Số máy lẻ (Extension) và Địa chỉ SIP
-   - 2.2. Mối quan hệ giữa Database công ty (API anh Hải) và Tổng đài Wazo
+   - 2.2. Mối quan hệ giữa Database công ty (API Kỹ sư Backend) và Tổng đài Wazo
    - 2.3. Bảng giải nghĩa các thuật ngữ kỹ thuật cốt lõi
    - 2.4. Sơ đồ luồng cuộc gọi từ Web qua SIP và WebRTC
 3. [Giải Thích Chi Tiết Toàn Bộ Tài Liệu Được Cung Cấp](#3-giải-thích-chi-tiết-toàn-bộ-tài-liệu-được-cung-cấp)
@@ -71,13 +71,13 @@ Mục này giải thích chi tiết và trực quan toàn bộ các khái niệm
 
 ---
 
-### 2.2. Mối quan hệ giữa Database công ty (API anh Hải) và Tổng đài Wazo
+### 2.2. Mối quan hệ giữa Database công ty (API Kỹ sư Backend) và Tổng đài Wazo
 Trong dự án thực tế, có sự phối hợp nhịp nhàng giữa **Cơ sở dữ liệu nhân sự công ty** và **Tổng đài Wazo**:
 
 ```
 [ Trình duyệt Web SmartCall ]
        │
-       ├── (1) Gọi REST API của anh Hải ──> [ Database Công ty (MySQL/Oracle) ]
+       ├── (1) Gọi REST API của Kỹ sư Backend ──> [ Database Công ty (MySQL/Oracle) ]
        │   Lấy: Tên NV, Mã NV, Phòng ban,    (Lưu thông tin nhân sự & số máy lẻ)
        │        Số máy lẻ SIP (VD: 1001)
        │
@@ -86,8 +86,8 @@ Trong dự án thực tế, có sự phối hợp nhịp nhàng giữa **Cơ s�
 ```
 
 * **Wazo:** Chỉ là máy chủ tổng đài chuyên xử lý cuộc gọi, tài khoản thoại (1001, 1002), chuyển tiếp cuộc gọi, phòng chat và âm thanh. Wazo **không quản lý** thông tin nhân sự chi tiết như nhân viên này thuộc bộ phận nào, chức vụ gì, mã thẻ chấm công là gì.
-* **Database công ty (API do anh Hải làm):** Là nơi lưu trữ danh bạ nhân viên thực tế của công ty. API này sẽ trả về thông tin: *"Nguyễn Văn A, Bộ phận Sản xuất, Số máy lẻ Wazo là 1001"*.
-* **Vai trò của Web chúng ta:** Gọi API của anh Hải để hiển thị danh bạ nhân viên lên màn hình. Khi người dùng bấm nút 📞 gọi một người nào đó, web sẽ lấy số máy lẻ tương ứng (`1001`) và chuyển cho `@wazo/sdk` để Wazo thực hiện cuộc gọi.
+* **Database công ty (API do Kỹ sư Backend làm):** Là nơi lưu trữ danh bạ nhân viên thực tế của công ty. API này sẽ trả về thông tin: *"Nguyễn Văn A, Bộ phận Sản xuất, Số máy lẻ Wazo là 1001"*.
+* **Vai trò của Web chúng ta:** Gọi API của Kỹ sư Backend để hiển thị danh bạ nhân viên lên màn hình. Khi người dùng bấm nút 📞 gọi một người nào đó, web sẽ lấy số máy lẻ tương ứng (`1001`) và chuyển cho `@wazo/sdk` để Wazo thực hiện cuộc gọi.
 
 ---
 
@@ -393,7 +393,7 @@ src/
 ## 9. CƠ CHẾ DỮ LIỆU FAKE & ĐIỂM KẾT NỐI DATABASE THẬT (SERVICE / ADAPTER PATTERN)
 
 ### 9.1. Triết lý thiết kế: Tách biệt Giao diện (UI) và Dữ liệu (Data)
-Nhằm đảm bảo dự án phát triển độc lập, không bị phụ thuộc vào tiến độ triển khai Database của anh Hải hay máy chủ Wazo tại nhà máy, toàn bộ ứng dụng áp dụng mô hình **Service / Adapter Pattern**:
+Nhằm đảm bảo dự án phát triển độc lập, không bị phụ thuộc vào tiến độ triển khai Database của Kỹ sư Backend hay máy chủ Wazo tại nhà máy, toàn bộ ứng dụng áp dụng mô hình **Service / Adapter Pattern**:
 
 ```
 [ Giao diện Vue (Views / Components) ]
@@ -408,7 +408,7 @@ Nhằm đảm bảo dự án phát triển độc lập, không bị phụ thu�
 ```
 
 * **Quy tắc bất di bất dịch:** Các file giao diện (`ContactsView.vue`, `HistoryView.vue`, `MessagesView.vue`...) **tuyệt đối không bao giờ** gọi `fetch()` URL trực tiếp hoặc thao tác thô với API. Mọi thao tác đọc/ghi dữ liệu bắt buộc phải đi qua các hàm của tầng `src/services/`.
-* **Cơ chế Fallback thông minh:** Trong mỗi hàm Service luôn có khối lệnh `try ... catch`. Khi chưa có server Wazo hoặc đang dev ở nhà, hệ thống tự động trả về Mock Data chuẩn định dạng doanh nghiệp SDV, giúp giao diện luôn hiển thị đầy đủ, không bao giờ bị văng lỗi màn hình trắng.
+* **Cơ chế Fallback thông minh:** Trong mỗi hàm Service luôn có khối lệnh `try ... catch`. Khi chưa có server Wazo hoặc đang dev offline, hệ thống tự động trả về Mock Data chuẩn định dạng doanh nghiệp SDV, giúp giao diện luôn hiển thị đầy đủ, không bao giờ bị văng lỗi màn hình trắng.
 
 ---
 
@@ -436,9 +436,9 @@ Nhằm đảm bảo dự án phát triển độc lập, không bị phụ thu�
 
 ---
 
-### 9.4. Điểm cắm API thật của anh Hải (DB nhân sự) và Wazo Platform
+### 9.4. Điểm cắm API thật của Kỹ sư Backend (DB nhân sự) và Wazo Platform
 
-Dưới đây là vị trí cụ thể trong mã nguồn đã được chừa sẵn để đấu nối API thật khi anh Hải bàn giao:
+Dưới đây là vị trí cụ thể trong mã nguồn đã được chừa sẵn để đấu nối API thật khi Kỹ sư Backend bàn giao:
 
 #### 1. Đấu nối Danh bạ nhân viên (`src/services/contactService.js`):
 ```javascript
@@ -447,8 +447,8 @@ async getContacts() {
     const token = wazoService.getToken()
     if (!token) throw new Error('No token')
 
-    // 🎯 ĐIỂM CẮM API DATABASE ANH HẢI:
-    // Khi anh Hải cung cấp API máy chủ nội bộ (ví dụ: http://192.168.1.50:8080/api/employees),
+    // 🎯 ĐIỂM CẮM API DATABASE Kỹ sư Backend:
+    // Khi Kỹ sư Backend cung cấp API máy chủ nội bộ (ví dụ: http://192.168.1.50:8080/api/employees),
     // Bạn chỉ cần mở file này và thay URL vào fetch:
     const res = await fetch('http://192.168.1.50:8080/api/employees', {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -478,7 +478,7 @@ async getContacts() {
 GET https://192.168.1.50:9443/api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
 Headers: { 'X-Auth-Token': token }
 ```
-Nếu sau này anh Hải muốn lưu lịch sử vào Database riêng của công ty, chỉ việc đổi URL trong `historyService.js` sang endpoint của anh Hải.
+Nếu sau này Kỹ sư Backend muốn lưu lịch sử vào Database riêng của công ty, chỉ việc đổi URL trong `historyService.js` sang endpoint của Kỹ sư Backend.
 
 #### 3. Đấu nối Tin nhắn & WebSocket Realtime (`src/services/chatService.js` & `websocketService.js`):
 Sẽ được chuẩn hóa ở Bước 5 bám sát các endpoint:
