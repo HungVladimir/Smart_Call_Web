@@ -59,16 +59,6 @@
             </label>
           </div>
 
-          <!-- 2 Nút Đăng nhập nhanh tài khoản thật Wazo -->
-          <div class="demo-buttons-group">
-            <button type="button" class="btn-demo btn-demo-admin" @click="handleQuickLogin('alice')">
-              ⚡ Đăng nhập Alice (Máy lẻ 1001)
-            </button>
-            <button type="button" class="btn-demo btn-demo-user" @click="handleQuickLogin('bob')">
-              👤 Đăng nhập Bob (Máy lẻ 1002)
-            </button>
-          </div>
-
           <!-- Thông báo lỗi đăng nhập nếu có -->
           <div v-if="loginError" class="login-error-alert">
             <div class="error-msg">{{ loginError }}</div>
@@ -92,8 +82,8 @@ import { wazoService } from '@/services/wazo'
 
 const router = useRouter()
 
-const username = ref('alice')
-const password = ref('Test@123')
+const username = ref('')
+const password = ref('')
 const showPassword = ref(false)
 const rememberMe = ref(true)
 const loading = ref(false)
@@ -132,8 +122,8 @@ const handleLogin = async () => {
     return
   }
 
-  const finalName = realDisplayName || username.value
-  const finalExt = realExtension || (username.value === 'alice' ? '1001' : '1002')
+  const finalName = realDisplayName || username.value || 'Người dùng'
+  const finalExt = realExtension || '1001'
 
   localStorage.setItem('smartcall_username', finalName)
   localStorage.setItem('smartcall_extension', finalExt)
@@ -144,19 +134,6 @@ const handleLogin = async () => {
   window.dispatchEvent(new CustomEvent('app-login-success'))
   loading.value = false
   router.push('/dashboard')
-}
-
-// Đăng nhập nhanh tài khoản thật trên Wazo (Alice 1001 hoặc Bob 1002)
-const handleQuickLogin = (user) => {
-  if (user === 'alice') {
-    username.value = 'alice'
-    password.value = 'Test@123'
-    handleLogin()
-  } else if (user === 'bob') {
-    username.value = 'bob'
-    password.value = 'Test@123'
-    handleLogin()
-  }
 }
 
 // Bỏ qua lỗi và vào chế độ Offline Demo
