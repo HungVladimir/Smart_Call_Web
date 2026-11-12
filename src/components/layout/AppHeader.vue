@@ -6,6 +6,15 @@
         <span>SmartCall</span>
       </div>
       <span class="badge-lan">Wazo 26.10 LAN</span>
+      <div
+        class="sip-status-badge"
+        :class="{ online: isSipOnline, offline: !isSipOnline }"
+        @click="showSipHelp"
+        :title="isSipOnline ? 'WebRTC SIP đã đăng ký thành công trên Asterisk' : 'Bấm vào đây để xem hướng dẫn tin cậy chứng chỉ SSL WSS'"
+      >
+        <span class="sip-dot"></span>
+        <span>{{ isSipOnline ? `SIP: Online (${userExtension})` : 'SIP: Offline (Chưa kết nối)' }}</span>
+      </div>
     </div>
 
     <!-- Center Search Bar với Menu Gợi Ý Tự Động (Autocomplete) -->
@@ -134,18 +143,46 @@ const contactsList = ref([])
 // Lấy thông tin tài khoản đang đăng nhập
 const userName = ref(localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const userExtension = ref(localStorage.getItem('smartcall_extension') || '1001')
+const isSipOnline = ref(false)
+
+const handleRegistered = () => {
+  isSipOnline.value = true
+}
+
+const showSipHelp = () => {
+  if (!isSipOnline.value) {
+    alert(
+      '⚠️ SIP WebRTC chưa đăng ký được vào máy chủ Wazo (107.126.11.126:9443)!\n\n' +
+        'Cách khắc phục (chỉ mất 10 giây):\n' +
+        '1. Mở một tab trình duyệt mới truy cập: https://107.126.11.126:9443\n' +
+        '2. Chọn [Nâng cao / Advanced] -> Bấm [Tiếp tục truy cập / Proceed to 107.126.11.126].\n' +
+        '3. Cấp quyền Microphone khi trình duyệt hỏi.\n' +
+        '4. Quay lại trang này và nhấn F5 để tải lại.',
+    )
+  } else {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `🟢 WebRTC SIP của máy lẻ ${userExtension.value} đang hoạt động tốt!`, type: 'success' },
+      }),
+    )
+  }
+}
 
 onMounted(async () => {
+  userName.value = localStorage.getItem('smartcall_username') || 'Quản trị viên'
+  userExtension.value = localStorage.getItem('smartcall_extension') || '1001'
   try {
     contactsList.value = await contactService.getContacts()
   } catch (e) {
     /* ignore */
   }
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener('wazo-registered', handleRegistered)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('wazo-registered', handleRegistered)
 })
 
 const handleClickOutside = (e) => {
@@ -292,6 +329,46 @@ const triggerSimulatedIncomingCall = () => {
   padding: 2px 8px;
   border-radius: 12px;
   border: 1px solid #4a5568;
+}
+
+.sip-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.sip-status-badge.online {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.sip-status-badge.offline {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.sip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.sip-status-badge.online .sip-dot {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+.sip-status-badge.offline .sip-dot {
+  background: #ef4444;
 }
 
 /* Center Search Container with Dropdown */

@@ -18,6 +18,10 @@ class WazoService {
     this.init()
     try {
       this.session = await Wazo.Auth.logIn(username, password)
+      if (this.session && this.session.token) {
+        localStorage.setItem('smartcall_wazo_token', this.session.token)
+        localStorage.setItem('smartcall_wazo_refreshToken', this.session.refreshToken || '')
+      }
       return true
     } catch (error) {
       console.error('Login failed:', error)
@@ -25,11 +29,32 @@ class WazoService {
     }
   }
 
+  // Khôi phục session xác thực Wazo từ Token khi người dùng F5 hoặc mở lại tab
+  async restoreSession() {
+    this.init()
+    const token = localStorage.getItem('smartcall_wazo_token')
+    const refreshToken = localStorage.getItem('smartcall_wazo_refreshToken')
+    if (token) {
+      try {
+        this.session = await Wazo.Auth.validateToken(token, refreshToken)
+        if (this.session) {
+          console.log('Đã khôi phục phiên đăng nhập Wazo từ token!')
+          return true
+        }
+      } catch (e) {
+        console.warn('Không thể khôi phục phiên Wazo từ token:', e)
+      }
+    }
+    return false
+  }
+
   logout() {
     if (this.session) {
       Wazo.Auth.logout(this.session)
       this.session = null
     }
+    localStorage.removeItem('smartcall_wazo_token')
+    localStorage.removeItem('smartcall_wazo_refreshToken')
     this.currentCallSession = null
     this.stopRemoteAudio()
     this.disconnectPhone()

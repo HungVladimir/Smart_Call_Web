@@ -92,6 +92,10 @@ onMounted(async () => {
   const storedLogin = localStorage.getItem('smartcall_logged_in')
   if (storedLogin !== 'false' && (storedLogin === 'true' || wazoService.isLogged())) {
     isLoggedIn.value = true
+    // Tự động khôi phục phiên Wazo từ Token lưu trữ
+    if (!wazoService.session) {
+      await wazoService.restoreSession()
+    }
     tryConnectPhone()
   } else {
     isLoggedIn.value = false
@@ -106,6 +110,7 @@ onMounted(async () => {
   window.addEventListener('app-login-success', handleLoginSuccess)
   window.addEventListener('wazo-incoming', handleIncomingCall)
   window.addEventListener('wazo-ended', handleCallEnded)
+  window.addEventListener('wazo-registered', handleWazoRegistered)
 })
 
 onUnmounted(() => {
@@ -114,8 +119,15 @@ onUnmounted(() => {
   window.removeEventListener('app-login-success', handleLoginSuccess)
   window.removeEventListener('wazo-incoming', handleIncomingCall)
   window.removeEventListener('wazo-ended', handleCallEnded)
+  window.removeEventListener('wazo-registered', handleWazoRegistered)
   wazoService.disconnectPhone()
 })
+
+const handleWazoRegistered = () => {
+  isPhoneConnected.value = true
+  phoneStatus.value = 'connected'
+  showToast('Tổng đài Wazo: WebRTC SIP Registered (Đã đăng ký máy lẻ)!', 'success')
+}
 
 // --- Logic xử lý sự kiện ---
 const handleLoginSuccess = () => {
@@ -129,10 +141,14 @@ const tryConnectPhone = async () => {
     await wazoService.connectPhone()
     isPhoneConnected.value = true
     phoneStatus.value = 'connected'
-    showToast('Tổng đài Wazo: Đã kết nối WebRTC!', 'success')
+    showToast('Tổng đài Wazo: WebRTC SIP kết nối thành công!', 'success')
   } catch (err) {
     phoneStatus.value = 'error'
-    console.log('Chưa kết nối được Wazo LAN thực tế (Chế độ Demo):', err)
+    console.warn('Lỗi kết nối WebRTC SIP tổng đài Wazo:', err.message)
+    showToast(
+      '⚠️ WebRTC chưa kết nối máy chủ Wazo. Vui lòng mở https://107.126.11.126:9443 và chọn Tiếp tục truy cập để tin cậy WSS!',
+      'warning',
+    )
   }
 }
 

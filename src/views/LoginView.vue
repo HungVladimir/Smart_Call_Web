@@ -59,13 +59,24 @@
             </label>
           </div>
 
-          <!-- 2 Nút Đăng nhập nhanh kiểm thử phân quyền -->
+          <!-- 2 Nút Đăng nhập nhanh tài khoản thật Wazo -->
           <div class="demo-buttons-group">
-            <button type="button" class="btn-demo btn-demo-admin" @click="handleQuickLogin('admin')">
-              ⚡ Đăng nhập Quản trị viên (Admin)
+            <button type="button" class="btn-demo btn-demo-admin" @click="handleQuickLogin('alice')">
+              ⚡ Đăng nhập Alice (Máy lẻ 1001)
             </button>
-            <button type="button" class="btn-demo btn-demo-user" @click="handleQuickLogin('user')">
-              👤 Đăng nhập Nhân viên (User thường)
+            <button type="button" class="btn-demo btn-demo-user" @click="handleQuickLogin('bob')">
+              👤 Đăng nhập Bob (Máy lẻ 1002)
+            </button>
+          </div>
+
+          <!-- Thông báo lỗi đăng nhập nếu có -->
+          <div v-if="loginError" class="login-error-alert">
+            <div class="error-msg">{{ loginError }}</div>
+            <a href="https://107.126.11.126:9443" target="_blank" class="cert-link">
+              🔒 Bấm vào đây để tin cậy chứng chỉ SSL (Advanced ➔ Proceed)
+            </a>
+            <button type="button" class="btn-offline-bypass" @click="enterOfflineDemo">
+              Tiếp tục vào chế độ mô phỏng Offline ➔
             </button>
           </div>
         </form>
@@ -81,20 +92,22 @@ import { wazoService } from '@/services/wazo'
 
 const router = useRouter()
 
-const username = ref('admin')
+const username = ref('alice')
 const password = ref('Test@123')
 const showPassword = ref(false)
 const rememberMe = ref(true)
 const loading = ref(false)
+const loginError = ref('')
 
 const handleLogin = async () => {
   loading.value = true
-  const isAdmin = username.value.toLowerCase().includes('admin')
+  loginError.value = ''
   let realDisplayName = ''
   let realExtension = ''
+
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout server Wazo LAN')), 3000),
+      setTimeout(() => reject(new Error('Hết thời gian chờ máy chủ Wazo (3s)')), 3000),
     )
     await Promise.race([wazoService.login(username.value, password.value), timeoutPromise])
 
@@ -113,37 +126,46 @@ const handleLogin = async () => {
       }
     }
   } catch (err) {
-    console.log('Chưa kết nối được server Wazo LAN, chuyển sang phiên Demo:', err.message)
-  } finally {
-    const finalName = realDisplayName || username.value || (isAdmin ? 'Quản trị viên' : 'Nhân viên Kỹ thuật')
-    const finalExt = realExtension || (isAdmin ? '1001' : '1002')
-
-    localStorage.setItem('smartcall_username', finalName)
-    localStorage.setItem('smartcall_extension', finalExt)
-    localStorage.setItem('smartcall_role', isAdmin ? 'admin' : 'user')
-    localStorage.setItem('smartcall_is_admin', isAdmin ? 'true' : 'false')
-    localStorage.setItem('smartcall_logged_in', 'true')
-
-    window.dispatchEvent(new CustomEvent('app-login-success'))
+    console.warn('Lỗi kết nối máy chủ Wazo:', err.message)
+    loginError.value = `Không thể kết nối máy chủ Wazo (${err.message}). Có thể do tài khoản sai hoặc trình duyệt chưa tin cậy chứng chỉ SSL!`
     loading.value = false
-    router.push('/dashboard')
+    return
+  }
+
+  const finalName = realDisplayName || username.value
+  const finalExt = realExtension || (username.value === 'alice' ? '1001' : '1002')
+
+  localStorage.setItem('smartcall_username', finalName)
+  localStorage.setItem('smartcall_extension', finalExt)
+  localStorage.setItem('smartcall_role', 'user')
+  localStorage.setItem('smartcall_is_admin', 'false')
+  localStorage.setItem('smartcall_logged_in', 'true')
+
+  window.dispatchEvent(new CustomEvent('app-login-success'))
+  loading.value = false
+  router.push('/dashboard')
+}
+
+// Đăng nhập nhanh tài khoản thật trên Wazo (Alice 1001 hoặc Bob 1002)
+const handleQuickLogin = (user) => {
+  if (user === 'alice') {
+    username.value = 'alice'
+    password.value = 'Test@123'
+    handleLogin()
+  } else if (user === 'bob') {
+    username.value = 'bob'
+    password.value = 'Test@123'
+    handleLogin()
   }
 }
 
-// Đăng nhập nhanh kiểm thử phân quyền Admin hoặc User
-const handleQuickLogin = (role) => {
-  const isAdmin = role === 'admin'
-  const uName = isAdmin ? 'Quản trị viên' : 'Nhân viên Kỹ thuật'
-  const ext = isAdmin ? '1001' : '1002'
-
-  username.value = isAdmin ? 'admin' : 'user1002'
-  password.value = '123456'
-  localStorage.setItem('smartcall_username', uName)
-  localStorage.setItem('smartcall_extension', ext)
-  localStorage.setItem('smartcall_role', role)
-  localStorage.setItem('smartcall_is_admin', isAdmin ? 'true' : 'false')
+// Bỏ qua lỗi và vào chế độ Offline Demo
+const enterOfflineDemo = () => {
+  localStorage.setItem('smartcall_username', username.value || 'Người dùng Demo')
+  localStorage.setItem('smartcall_extension', '1001')
+  localStorage.setItem('smartcall_role', 'user')
+  localStorage.setItem('smartcall_is_admin', 'false')
   localStorage.setItem('smartcall_logged_in', 'true')
-
   window.dispatchEvent(new CustomEvent('app-login-success'))
   router.push('/dashboard')
 }
@@ -338,6 +360,42 @@ const handleQuickLogin = (role) => {
 
 .btn-demo-user:hover {
   background: #dcfce7;
+}
+
+.login-error-alert {
+  margin-top: 15px;
+  padding: 12px;
+  background: #fef2f2;
+  border: 1px solid #f87171;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #991b1b;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  line-height: 1.4;
+}
+
+.cert-link {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.btn-offline-bypass {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  color: #4b5563;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.2s;
+}
+
+.btn-offline-bypass:hover {
+  background: #e5e7eb;
 }
 
 .remember-me {

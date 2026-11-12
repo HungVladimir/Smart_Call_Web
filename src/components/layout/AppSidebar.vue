@@ -40,14 +40,38 @@
     </ul>
 
     <div class="sidebar-footer">
-      <div>SIP: <code>1001@107.126.11.126</code></div>
-      <div class="webrtc-status">● WebRTC Audio Ready</div>
+      <div>SIP: <code>{{ userExt }}@107.126.11.126</code></div>
+      <div class="webrtc-status" :class="{ 'status-online': isWebRtcReady, 'status-offline': !isWebRtcReady }">
+        ● {{ isWebRtcReady ? 'WebRTC SIP Online' : 'WebRTC SIP Offline' }}
+      </div>
     </div>
   </aside>
 </template>
 
 <script setup>
-// Sidebar logic
+import { ref, onMounted, onUnmounted } from 'vue'
+
+const userExt = ref(localStorage.getItem('smartcall_extension') || '1001')
+const isWebRtcReady = ref(false)
+
+const handleRegistered = () => {
+  isWebRtcReady.value = true
+}
+
+const updateExt = () => {
+  userExt.value = localStorage.getItem('smartcall_extension') || '1001'
+}
+
+onMounted(() => {
+  updateExt()
+  window.addEventListener('wazo-registered', handleRegistered)
+  window.addEventListener('app-login-success', updateExt)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('wazo-registered', handleRegistered)
+  window.removeEventListener('app-login-success', updateExt)
+})
 </script>
 
 <style scoped>
@@ -129,8 +153,16 @@
 
 .webrtc-status {
   margin-top: 4px;
-  color: #4ade80;
   font-weight: 500;
+  transition: color 0.3s;
+}
+
+.webrtc-status.status-online {
+  color: #4ade80;
+}
+
+.webrtc-status.status-offline {
+  color: #f87171;
 }
 </style>
 
