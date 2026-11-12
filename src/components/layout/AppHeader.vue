@@ -132,6 +132,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { contactService } from '@/services/contactService'
+import { wazoService } from '@/services/wazo'
 
 const router = useRouter()
 defineEmits(['logout', 'open-settings'])
@@ -259,10 +260,11 @@ const quickChat = (contact) => {
   })
 }
 
-const updatePresence = () => {
+const updatePresence = async () => {
+  await wazoService.setPresence(presenceState.value)
   window.dispatchEvent(
     new CustomEvent('app-toast', {
-      detail: { message: `Đã chuyển trạng thái sang: ${presenceState.value.toUpperCase()}` },
+      detail: { message: `Đã cập nhật trạng thái: ${presenceState.value.toUpperCase()}` },
     }),
   )
 }

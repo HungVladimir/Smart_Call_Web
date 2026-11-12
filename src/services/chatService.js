@@ -209,6 +209,59 @@ class ChatService {
   }
 
   /**
+   * Tải lịch sử tin nhắn từ Wazo Chatd server cho một phòng chat thật
+   * GET /api/chatd/1.0/users/me/rooms/{roomId}/messages?limit=50 (dev_guide.md mục 4.6)
+   */
+  async getRoomMessages(roomId, limit = 50) {
+    if (!roomId) return []
+    const localRoom = this.rooms.find((r) => r.id === roomId)
+
+    try {
+      const token = wazoService.getToken()
+      if (token && !roomId.startsWith('room-') && !roomId.startsWith('direct-')) {
+        const host = wazoService.host.startsWith('http')
+          ? wazoService.host
+          : `https://${wazoService.host}`
+
+        const res = await fetch(
+          `${host}/api/chatd/1.0/users/me/rooms/${roomId}/messages?limit=${limit}`,
+          {
+            headers: { 'X-Auth-Token': token },
+          },
+        )
+
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.items) && data.items.length > 0) {
+            const currentUserName = localStorage.getItem('smartcall_username') || 'Quản trị viên'
+            const mapped = data.items.map((m) => {
+              const isMine = m.alias === currentUserName || m.user_uuid === wazoService.session?.uuid
+              return {
+                id: m.uuid || `msg-${Date.now()}-${Math.random()}`,
+                sender: isMine ? 'mine' : 'theirs',
+                senderName: m.alias || 'Đồng nghiệp',
+                text: m.content || '',
+                time: m.created_at ? m.created_at.substring(11, 16) : '',
+                readStatus: 'Read',
+                readers: [],
+              }
+            })
+            if (localRoom) {
+              localRoom.messages = mapped
+              this.saveRooms()
+            }
+            return mapped
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Lỗi tải tin nhắn từ Wazo server, sử dụng tin nhắn cache:', e)
+    }
+
+    return localRoom?.messages || []
+  }
+
+  /**
    * Tìm hoặc tạo phòng chat 1-1 với một máy lẻ (Đảm bảo lưu bền vững không bị mất)
    */
   async getDirectRoom(ext, name, currentUserName = 'Quản trị viên') {

@@ -210,6 +210,34 @@ class WazoService {
     const session = callSession || this.currentCallSession
     if (session) Wazo.Phone.hold(session)
   }
+
+  /**
+   * Cập nhật trạng thái Presence người dùng lên máy chủ tổng đài Wazo Chatd
+   * PUT /api/chatd/1.0/users/me/presences (dev_guide.md mục 4.5)
+   */
+  async setPresence(state = 'available', statusText = '') {
+    const token = this.getToken()
+    if (!token) return false
+
+    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+    try {
+      const res = await fetch(`${host}/api/chatd/1.0/users/me/presences`, {
+        method: 'PUT',
+        headers: {
+          'X-Auth-Token': token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          state,
+          status: statusText || (state === 'available' ? 'Sẵn sàng' : 'Bận'),
+        }),
+      })
+      return res.ok
+    } catch (err) {
+      console.warn('Không thể cập nhật presence lên Wazo server:', err)
+      return false
+    }
+  }
 }
 
 export const wazoService = new WazoService()

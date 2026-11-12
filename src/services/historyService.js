@@ -240,7 +240,7 @@ class HistoryService {
           date: cdr.start ? cdr.start.replace('T', ' ').substring(0, 19) : '',
           name,
           extension,
-          dept: 'Nội bộ SDV',
+          dept: 'Nội bộ công ty',
           duration: durationSec,
           direction: isOutbound ? 'outbound' : 'inbound',
           directionLabel: isOutbound ? 'Outgoing' : 'Incoming',
@@ -250,7 +250,18 @@ class HistoryService {
         }
       })
 
-      return this._filterList(mapped, tab)
+      // Hợp nhất dữ liệu: kết hợp các cuộc gọi cục bộ mới nhất với CDR từ Wazo server
+      const merged = [...mapped]
+      this.localHistory.forEach((loc) => {
+        const alreadyExists = merged.some(
+          (m) => m.id === loc.id || (m.date === loc.date && m.extension === loc.extension),
+        )
+        if (!alreadyExists) {
+          merged.push(loc)
+        }
+      })
+      merged.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+      return this._filterList(merged, tab)
     } catch (err) {
       // Offline fallback: Dùng dữ liệu mock nội bộ để UI luôn chạy mượt
       return this._filterLocal(tab)

@@ -287,10 +287,17 @@ const loadRooms = async () => {
   }
 }
 
-const selectRoom = (room) => {
+const selectRoom = async (room) => {
   currentRoom.value = room
   room.unread = 0
   chatService.saveRooms()
+  // Tự động kéo lịch sử tin nhắn từ Wazo chatd nếu là phòng trên server thật
+  if (room && room.id && !room.id.startsWith('room-') && !room.id.startsWith('direct-')) {
+    const msgs = await chatService.getRoomMessages(room.id)
+    if (msgs && msgs.length > 0) {
+      room.messages = msgs
+    }
+  }
   scrollToBottom()
 }
 

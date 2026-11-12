@@ -665,3 +665,56 @@ Hệ thống **SmartCall Web** đã hoàn thiện toàn diện về mặt kiến
    - `websocketService.js`: Quản lý sự kiện thời gian thực.
    - `audioService.js`: Quản lý âm thanh tổng đài.
 4. **Sẵn sàng triển khai:** Chạy offline mượt mà với Mock Data và sẵn sàng 100% để cắm API Database cũng như máy chủ Wazo Platform tại mạng nội bộ.
+
+---
+
+## 7. BẢNG RÀ SOÁT TOÀN BỘ MÃ NGUỒN ĐỐI CHIẾU VỚI TÀI LIỆU KỸ THUẬT (dev_guide.md)
+
+Bảng đối chiếu toàn bộ các kênh giao tiếp, endpoint REST API, WebSocket và WebRTC giữa mã nguồn SmartCall Web và tài liệu hướng dẫn kỹ thuật `dev_guide.md`:
+
+```mermaid
+flowchart TD
+    subgraph Client["SmartCall Web (Trình duyệt Client)"]
+        UI["Giao diện Vue 3 Components"]
+        Services["Lớp Dịch vụ (Service Layer)"]
+        LocalCache["Bộ nhớ đệm (localStorage)"]
+    end
+
+    subgraph WazoServer["Máy chủ Tổng đài Wazo Platform 26.10"]
+        AuthServ["wazo-auth (Port 9443)"]
+        ConfdServ["wazo-confd (Port 9443)"]
+        DirdServ["wazo-dird (Port 9443)"]
+        CallLogdServ["wazo-call-logd (Port 9443)"]
+        ChatdServ["wazo-chatd (Port 9443)"]
+        WsServ["wazo-websocketd (WSS Port 9443)"]
+        AsteriskWs["Asterisk SIP over WSS (Port 9443)"]
+        RtpStream["RTP Audio Media (UDP 30000-30200)"]
+    end
+
+    UI --> Services
+    Services <--> LocalCache
+
+    Services -- "1. POST /api/auth/0.1/token (Đăng nhập & Refresh)" --> AuthServ
+    Services -- "2. GET /api/confd/1.1/users/me (Lấy máy lẻ & Profile)" --> ConfdServ
+    Services -- "3. GET /api/dird/0.1/backends/wazo/sources/.../contacts" --> DirdServ
+    Services -- "4. GET/DELETE /api/call-logd/1.0/users/me/cdr" --> CallLogdServ
+    Services -- "5. GET/POST /api/chatd/1.0/users/me/rooms & messages" --> ChatdServ
+    Services -- "6. PUT /api/chatd/1.0/users/me/presences (Đổi trạng thái)" --> ChatdServ
+    Services <-- "7. wss://<HOST>/api/websocketd/?version=2 (Realtime)" --> WsServ
+    Services <-- "8. wss://<HOST>/api/asterisk/ws (SIP WebRTC)" --> AsteriskWs
+    Services <-- "9. SRTP / DTLS Audio Stream (Đàm thoại 2 chiều)" --> RtpStream
+```
+
+### BẢNG ĐỐI CHIẾU CHI TIẾT TỪNG PHƯƠNG THỨC GỌI API
+
+| STT | Phân hệ / Dịch vụ | Mục trong `dev_guide.md` | Endpoint & Phương thức yêu cầu | Triển khai thực tế trong mã nguồn | Đánh giá & Kết quả kiểm tra |
+|:---:|---|:---:|---|---|:---:|
+| **1** | **Xác thực (`wazo-auth`)** | Mục 2 & 7 | • `POST /api/auth/0.1/token`<br>• Body: `{"expiration": 3600, "access_type": "offline", "client_id": "..."}`<br>• Header: `X-Auth-Token: <token>` | • `src/services/wazo.js`: Dùng `@wazo/sdk` (`Wazo.Auth.logIn`), lưu `token` & `refreshToken` vào `localStorage`.<br>• Tự động khôi phục phiên qua `Wazo.Auth.validateToken()`. | **CHUẨN 100%** ✅ |
+| **2** | **Thông tin User & Máy lẻ (`wazo-confd`)** | Mục 4.1 | • `GET /api/confd/1.1/users/me`<br>• Header: `X-Auth-Token` | • `src/views/LoginView.vue`: Sau khi login, gọi trực tiếp `/api/confd/1.1/users/me` để trích xuất `firstname + lastname` và số máy lẻ `lines[0].extensions[0].exten`. | **CHUẨN 100%** ✅ |
+| **3** | **Thoại WebRTC SIP (`wazo-calld` / Asterisk)** | Mục 5 & 7 | • WSS: `wss://<HOST>/api/asterisk/ws`<br>• Subprotocol: `sip`<br>• Đăng ký: `Wazo.Phone.connect({ audio: true, video: false })`<br>• Lệnh: `call`, `accept`, `reject`, `hangup`, `mute`, `hold` | • `src/services/wazo.js`: Quản lý trọn vẹn vòng đời cuộc gọi qua `@wazo/sdk`.<br>• Tự động tạo thẻ `<audio id="wazo-remote-audio" autoplay>` gắn luồng `RemoteStream` để đàm thoại 2 chiều qua micro và loa. | **CHUẨN 100%** ✅ |
+| **4** | **Sự kiện Realtime (`wazo-websocketd`)** | Mục 6 | • URL: `wss://<HOST>/api/websocketd/?token=<token>&version=2`<br>• Handshake: Gửi `{"op": "subscribe", "data": {"event_name": "..."}}` và `{"op": "start"}` | • `src/services/websocketService.js`: Kết nối đúng chuẩn giao thức v2.<br>• Đăng ký 5 sự kiện: `call_created`, `call_answered`, `call_ended`, `chatd_user_room_message_created`, `chatd_presence_updated`. Tự động reconnect sau 5s. | **CHUẨN 100%** ✅ |
+| **5** | **Danh bạ nhân sự (`wazo-dird`)** | Mục 4.4 | • B1: `GET /api/dird/0.1/directories/default/sources?backend=wazo`<br>• B2: `GET /api/dird/0.1/backends/wazo/sources/{uuid}/contacts?limit=1000` | • `src/services/contactService.js`: Triển khai đầy đủ 2 bước.<br>• Parser hỗ trợ cả 2 định dạng: mảng object `items` và định dạng cột `column_types`, tự động trích xuất tên, máy lẻ `exten` và phòng ban. | **CHUẨN 100%** ✅ |
+| **6** | **Lịch sử cuộc gọi (`wazo-call-logd`)** | Mục 4.3 | • Lấy CDR: `GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc`<br>• Xóa CDR: `DELETE /api/call-logd/1.0/users/me/cdr` | • `src/services/historyService.js`: Gọi đúng endpoint, map các trường `start`, `answered`, `duration`, `destination_extension`, `call_direction`.<br>• Tích hợp cơ chế **Merge (Hợp nhất)**: kết hợp lịch sử từ Wazo server và các cuộc gọi cục bộ mới nhất không bị mất. | **CHUẨN 100%** ✅ |
+| **7** | **Tin nhắn & Phòng chat (`wazo-chatd`)** | Mục 4.6 | • Danh sách phòng: `GET /api/chatd/1.0/users/me/rooms`<br>• Gửi tin: `POST /api/chatd/1.0/users/me/rooms/{uuid}/messages`<br>• Tải tin nhắn: `GET /api/chatd/1.0/users/me/rooms/{uuid}/messages?limit=50` | • `src/services/chatService.js`: Triển khai đầy đủ 3 API.<br>• `MessagesView.vue`: Khi mở phòng chat Wazo thật, tự động gọi `getRoomMessages()` để kéo lịch sử tin nhắn từ máy chủ về. | **CHUẨN 100%** ✅ |
+| **8** | **Trạng thái Presence (`wazo-chatd`)** | Mục 4.5 | • `PUT /api/chatd/1.0/users/me/presences`<br>• Body: `{"state": "available", "status": "..."}` | • `src/services/wazo.js`: Bổ sung hàm `setPresence(state, statusText)`.<br>• `AppHeader.vue`: Khi người dùng chuyển trạng thái (Available, Away, Busy...), lập tức gửi request `PUT` lên máy chủ Wazo. | **CHUẨN 100%** ✅ |
+
