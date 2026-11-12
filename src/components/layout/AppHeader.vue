@@ -5,7 +5,6 @@
         <img src="/app-icon.webp" alt="SmartCall" class="brand-icon-img" />
         <span>SmartCall</span>
       </div>
-      <span class="badge-lan">Wazo 26.10 LAN</span>
       <div
         class="sip-status-badge"
         :class="{ online: isSipOnline, offline: !isSipOnline }"
@@ -20,7 +19,10 @@
     <!-- Center Search Bar với Menu Gợi Ý Tự Động (Autocomplete) -->
     <div class="header-center" ref="searchContainerRef">
       <div class="search-bar">
-        <span class="search-icon">🔍</span>
+        <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
         <input
           v-model="searchQuery"
           type="text"
@@ -322,13 +324,15 @@ const triggerSimulatedIncomingCall = () => {
   filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.3));
 }
 
-.badge-lan {
-  background: #2c3e50;
-  color: #a0aec0;
-  font-size: 0.7rem;
-  padding: 2px 8px;
-  border-radius: 12px;
-  border: 1px solid #4a5568;
+.search-icon-svg {
+  width: 16px;
+  height: 16px;
+  color: #768390;
+  flex-shrink: 0;
+}
+
+.search-bar:focus-within .search-icon-svg {
+  color: #64b5f6;
 }
 
 .sip-status-badge {

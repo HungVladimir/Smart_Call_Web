@@ -9,8 +9,8 @@
         <div class="banner-text">
           <h1>Xin chào, {{ userName }}! 👋</h1>
           <p class="sub-text">
-            Hệ thống liên lạc hợp nhất SmartCall UC • Mạng LAN nội bộ • Máy lẻ SIP:
-            <strong>{{ userExtension }}@107.126.11.126</strong>
+            Hệ thống liên lạc SmartCall • Máy lẻ nội bộ:
+            <strong>{{ userExtension }}</strong> • Trạng thái: Sẵn sàng kết nối
           </p>
         </div>
       </div>
@@ -27,21 +27,25 @@
     <div class="stat-grid">
       <!-- Thẻ 1: Máy lẻ WebRTC -->
       <div class="stat-card" @click="navigateTo('/calls')">
-        <div class="stat-icon icon-blue">📞</div>
+        <div class="stat-icon icon-blue">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z" />
+          </svg>
+        </div>
         <div class="stat-info">
           <h4>Máy lẻ WebRTC</h4>
           <p class="stat-number">{{ userExtension }}</p>
-          <span class="stat-badge badge-green">● Registered Online</span>
+          <span class="stat-badge badge-green">● Sẵn sàng kết nối</span>
         </div>
       </div>
 
-      <!-- Thẻ 2: Tổng đài Wazo LAN -->
-      <div class="stat-card" @click="openSettings">
-        <div class="stat-icon icon-green">📶</div>
+      <!-- Thẻ 2: Danh bạ nội bộ -->
+      <div class="stat-card" @click="navigateTo('/contacts')">
+        <div class="stat-icon icon-green">👥</div>
         <div class="stat-info">
-          <h4>Máy chủ Wazo</h4>
-          <p class="stat-number">107.126.11.126</p>
-          <span class="stat-badge badge-green">Cổng 9443 SSL Ready</span>
+          <h4>Danh bạ nội bộ</h4>
+          <p class="stat-number">24 <span class="unit">nhân viên</span></p>
+          <span class="stat-badge badge-green">● Trực tuyến</span>
         </div>
       </div>
 
@@ -87,7 +91,10 @@
               @keyup.enter="handleQuickDial"
             />
             <button class="btn-quick-call" @click="handleQuickDial">
-              📞 Gọi ngay
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z" />
+              </svg>
+              <span>Gọi ngay</span>
             </button>
           </div>
 
@@ -150,7 +157,7 @@
         </div>
       </div>
 
-      <!-- Cột Phải: Cuộc gọi gần đây & Trạng thái dịch vụ Wazo -->
+      <!-- Cột Phải: Cuộc gọi gần đây & Liên hệ thường dùng -->
       <div class="grid-col right-col">
         <!-- Nhật ký cuộc gọi gần đây -->
         <div class="dash-card">
@@ -174,39 +181,40 @@
                 title="Gọi lại ngay"
                 @click="callQuickContact(call.ext)"
               >
-                📞
+                <svg class="phone-action-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z" />
+                </svg>
               </button>
             </div>
           </div>
         </div>
 
-        <!-- Bảng trạng thái Microservices Wazo Platform 26.10 -->
+        <!-- Danh bạ liên hệ nhanh -->
         <div class="dash-card">
           <div class="card-header">
-            <h3>⚙️ Trạng thái dịch vụ Wazo (Host: 107.126.11.126)</h3>
-            <span class="status-indicator-live">● Đang hoạt động</span>
+            <h3>⭐ Liên hệ thường dùng</h3>
+            <button class="btn-link" @click="navigateTo('/contacts')">Xem danh bạ →</button>
           </div>
 
-          <div class="services-status-table">
-            <div class="service-row">
-              <span class="service-name">wazo-auth (Xác thực & Token)</span>
-              <span class="service-status ready">🟢 Hoạt động</span>
-            </div>
-            <div class="service-row">
-              <span class="service-name">wazo-calld (Thoại WebRTC SIP)</span>
-              <span class="service-status ready">🟢 Sẵn sàng</span>
-            </div>
-            <div class="service-row">
-              <span class="service-name">wazo-chatd (Tin nhắn & Presence)</span>
-              <span class="service-status ready">🟢 Sẵn sàng</span>
-            </div>
-            <div class="service-row">
-              <span class="service-name">wazo-call-logd (Nhật ký CDR)</span>
-              <span class="service-status ready">🟢 Sẵn sàng</span>
-            </div>
-            <div class="service-row">
-              <span class="service-name">wazo-websocketd (Realtime v2)</span>
-              <span class="service-status ready">🟢 Kết nối</span>
+          <div class="frequent-contacts-list">
+            <div v-for="c in quickContacts.slice(0, 4)" :key="c.ext" class="frequent-contact-item">
+              <div class="contact-avatar-circle">
+                {{ c.name.split(' ').slice(-1)[0][0] }}
+              </div>
+              <div class="contact-meta">
+                <span class="contact-name">{{ c.name }}</span>
+                <span class="contact-ext">Máy lẻ: {{ c.ext }}</span>
+              </div>
+              <button
+                class="btn-quick-dial-action"
+                title="Gọi trực tiếp"
+                @click="callQuickContact(c.ext)"
+              >
+                <svg class="phone-action-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z" />
+                </svg>
+                <span>Gọi</span>
+              </button>
             </div>
           </div>
         </div>
@@ -282,7 +290,7 @@ const simulateCall = () => {
         id: `call-${Date.now()}`,
         name: 'Nguyễn Hữu Hiếu',
         extension: '1007',
-        sipUri: 'sip:1007@107.126.11.126',
+        sipUri: 'sip:1007@smartcall.internal',
         dept: 'Trưởng nhóm Phát triển Hệ thống',
       },
     }),
@@ -752,38 +760,93 @@ const simulateCall = () => {
   border-color: #10b981;
 }
 
-/* Services Status Table */
-.services-status-table {
+.phone-action-icon {
+  width: 15px;
+  height: 15px;
+  color: #10b981;
+}
+
+.btn-call-back:hover .phone-action-icon {
+  color: #059669;
+}
+
+/* Frequent Contacts List */
+.frequent-contacts-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-.service-row {
+.frequent-contact-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 8px 12px;
   background-color: #f8fafc;
-  border-radius: 6px;
-  font-size: 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #f1f5f9;
+  transition: all 0.15s ease;
 }
 
-.service-name {
-  color: #334155;
-  font-family: monospace;
-  font-size: 0.82rem;
+.frequent-contact-item:hover {
+  background-color: #ffffff;
+  border-color: #e2e8f0;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.03);
 }
 
-.service-status.ready {
-  color: #15803d;
-  font-weight: 600;
-  font-size: 0.8rem;
-}
-
-.status-indicator-live {
-  font-size: 0.78rem;
+.contact-avatar-circle {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: white;
   font-weight: 700;
-  color: #16a34a;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.contact-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.contact-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.contact-ext {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.btn-quick-dial-action {
+  background-color: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-quick-dial-action:hover {
+  background-color: #10b981;
+  color: white;
+  border-color: #10b981;
+}
+
+.btn-quick-dial-action:hover .phone-action-icon {
+  color: white;
 }
 </style>

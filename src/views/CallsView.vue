@@ -1,8 +1,8 @@
 <template>
   <div class="calls-view">
     <div class="view-header">
-      <h1>Quay Số & Đàm Thoại WebRTC</h1>
-      <span class="sub-text">Thực hiện cuộc gọi nội bộ qua giao thức SIP over WebSocket</span>
+      <h1>Bàn phím & Gọi thoại</h1>
+      <span class="sub-text">Nhập số máy lẻ nội bộ để kết nối cuộc gọi trực tiếp</span>
     </div>
 
     <div class="dialer-layout">
@@ -30,19 +30,35 @@
           </button>
         </div>
 
+        <!-- 2 nút thao tác đặt ngay giữa tâm, đối xứng qua phím số 0 -->
         <div class="dial-actions">
-          <button class="btn-dial" title="Bắt đầu gọi" @click="handleDial">
-            📞
+          <button
+            class="btn-dial"
+            title="Bắt đầu gọi"
+            @click="handleDial"
+            :disabled="isCalling"
+          >
+            <svg class="dial-svg-icon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z" />
+            </svg>
           </button>
-          <button class="btn-clear" title="Xóa một số" @click="clearDigit">
-            ⌫
+          <button
+            class="btn-clear"
+            :class="{ visible: Boolean(extension) }"
+            title="Xóa một số"
+            @click="clearDigit"
+            :disabled="!extension"
+          >
+            <svg class="clear-svg-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.5-7.5H21a1 1 0 011 1v13a1 1 0 01-1 1H9.5L3 12z" />
+            </svg>
           </button>
         </div>
       </div>
 
-      <!-- Màn hình trạng thái cuộc gọi WebRTC -->
+      <!-- Màn hình trạng thái cuộc gọi -->
       <div class="call-status-box" :class="{ inCall: isCalling, onHold: isHeld }">
-        <div class="call-avatar">
+        <div class="call-avatar" :class="{ pulsing: isCalling }">
           <span>{{ callAvatarInitials }}</span>
         </div>
 
@@ -55,43 +71,65 @@
 
         <!-- Điều khiển cuộc gọi -->
         <div class="controls-row">
+          <!-- Nút Tắt/Bật Micro (Mute) -->
           <button
             class="control-btn"
-            :class="{ active: isMuted }"
+            :class="{ active: isMuted, muted: isMuted }"
             :disabled="!isCalling"
-            title="Tắt tiếng Micro"
+            :title="isMuted ? 'Bật lại Micro' : 'Tắt Micro (Mute)'"
             @click="toggleMute"
           >
-            {{ isMuted ? '🔇' : '🎙️' }}
+            <svg v-if="!isMuted" class="ctrl-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-14 0m7 7v4m-4 0h8m-4-15a3 3 0 00-3 3v5a3 3 0 006 0V6a3 3 0 00-3-3z" />
+            </svg>
+            <svg v-else class="ctrl-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="1" y1="1" x2="23" y2="23" stroke-linecap="round" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 16.95A7 7 0 015 11m12 0a6.97 6.97 0 01-.64 2.92M12 19v4m-4 0h8" />
+            </svg>
           </button>
 
+          <!-- Nút Giữ máy (Hold) -->
           <button
             class="control-btn"
             :class="{ active: isHeld }"
             :disabled="!isCalling"
-            title="Giữ máy (Hold)"
+            :title="isHeld ? 'Tiếp tục cuộc gọi' : 'Giữ cuộc gọi (Hold)'"
             @click="toggleHold"
           >
-            {{ isHeld ? '▶️' : '⏸️' }}
+            <svg v-if="!isHeld" class="ctrl-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="6" y="4" width="4" height="16" rx="1" />
+              <rect x="14" y="4" width="4" height="16" rx="1" />
+            </svg>
+            <svg v-else class="ctrl-svg-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
           </button>
 
+          <!-- Nút Loa ngoài (Speaker) -->
           <button
             class="control-btn"
             :class="{ active: isSpeaker }"
             :disabled="!isCalling"
-            title="Loa ngoài (Speaker)"
+            :title="isSpeaker ? 'Tắt loa ngoài' : 'Bật loa ngoài'"
             @click="isSpeaker = !isSpeaker"
           >
-            🔊
+            <svg class="ctrl-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" />
+            </svg>
           </button>
 
+          <!-- Nút Cúp máy (Hangup) -->
           <button
             class="control-btn btn-hangup"
             :disabled="!isCalling"
-            title="Cúp máy"
+            title="Ngắt kết nối / Cúp máy"
             @click="hangupCall"
           >
-            📵
+            <svg class="ctrl-svg-icon hangup-svg" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 010-1.41C3.28 8.82 7.42 7 12 7s8.72 1.82 11.71 4.67c.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+            </svg>
           </button>
         </div>
       </div>
@@ -411,51 +449,90 @@ onUnmounted(() => {
 
 .dial-actions {
   display: flex;
-  gap: 16px;
+  gap: 20px;
   justify-content: center;
   align-items: center;
+  margin-top: 10px;
 }
 
 .btn-dial {
-  width: 64px;
-  height: 64px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
-  background: #22c55e;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: white;
-  font-size: 1.5rem;
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
-  transition: all 0.2s;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.btn-dial:hover {
-  background: #16a34a;
+.btn-dial:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
   transform: scale(1.05);
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.45);
+}
+
+.btn-dial:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.dial-svg-icon {
+  width: 22px;
+  height: 22px;
+  fill: #ffffff;
+  flex-shrink: 0;
 }
 
 .btn-clear {
-  width: 48px;
-  height: 48px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
-  background: #e2e8f0;
-  color: #475569;
-  font-size: 1.1rem;
-  border: none;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1.5px solid #cbd5e1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.2s;
+  opacity: 0.35;
+}
+
+.btn-clear.visible {
+  opacity: 1;
+}
+
+.btn-clear:hover:not(:disabled) {
+  background: #fee2e2;
+  color: #ef4444;
+  border-color: #fca5a5;
+  transform: scale(1.05);
+}
+
+.btn-clear:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.clear-svg-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
 }
 
 /* Call Status Box */
 .call-status-box {
-  background: linear-gradient(135deg, #1e293b, #0f172a);
+  background: linear-gradient(145deg, #1e293b, #0f172a);
   color: white;
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 36px 24px;
   text-align: center;
   display: flex;
@@ -463,27 +540,52 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   min-height: 420px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  border: 1px solid #334155;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.2), 0 8px 10px -6px rgba(15, 23, 42, 0.2);
+  position: relative;
+  overflow: hidden;
 }
 
 .call-avatar {
-  width: 90px;
-  height: 90px;
+  width: 86px;
+  height: 86px;
   border-radius: 50%;
-  border: 4px solid #3b82f6;
+  border: 3px solid #3b82f6;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2.2rem;
+  font-size: 2rem;
   margin-bottom: 16px;
-  background: #1e3a8a;
+  background: linear-gradient(135deg, #1e3a8a, #2563eb);
   color: white;
   font-weight: 700;
+  position: relative;
+  transition: all 0.3s;
+}
+
+.call-avatar.pulsing {
+  border-color: #10b981;
+  box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.25);
+  animation: pulse-ring 2s infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
 
 .caller-details h3 {
-  font-size: 1.4rem;
+  font-size: 1.35rem;
+  font-weight: 700;
   margin: 0 0 6px 0;
+  color: #f8fafc;
 }
 
 .sip-uri {
@@ -494,15 +596,16 @@ onUnmounted(() => {
 }
 
 .duration-text {
-  font-size: 1.3rem;
-  color: #4ade80;
+  font-size: 1.4rem;
+  color: #34d399;
   font-weight: 700;
   font-family: monospace;
   margin: 10px 0 24px 0;
+  letter-spacing: 1px;
 }
 
 .idle-text {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: #64748b;
   margin: 10px 0 24px 0;
 }
@@ -514,43 +617,66 @@ onUnmounted(() => {
 }
 
 .control-btn {
-  width: 50px;
-  height: 50px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  border: none;
-  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
   color: white;
-  font-size: 1.2rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ctrl-svg-icon {
+  width: 22px;
+  height: 22px;
+  stroke: #ffffff;
 }
 
 .control-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
 }
 
 .control-btn.active {
   background: #f59e0b;
+  border-color: #d97706;
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.45);
+}
+
+.control-btn.muted {
+  background: #ef4444;
+  border-color: #dc2626;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.45);
 }
 
 .control-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+  transform: none;
 }
 
 .control-btn.btn-hangup {
-  background: #ef4444;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  border-color: #b91c1c;
   width: 56px;
   height: 56px;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.5);
+  box-shadow: 0 6px 18px rgba(239, 68, 68, 0.45);
 }
 
 .control-btn.btn-hangup:hover:not(:disabled) {
-  background: #dc2626;
-  transform: scale(1.05);
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  transform: scale(1.06);
+  box-shadow: 0 8px 22px rgba(239, 68, 68, 0.6);
+}
+
+.hangup-svg {
+  fill: #ffffff;
+  width: 24px;
+  height: 24px;
 }
 
 @media (max-width: 768px) {

@@ -22,6 +22,8 @@
 | **07.5** | Sửa lỗi mất tin nhắn khi chuyển tab (Lưu trữ bền vững Cache phòng chat) | Yêu cầu lưu trữ hội thoại | **HOÀN THÀNH** ✅ | Tích hợp cơ chế tự động lưu và khôi phục toàn bộ phòng chat và tin nhắn vào `localStorage`. Khi chuyển tab hoặc F5, hội thoại và tin nhắn luôn được bảo toàn 100%. |
 | **08** | Đấu nối môi trường Wazo thật (`107.126.11.126:9443`) & CSDL Backend | `dev_guide.md` mục 1, 2, 9 | **HOÀN THÀNH** ✅ | Đã mở firewall, kết nối thành công Wazo Server, đăng nhập tài khoản thật `alice`, tự động nhận diện danh bạ và CDR. |
 | **08.5** | Chuẩn hóa Wazo Dird Contact Schema, Tự động lấy Profile (`/users/me`) & Thay App Icon / Favicon | Wazo Dird & Confd Spec | **HOÀN THÀNH** ✅ | Trích xuất `firstname + lastname` và `exten` từ Wazo Dird; Tự động điền số máy lẻ cho danh bạ thật để kích hoạt Gọi & Chat; Đồng bộ Icon Android (`app-icon.webp`) và Favicon web chuẩn PNG/WebP. |
+| **09** | Nâng cấp toàn diện Màn hình Đăng nhập (Login) chuẩn Enterprise & Bổ sung Chế độ thử nghiệm Offline | Nâng cấp UI/UX & Tính năng Sandbox | **HOÀN THÀNH** ✅ | Thiết kế Card nổi khối bo góc 16px, tích hợp icon vector SVG (User, Lock, Toggle Eye), phân loại thông báo lỗi đăng nhập chi tiết (401, Timeout, SSL), bổ sung nút "Chạy chế độ thử nghiệm Offline" và điều hướng Router an toàn. |
+| **10** | Tinh chỉnh giao diện Nội bộ: Header, Dashboard & Bàn phím gọi thoại chuẩn Enterprise | Chuẩn hóa UI/UX & Tối ưu trải nghiệm người dùng | **HOÀN THÀNH** ✅ | Loại bỏ nhãn kỹ thuật LAN và IP nội bộ, nâng cấp 100% icon sang SVG vector sắc nét, tái cấu trúc Dashboard cân đối và chuẩn hóa bàn phím số gọi thoại đối xứng tâm. |
 
 ---
 
@@ -503,6 +505,48 @@ VITE_APP_MODE=wazo_lan
   1. Thẻ Favicon tab trình duyệt trong `index.html`.
   2. Logo thương hiệu trên thanh Top Header (`AppHeader.vue`).
   3. Logo trang đăng nhập (`LoginView.vue`).
+
+---
+
+### BƯỚC 9: NÂNG CẤP TOÀN DIỆN MÀN HÌNH ĐĂNG NHẬP & CHẾ ĐỘ THỬ NGHIỆM OFFLINE
+* **Trạng thái:** `HOÀN THÀNH ✅` (Commit `50a39c5`)
+* **Mục tiêu:** Hiện đại hóa giao diện màn hình Đăng nhập theo phong cách Enterprise Clean hiện đại, loại bỏ các ký tự emoji thô, và tích hợp chế độ thử nghiệm nội bộ phục vụ kiểm thử không phụ thuộc máy chủ.
+
+#### Các việc đã làm:
+1. **Thiết kế lại giao diện LoginView:**
+   - Đưa form vào Card nổi khối trung tâm bo góc mềm mại `16px` với hiệu ứng bóng đổ nhiều tầng (*multi-layer elevation shadow*) và ánh sáng ambient nền.
+   - Thay thế toàn bộ emoji bằng icon vector SVG chuẩn: Icon Người dùng, Ổ khóa, nút ẩn/hiện mật khẩu SVG mắt mở/đóng sắc nét.
+   - Hiệu ứng Focus Ring phát sáng xanh công nghệ khi tương tác với ô nhập liệu.
+   - Nút Đăng nhập dạng gradient `linear-gradient(135deg, #1d4ed8, #2563eb)` kèm hiệu ứng hover lift và spinner loading.
+   - Tối giản hóa giao diện: Loại bỏ các thuật ngữ kỹ thuật phức tạp, giữ giao diện gọn gàng, thân thiện.
+2. **Cơ chế Bắt lỗi đăng nhập chi tiết:**
+   - Phân loại rõ ràng 3 kịch bản lỗi: Sai tài khoản/mật khẩu (HTTP 401), Hết thời gian chờ kết nối (Timeout), Lỗi mạng hoặc chứng chỉ SSL máy chủ tổng đài.
+   - Hiển thị Alert Banner cảnh báo lỗi màu đỏ pastel mềm mại kèm icon SVG.
+3. **Tích hợp "Chế độ thử nghiệm Offline":**
+   - Bổ sung nút bấm chuẩn hóa: `Chạy chế độ thử nghiệm Offline` đặt dưới dải phân cách.
+   - Khi kích hoạt, hệ thống thiết lập cờ phiên `smartcall_offline_mode: 'true'`, cấp máy lẻ mẫu `1001` và điều hướng an toàn vào Dashboard.
+   - Cập nhật Navigation Guard trong `src/router/index.js` và xử lý dọn dẹp cờ phiên khi Đăng xuất trong `App.vue` & `wazo.js`.
+
+---
+
+### BƯỚC 10: TINH CHỈNH GIAO DIỆN NỘI BỘ (HEADER, DASHBOARD & BÀN PHÍM GỌI THOẠI)
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:** Chuẩn hóa giao diện người dùng nội bộ, loại bỏ các thông số kỹ thuật/IP lộ thừa, thay thế toàn bộ ký tự emoji Windows thô bằng bộ icon vector SVG sắc nét, đồng bộ tỷ lệ và bố cục đối xứng cho bàn phím gọi thoại.
+
+#### Các việc đã làm:
+1. **Thanh tiêu đề trên cùng (AppHeader):**
+   - Loại bỏ hoàn toàn nhãn kỹ thuật `Wazo 26.10 LAN`, giữ header tinh gọn và sang trọng.
+   - Thay thế emoji kính lúp cũ bằng icon SVG Search sắc nét.
+2. **Màn hình Tổng quan (DashboardView):**
+   - Xóa bỏ khối bảng `Trạng thái dịch vụ Wazo (Host: 107.126.11.126)` và danh sách microservices mock không cần thiết với người dùng cuối.
+   - Ẩn địa chỉ IP tĩnh ở dòng chào mừng và thay thẻ máy chủ thành thẻ `Danh bạ nội bộ` (*24 nhân viên • Sẵn sàng kết nối*).
+   - Tái cấu trúc Cột Phải: Bổ sung widget `⭐ Liên hệ thường dùng` kèm avatar và nút gọi nhanh 1-chạm, thay thế toàn bộ emoji điện thoại bằng icon vector SVG chuẩn kích thước `14px - 15px`.
+3. **Màn hình Gọi điện & Bàn phím số (CallsView):**
+   - Chuẩn hóa tiêu đề & phụ đề thân thiện: *"Bàn phím & Gọi thoại - Nhập số máy lẻ nội bộ để kết nối cuộc gọi trực tiếp"*.
+   - Khắc phục lỗi tương phản màu (loại bỏ emoji Windows đỏ trên nền xanh), thiết kế nút Gọi tròn gradient xanh ngọc `58px` với icon SVG ống nghe trắng `22px`.
+   - Chuẩn hóa nút Xóa lùi Backspace đồng đường kính `58px` và icon `22px` (tỷ lệ 1:1 cân đối hoàn hảo).
+   - Bố trí 2 nút Gọi và Xóa gom chụm vào giữa tâm bàn phím, đối xứng đều qua trục phím số `0`.
+   - Nâng cấp toàn bộ hàng nút điều khiển cuộc gọi (Micro, Hold, Loa ngoài, Cúp máy) sang bộ icon SVG vector sắc nét, bổ sung hiệu ứng sóng âm/nhịp thở (*pulse ring animation*) cho avatar khi đang đàm thoại.
 
 ---
 
