@@ -28,6 +28,7 @@
 | **12** | Tinh gọn Trạng thái Kết nối Tổng đài (Presence) & Trải nghiệm Khởi động không gây gián đoạn | Tối ưu hóa UI/UX trạng thái hệ thống | **HOÀN THÀNH** ✅ | Thay thế nhãn cảnh báo đỏ thành chấm trạng thái dịu nhẹ (Trực tuyến / Ngoại tuyến); Khử bỏ hoàn toàn toast lỗi khi khởi động; Chuẩn hóa thông điệp kết nối cuộc gọi. |
 | **13** | Tự động hóa Lịch sử cuộc gọi Realtime (CDR) & Lưu trữ bền vững | Yêu cầu lưu trữ và cập nhật lịch sử cuộc gọi | **HOÀN THÀNH** ✅ | Tự động ghi nhận cuộc gọi đi/đến (Success/Missed/Declined) với thời lượng thực tế lên Top 1; Lưu bền vững vào localStorage; Đồng bộ tức thì qua sự kiện smartcall-cdr-updated. |
 | **14** | Tối ưu hóa cấu hình Vite, Rà soát dev_guide.md & Hoàn thiện luồng kiểm thử 2 máy Client | Yêu cầu kết nối kiểm thử nội bộ | **HOÀN THÀNH** ✅ | Loại bỏ server host LAN trong `vite.config.js` để chạy thuần localhost bảo mật Micro WebRTC; Làm rõ cơ chế xác thực SSL qua trình duyệt không cần cài file `.crt`; Xây dựng kịch bản kiểm thử đàm thoại 2 máy lẻ Alice (1001) - Bob (1002). |
+| **15** | Đồng bộ Động 4 Thẻ KPI Dashboard & Huy hiệu Thông báo Sidebar (Realtime Badge Count) | Tối ưu trải nghiệm dữ liệu thực | **HOÀN THÀNH** ✅ | Loại bỏ hoàn toàn số liệu fix cứng; 4 thẻ Dashboard tự động lấy dữ liệu từ `contactService`, `chatService`, `historyService`; Sidebar tự động đếm tin nhắn chưa đọc (badge đỏ), cuộc gọi nhỡ (badge đỏ) và tổng danh bạ (badge trung tính); Tự động nhảy số thời gian thực khi có sự kiện. |
 
 ---
 
@@ -649,6 +650,31 @@ VITE_APP_MODE=wazo_lan
    - **Trạng thái Đang đổ chuông (`ringing`):** Khi bấm gọi, chuông chờ `tút... tút...` phát liên tục theo chu kỳ chuẩn ITU-T, avatar chuyển sang hiệu ứng sáng vàng cam, thời lượng hiển thị `📞 Đang đổ chuông...` và đồng hồ **KHÔNG ĐẾM GIỜ**.
    - **Trạng thái Đang đàm thoại (`connected`):** Khi đối phương nhấc máy (nhận sự kiện `wazo-accepted` từ Wazo hoặc sau 2.5s mô phỏng khi test một mình), chuông tút dừng lại, avatar chuyển sang xanh ngọc, và đồng hồ đếm thời gian thực tế mới bắt đầu chạy (`00:01, 00:02...`).
    - **Bảo toàn cả 2 cơ chế:** Vừa giữ nguyên tính năng kiểm thử độc lập một mình (mô phỏng đổ chuông 2.5s rồi tự nhấc máy), vừa tuân thủ chuẩn mực viễn thông khi kết nối thật với máy chủ Wazo.
+
+---
+
+### BƯỚC 15: ĐỒNG BỘ ĐỘNG TOÀN DIỆN 4 THẺ KPI DASHBOARD VÀ HUY HIỆU THÔNG BÁO SIDEBAR (BADGE COUNT)
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:** 
+  1. Loại bỏ triệt để các số liệu fix cứng trên 4 thẻ KPI của màn hình Tổng quan (`DashboardView.vue`), chuyển thành số liệu động tính toán theo thời gian thực từ các tầng dịch vụ.
+  2. Nâng cấp các huy hiệu (badge count) trên thanh điều hướng bên trái (`AppSidebar.vue`), phân tách rõ ràng giữa thông báo khẩn cấp (màu đỏ) và số lượng danh mục (màu trung tính).
+  3. Tích hợp cơ chế lắng nghe sự kiện toàn cục để các thẻ thống kê và huy hiệu tự động cập nhật ngay lập tức khi phát sinh sự kiện mà không cần tải lại trang.
+
+#### Các việc đã làm:
+1. **Động hóa 4 Thẻ KPI trên Dashboard (`src/views/DashboardView.vue`):**
+   - **Thẻ 1 (Máy lẻ WebRTC):** Hiển thị đúng số máy lẻ người dùng đang đăng nhập (`userExtension`) và trạng thái kết nối WebRTC thực tế.
+   - **Thẻ 2 (Danh bạ nội bộ):** Gọi `contactService.getContacts()`, tự động đếm tổng số liên hệ (`totalContactsCount`) và số lượng nhân sự đang trực tuyến (`onlineContactsCount`).
+   - **Thẻ 3 (Tin nhắn phòng chat):** Gọi `chatService.getRooms()`, tự động cộng dồn tổng số tin nhắn chưa đọc (`totalUnreadMessages`) và đếm số phòng chat đang hoạt động (`activeRoomsCount`).
+   - **Thẻ 4 (Cuộc gọi hôm nay):** Gọi `historyService.getHistory()`, bóc tách chính xác tổng số cuộc gọi (`totalCallsCount`), phân loại rạch ròi: số cuộc gọi đến, số cuộc gọi đi và số cuộc gọi nhỡ (`inboundCallsCount`, `outboundCallsCount`, `missedCallsCount`).
+   - **Đồng bộ 2 Widget con:** Danh sách phím tắt liên hệ thường gọi (`quickContacts`) và 3 cuộc gọi gần nhất (`recentCalls`) tự động map từ dữ liệu danh bạ và nhật ký CDR thực tế.
+2. **Nâng cấp Hệ thống Huy hiệu Thông báo Sidebar (`src/components/layout/AppSidebar.vue`):**
+   - **Tab Tin nhắn (`💬 Tin nhắn`):** Loại bỏ số fix cứng `3`. Tự động đếm tổng tin nhắn chưa đọc từ `chatService`. Nếu `unreadMessagesCount === 0`, badge đỏ tự động ẩn hoàn toàn. Khi có tin mới, hiển thị badge đỏ (`badge-danger`) nhấp nháy thu hút sự chú ý.
+   - **Tab Danh bạ (`📇 Danh bạ`):** Loại bỏ số fix cứng đỏ `12`. Chuyển sang badge trung tính trang nhã (`badge-neutral` nền slate `#334155`), hiển thị chính xác tổng số liên hệ nội bộ.
+   - **Tab Lịch sử cuộc gọi (`🕒 Lịch sử cuộc gọi`):** Bổ sung badge đỏ cảnh báo khi có cuộc gọi nhỡ (`missedCallsCount > 0`), tự động ẩn khi không có cuộc gọi nhỡ.
+3. **Cơ chế Đồng bộ Sự kiện Thời gian thực (Realtime Event Bus):**
+   - Bổ sung phát sự kiện `smartcall-rooms-updated` trong `chatService.saveRooms()`.
+   - Bổ sung phát sự kiện `smartcall-contacts-updated` trong `contactService.deleteContact()`.
+   - Cả `DashboardView.vue` và `AppSidebar.vue` đều đăng ký lắng nghe 3 sự kiện: `smartcall-rooms-updated`, `smartcall-contacts-updated`, `smartcall-cdr-updated` để tự động làm mới số liệu tức thì.
 
 ---
 

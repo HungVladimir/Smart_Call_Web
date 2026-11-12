@@ -35,7 +35,9 @@
         <div class="stat-info">
           <h4>Máy lẻ WebRTC</h4>
           <p class="stat-number">{{ userExtension }}</p>
-          <span class="stat-badge badge-green">● Sẵn sàng kết nối</span>
+          <span class="stat-badge" :class="isPhoneConnected ? 'badge-green' : 'badge-amber'">
+            {{ isPhoneConnected ? '● Sẵn sàng kết nối' : '⚪ Đang sẵn sàng' }}
+          </span>
         </div>
       </div>
 
@@ -44,8 +46,8 @@
         <div class="stat-icon icon-green">👥</div>
         <div class="stat-info">
           <h4>Danh bạ nội bộ</h4>
-          <p class="stat-number">24 <span class="unit">nhân viên</span></p>
-          <span class="stat-badge badge-green">● Trực tuyến</span>
+          <p class="stat-number">{{ totalContactsCount }} <span class="unit">nhân viên</span></p>
+          <span class="stat-badge badge-green">● {{ onlineContactsCount }} trực tuyến</span>
         </div>
       </div>
 
@@ -54,8 +56,8 @@
         <div class="stat-icon icon-purple">💬</div>
         <div class="stat-info">
           <h4>Tin nhắn phòng chat</h4>
-          <p class="stat-number">5 <span class="unit">tin mới</span></p>
-          <span class="stat-badge badge-purple">3 phòng hoạt động</span>
+          <p class="stat-number">{{ totalUnreadMessages }} <span class="unit">tin mới</span></p>
+          <span class="stat-badge badge-purple">{{ activeRoomsCount }} phòng hoạt động</span>
         </div>
       </div>
 
@@ -64,8 +66,8 @@
         <div class="stat-icon icon-amber">🕒</div>
         <div class="stat-info">
           <h4>Cuộc gọi hôm nay</h4>
-          <p class="stat-number">7 <span class="unit">cuộc</span></p>
-          <span class="stat-badge badge-amber">4 đến • 3 đi • 1 nhỡ</span>
+          <p class="stat-number">{{ totalCallsCount }} <span class="unit">cuộc</span></p>
+          <span class="stat-badge badge-amber">{{ inboundCallsCount }} đến • {{ outboundCallsCount }} đi • {{ missedCallsCount }} nhỡ</span>
         </div>
       </div>
     </div>
@@ -224,14 +226,28 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { contactService } from '@/services/contactService'
+import { chatService } from '@/services/chatService'
+import { historyService } from '@/services/historyService'
 
 const router = useRouter()
 
 const userName = ref(localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const userExtension = ref(localStorage.getItem('smartcall_extension') || '1001')
 const quickDialNumber = ref('')
+const isPhoneConnected = ref(true)
+
+// Các số liệu thống kê động cho 4 thẻ KPI
+const totalContactsCount = ref(0)
+const onlineContactsCount = ref(0)
+const totalUnreadMessages = ref(0)
+const activeRoomsCount = ref(0)
+const totalCallsCount = ref(0)
+const inboundCallsCount = ref(0)
+const outboundCallsCount = ref(0)
+const missedCallsCount = ref(0)
 
 const userInitials = computed(() => {
   return userName.value
@@ -242,21 +258,95 @@ const userInitials = computed(() => {
     .toUpperCase()
 })
 
-// Danh bạ gọi nhanh
-const quickContacts = [
+// Danh bạ gọi nhanh (động theo danh bạ thực tế)
+const quickContacts = ref([
   { name: 'Nguyễn Văn An', ext: '1002' },
   { name: 'Trần Văn Bình', ext: '1003' },
   { name: 'Ngô Tiến Việt', ext: '1005' },
   { name: 'Lương Đức Anh', ext: '1006' },
   { name: 'Nguyễn Hữu Hiếu', ext: '1007' },
-]
+])
 
-// Cuộc gọi gần đây
-const recentCalls = [
-  { id: 1, name: 'Nguyễn Văn An', ext: '1002', direction: 'inbound', time: '15:39', duration: '00:09' },
-  { id: 2, name: 'Nguyễn Hữu Hiếu', ext: '1007', direction: 'inbound', time: '15:00', duration: '00:24' },
-  { id: 3, name: 'Trần Văn Bình', ext: '1003', direction: 'outbound', time: '13:28', duration: '03:02' },
-]
+// Cuộc gọi gần đây (động theo lịch sử CDR)
+const recentCalls = ref([])
+
+// Tải toàn bộ dữ liệu thống kê động từ các service
+const loadDashboardData = async () => {
+  // 1. Cập nhật thông tin User hiện tại
+  userName.value = localStorage.getItem('smartcall_username') || 'Quản trị viên'
+  userExtension.value = localStorage.getItem('smartcall_extension') || '1001'
+
+  // 2. Tải thống kê Danh bạ nội bộ
+  try {
+    const contacts = await contactService.getContacts()
+    if (Array.isArray(contacts)) {
+      totalContactsCount.value = contacts.length
+      onlineContactsCount.value =
+        contacts.filter((c) => c.status === 'online' || c.status === 'available').length ||
+        contacts.length
+
+      // Cập nhật phím tắt danh bạ thường gọi
+      const mappedQuick = contacts.slice(0, 5).map((c) => ({
+        name: c.name,
+        ext: String(c.number || c.extension || '1000'),
+      }))
+      if (mappedQuick.length > 0) {
+        quickContacts.value = mappedQuick
+      }
+    }
+  } catch (e) {
+    console.warn('Lỗi tải danh bạ cho Dashboard:', e)
+  }
+
+  // 3. Tải thống kê Tin nhắn & Phòng chat
+  try {
+    const rooms = await chatService.getRooms()
+    if (Array.isArray(rooms)) {
+      activeRoomsCount.value = rooms.length
+      totalUnreadMessages.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
+    }
+  } catch (e) {
+    console.warn('Lỗi tải phòng chat cho Dashboard:', e)
+  }
+
+  // 4. Tải thống kê Lịch sử cuộc gọi (CDR)
+  try {
+    const history = await historyService.getHistory()
+    if (Array.isArray(history)) {
+      totalCallsCount.value = history.length
+      inboundCallsCount.value = history.filter(
+        (h) => h.direction === 'inbound' || h.direction === 'incoming',
+      ).length
+      outboundCallsCount.value = history.filter(
+        (h) => h.direction === 'outbound' || h.direction === 'outgoing',
+      ).length
+      missedCallsCount.value = history.filter(
+        (h) => h.status === 'missed' || h.status === 'declined' || !h.answered,
+      ).length
+
+      // Cập nhật danh sách 3 cuộc gọi gần nhất
+      recentCalls.value = history.slice(0, 3).map((item, idx) => {
+        const timePart = item.date ? item.date.split(' ')[1]?.slice(0, 5) : 'Vừa xong'
+        const s = parseInt(item.duration, 10) || 0
+        const m = Math.floor(s / 60)
+        const rem = s % 60
+        const durStr = `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
+
+        return {
+          id: item.id || idx,
+          name: item.name || `Máy lẻ ${item.extension}`,
+          ext: item.extension || '1000',
+          direction:
+            item.direction === 'inbound' || item.direction === 'incoming' ? 'inbound' : 'outbound',
+          time: timePart || '12:00',
+          duration: durStr,
+        }
+      })
+    }
+  } catch (e) {
+    console.warn('Lỗi tải lịch sử CDR cho Dashboard:', e)
+  }
+}
 
 const navigateTo = (path) => {
   router.push(path)
@@ -296,6 +386,22 @@ const simulateCall = () => {
     }),
   )
 }
+
+onMounted(() => {
+  loadDashboardData()
+  window.addEventListener('smartcall-cdr-updated', loadDashboardData)
+  window.addEventListener('smartcall-rooms-updated', loadDashboardData)
+  window.addEventListener('smartcall-contacts-updated', loadDashboardData)
+  window.addEventListener('wazo-registered', () => {
+    isPhoneConnected.value = true
+  })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('smartcall-cdr-updated', loadDashboardData)
+  window.removeEventListener('smartcall-rooms-updated', loadDashboardData)
+  window.removeEventListener('smartcall-contacts-updated', loadDashboardData)
+})
 </script>
 
 <style scoped>

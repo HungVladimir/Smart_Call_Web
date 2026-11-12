@@ -160,6 +160,7 @@ class ChatService {
     try {
       this.sortRooms()
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.rooms))
+      window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
     } catch (e) {
       console.warn('Lỗi lưu cache phòng chat:', e)
     }

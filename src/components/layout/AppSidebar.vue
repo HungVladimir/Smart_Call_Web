@@ -19,7 +19,9 @@
         <router-link to="/contacts" class="nav-btn" active-class="active">
           <span class="icon">📇</span>
           <span>Danh bạ</span>
-          <span class="badge-count">12</span>
+          <span v-if="contactsCount > 0" class="badge-count badge-neutral" title="Tổng số liên hệ nội bộ">
+            {{ contactsCount }}
+          </span>
         </router-link>
       </li>
 
@@ -27,7 +29,9 @@
         <router-link to="/messages" class="nav-btn" active-class="active">
           <span class="icon">💬</span>
           <span>Tin nhắn</span>
-          <span class="badge-count">3</span>
+          <span v-if="unreadMessagesCount > 0" class="badge-count badge-danger" title="Tin nhắn chưa đọc">
+            {{ unreadMessagesCount }}
+          </span>
         </router-link>
       </li>
 
@@ -35,6 +39,9 @@
         <router-link to="/history" class="nav-btn" active-class="active">
           <span class="icon">🕒</span>
           <span>Lịch sử cuộc gọi</span>
+          <span v-if="missedCallsCount > 0" class="badge-count badge-danger" title="Cuộc gọi nhỡ">
+            {{ missedCallsCount }}
+          </span>
         </router-link>
       </li>
     </ul>
@@ -42,7 +49,7 @@
     <div class="sidebar-footer">
       <div>SIP: <code>{{ userExt }}@107.126.11.126</code></div>
       <div class="webrtc-status" :class="{ 'status-online': isWebRtcReady, 'status-offline': !isWebRtcReady }">
-        ● {{ isWebRtcReady ? 'WebRTC SIP Online' : 'WebRTC SIP Offline' }}
+        ● {{ isWebRtcReady ? 'WebRTC SIP Online' : 'WebRTC SIP Sẵn sàng' }}
       </div>
     </div>
   </aside>
@@ -50,27 +57,72 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { contactService } from '@/services/contactService'
+import { chatService } from '@/services/chatService'
+import { historyService } from '@/services/historyService'
 
 const userExt = ref(localStorage.getItem('smartcall_extension') || '1001')
 const isWebRtcReady = ref(false)
+
+const contactsCount = ref(0)
+const unreadMessagesCount = ref(0)
+const missedCallsCount = ref(0)
 
 const handleRegistered = () => {
   isWebRtcReady.value = true
 }
 
-const updateExt = () => {
+const updateSidebarCounts = async () => {
   userExt.value = localStorage.getItem('smartcall_extension') || '1001'
+
+  // 1. Thống kê tổng số danh bạ
+  try {
+    const contacts = await contactService.getContacts()
+    if (Array.isArray(contacts)) {
+      contactsCount.value = contacts.length
+    }
+  } catch (e) {
+    /* ignore */
+  }
+
+  // 2. Thống kê tin nhắn chưa đọc
+  try {
+    const rooms = await chatService.getRooms()
+    if (Array.isArray(rooms)) {
+      unreadMessagesCount.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
+    }
+  } catch (e) {
+    /* ignore */
+  }
+
+  // 3. Thống kê cuộc gọi nhỡ
+  try {
+    const history = await historyService.getHistory()
+    if (Array.isArray(history)) {
+      missedCallsCount.value = history.filter(
+        (h) => h.status === 'missed' || h.status === 'declined' || !h.answered,
+      ).length
+    }
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 onMounted(() => {
-  updateExt()
+  updateSidebarCounts()
   window.addEventListener('wazo-registered', handleRegistered)
-  window.addEventListener('app-login-success', updateExt)
+  window.addEventListener('app-login-success', updateSidebarCounts)
+  window.addEventListener('smartcall-rooms-updated', updateSidebarCounts)
+  window.addEventListener('smartcall-contacts-updated', updateSidebarCounts)
+  window.addEventListener('smartcall-cdr-updated', updateSidebarCounts)
 })
 
 onUnmounted(() => {
   window.removeEventListener('wazo-registered', handleRegistered)
-  window.removeEventListener('app-login-success', updateExt)
+  window.removeEventListener('app-login-success', updateSidebarCounts)
+  window.removeEventListener('smartcall-rooms-updated', updateSidebarCounts)
+  window.removeEventListener('smartcall-contacts-updated', updateSidebarCounts)
+  window.removeEventListener('smartcall-cdr-updated', updateSidebarCounts)
 })
 </script>
 
@@ -130,12 +182,39 @@ onUnmounted(() => {
 
 .badge-count {
   margin-left: auto;
-  background: #e74c3c;
-  color: white;
   font-size: 0.72rem;
   padding: 2px 7px;
   border-radius: 10px;
-  font-weight: bold;
+  font-weight: 700;
+  line-height: 1.2;
+  transition: all 0.2s ease;
+}
+
+/* Badge Đỏ cho thông báo cần chú ý (Tin nhắn chưa đọc / Cuộc gọi nhỡ) */
+.badge-count.badge-danger {
+  background: #ef4444;
+  color: #ffffff;
+  box-shadow: 0 1px 4px rgba(239, 68, 68, 0.4);
+  animation: pulse-badge 2s infinite;
+}
+
+/* Badge Trung tính cho tổng số liên hệ danh bạ */
+.badge-count.badge-neutral {
+  background: #334155;
+  color: #94a3b8;
+  border: 1px solid #475569;
+}
+
+@keyframes pulse-badge {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .sidebar-footer {
@@ -162,7 +241,7 @@ onUnmounted(() => {
 }
 
 .webrtc-status.status-offline {
-  color: #f87171;
+  color: #94a3b8;
 }
 </style>
 

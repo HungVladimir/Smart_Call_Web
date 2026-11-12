@@ -236,6 +236,7 @@ class ContactService {
     const idx = this.localContacts.findIndex((c) => c.id === id)
     if (idx !== -1) {
       this.localContacts.splice(idx, 1)
+      window.dispatchEvent(new CustomEvent('smartcall-contacts-updated'))
       return true
     }
     return false

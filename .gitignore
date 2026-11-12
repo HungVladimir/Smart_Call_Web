@@ -28,9 +28,9 @@ pnpm-debug.log*
 Thumbs.db
 
 # Biến môi trường cục bộ
-.env
-.env.local
-.env.*.local
+# .env
+# .env.local
+# .env.*.local
 
 # Bộ nhớ tạm (Cache & Temp)
 .temp/
