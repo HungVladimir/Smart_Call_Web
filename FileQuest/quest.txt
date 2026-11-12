@@ -21,3 +21,10 @@ Cuối cùng, rà soát lại toàn bộ prj, bỏ hết các từ app1,app2,app
 Nếu dài quá thì hãy viết hết vào md, và từ đó hãy phân tích từ từ , cố gắng đừng bỏ sót ý nào của tôi.
 
 ============
+Tuyệt vời, tôi chạy thử thì đã connect được với db wazo, khi tôi login acc alice vào thì nó nhận diện tên là alice luôn, và khi ấn vào danh bạ thì nó đang hiện hết các list có trong wazo.
+Chỉ là các tính nắng call, nhắn tin, ... các thứ khi ấn vào dữ liệu của người thật thì vẫn không hiện thị gì, còn ấn vào các data sẵn có tự tạo thì vẫn call được, nhắn tin cũng thế,
+Và tôi đang thấy có 1 vấn đề, Hiện tại ở mục danh bạ, tôi get được full người, nhưng đang không get được name
+Nó hiện đang là name Ẩn danh , email : alice@wazo.lan - bộ phận khối kỹ thuật, số máy lẻ : chỉ có hình cái điện thoại ( có lẽ chưa get được số máy nên không thể nhắn tin cũng gọi điện)
+Tôi vừa phát hiện ra nếu muốn chuyển về data fake và data thật thì chỉ cần nhập đúng tk mk alice thì sẽ dùng data thật, còn nhập bừa thì do islogin alway = true nên sẽ ra data fake.
+có phải do cơ chế của gettoken không, nết có token thì nó hiện thị db thật đúng không, còn nếu không có thì nó dùng fake, hay còn cơ chế nào khác không?
+Và tôi đã lấy được ảnh png icon của app bên android, hay thay icon giúp tôi, còn icon favicon trên web nữa, có cách nào thay thành icon của tôi gửi .png không? hay phải convert sang favicon?

@@ -3,22 +3,7 @@
     <!-- Header giống hình: Nền tối, Logo bên trái -->
     <header class="top-bar">
       <div class="logo-area">
-        <svg
-          class="icon-logo"
-          xmlns="http://www.w3.org/2000/svg"
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="#1e88e5"
-          stroke="white"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path
-            d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
-          ></path>
-        </svg>
+        <img src="/app-icon.webp" alt="SmartCall" class="icon-logo-img" />
         <span class="app-name">SmartCall</span>
       </div>
     </header>
@@ -28,22 +13,7 @@
       <div class="center-wrapper">
         <!-- Logo lớn ở giữa -->
         <div class="main-logo-container">
-          <svg
-            class="big-icon"
-            xmlns="http://www.w3.org/2000/svg"
-            width="64"
-            height="64"
-            viewBox="0 0 24 24"
-            fill="#1e88e5"
-            stroke="white"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path
-              d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
-            ></path>
-          </svg>
+          <img src="/app-icon.webp" alt="SmartCall" class="big-icon-img" />
         </div>
 
         <!-- Tiêu đề -->
@@ -120,16 +90,36 @@ const loading = ref(false)
 const handleLogin = async () => {
   loading.value = true
   const isAdmin = username.value.toLowerCase().includes('admin')
+  let realDisplayName = ''
+  let realExtension = ''
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout server Wazo LAN')), 2000),
+      setTimeout(() => reject(new Error('Timeout server Wazo LAN')), 3000),
     )
     await Promise.race([wazoService.login(username.value, password.value), timeoutPromise])
+
+    // Khi đăng nhập Wazo thành công -> Lấy thông tin user hiện tại (users/me) theo dev_guide mục 4.1
+    const token = wazoService.getToken()
+    if (token) {
+      const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
+      const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
+        headers: { 'X-Auth-Token': token },
+      })
+      if (meRes.ok) {
+        const meData = await meRes.json()
+        const fullName = [meData.firstname, meData.lastname].filter(Boolean).join(' ').trim()
+        realDisplayName = fullName || meData.username
+        realExtension = meData.lines?.[0]?.extensions?.[0]?.exten || ''
+      }
+    }
   } catch (err) {
     console.log('Chưa kết nối được server Wazo LAN, chuyển sang phiên Demo:', err.message)
   } finally {
-    localStorage.setItem('smartcall_username', username.value || (isAdmin ? 'Quản trị viên' : 'Nhân viên Kỹ thuật'))
-    localStorage.setItem('smartcall_extension', isAdmin ? '1001' : '1002')
+    const finalName = realDisplayName || username.value || (isAdmin ? 'Quản trị viên' : 'Nhân viên Kỹ thuật')
+    const finalExt = realExtension || (isAdmin ? '1001' : '1002')
+
+    localStorage.setItem('smartcall_username', finalName)
+    localStorage.setItem('smartcall_extension', finalExt)
     localStorage.setItem('smartcall_role', isAdmin ? 'admin' : 'user')
     localStorage.setItem('smartcall_is_admin', isAdmin ? 'true' : 'false')
     localStorage.setItem('smartcall_logged_in', 'true')
@@ -194,6 +184,21 @@ const handleQuickLogin = (role) => {
   font-size: 1.2rem;
   font-weight: bold;
   color: #1e88e5; /* Chữ xanh dương */
+}
+
+.icon-logo-img {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.big-icon-img {
+  width: 76px;
+  height: 76px;
+  border-radius: 18px;
+  object-fit: contain;
+  box-shadow: 0 4px 14px rgba(30, 136, 229, 0.25);
 }
 
 .icon-logo {

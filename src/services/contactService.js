@@ -134,19 +134,93 @@ class ContactService {
       if (!contactsRes.ok) throw new Error('Cannot fetch contacts')
       const contactsData = await contactsRes.json()
 
-      return contactsData.items.map((item, index) => {
-        const id = item.uuid || `wazo-${index}`
-        return {
-          id,
-          name: item.name || 'Ẩn danh',
-          email: item.email || '',
-          dept: item.department || 'Khối Kỹ thuật',
-          number: item.number || item.phone_number || '',
-          status: 'online',
-          unreadCount: 0,
-          isFavorite: favorites.includes(id),
-        }
-      })
+      // Xử lý dữ liệu trả về từ Wazo Dird:
+      // Trường hợp 1: Dạng danh sách đối tượng (items)
+      if (Array.isArray(contactsData.items) && contactsData.items.length > 0) {
+        return contactsData.items.map((item, index) => {
+          const id = item.uuid || item.id || `wazo-${index}`
+
+          // 1. Tên hiển thị: Wazo Dird trả firstname và lastname riêng biệt
+          const fn = (item.firstname || item.firstName || '').trim()
+          const ln = (item.lastname || item.lastName || '').trim()
+          const fullName = [fn, ln].filter(Boolean).join(' ').trim()
+
+          let name = item.name || fullName || item.display_name || item.displayName || item.username
+          if (!name && item.email) {
+            const userPrefix = item.email.split('@')[0]
+            name = userPrefix.charAt(0).toUpperCase() + userPrefix.slice(1)
+          }
+          if (!name) name = 'Ẩn danh'
+
+          // 2. Số máy lẻ: Wazo Dird lưu máy lẻ trong trường 'exten' (hoặc extension, number, mobile_phone_number)
+          let number =
+            item.exten ||
+            item.extension ||
+            item.number ||
+            item.phone_number ||
+            item.mobile_phone_number ||
+            ''
+
+          // Fallback nếu số nằm trong mảng numbers hoặc lines
+          if (!number && Array.isArray(item.numbers) && item.numbers.length > 0) {
+            const first = item.numbers[0]
+            number = typeof first === 'object' ? (first.number || first.exten || '') : first
+          }
+          if (!number && Array.isArray(item.lines) && item.lines.length > 0) {
+            number = item.lines[0]?.extensions?.[0]?.exten || ''
+          }
+
+          // 3. Email & Khối phòng ban
+          const email = item.email || (Array.isArray(item.emails) && item.emails[0]?.email) || ''
+          const dept = item.department || item.userfield || item.description || 'Khối Kỹ thuật'
+
+          return {
+            id,
+            name,
+            email,
+            dept,
+            number: String(number || ''),
+            status: 'online',
+            unreadCount: 0,
+            isFavorite: favorites.includes(id),
+          }
+        })
+      }
+
+      // Trường hợp 2: Dạng bảng cột (column_types & results)
+      if (Array.isArray(contactsData.results) && Array.isArray(contactsData.column_types)) {
+        const cols = contactsData.column_types
+        return contactsData.results.map((r, index) => {
+          const getVal = (colName) => {
+            const idx = cols.indexOf(colName)
+            return idx !== -1 ? r.column_values[idx] : null
+          }
+          const id = r.relations?.user_uuid || `wazo-${index}`
+          const fn = (getVal('firstname') || '').trim()
+          const ln = (getVal('lastname') || '').trim()
+          const fullName = [fn, ln].filter(Boolean).join(' ').trim()
+          const name = getVal('name') || fullName || getVal('display_name') || 'Ẩn danh'
+          const number = getVal('number') || getVal('callable') || getVal('exten') || ''
+          const email = getVal('email') || ''
+          const dept = getVal('department') || getVal('userfield') || 'Khối Kỹ thuật'
+
+          return {
+            id,
+            name,
+            email,
+            dept,
+            number: String(number || ''),
+            status: 'online',
+            unreadCount: 0,
+            isFavorite: favorites.includes(id),
+          }
+        })
+      }
+
+      return this.localContacts.map((c) => ({
+        ...c,
+        isFavorite: favorites.includes(c.id),
+      }))
     } catch (err) {
       return this.localContacts.map((c) => ({
         ...c,

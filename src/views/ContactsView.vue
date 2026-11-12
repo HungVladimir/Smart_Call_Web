@@ -104,7 +104,7 @@
 
             <!-- 3. Số máy lẻ -->
             <td>
-              <span class="ext-tag">📞 {{ contact.number }}</span>
+              <span class="ext-tag">📞 {{ contact.number || 'Chưa gán máy lẻ' }}</span>
             </td>
 
             <!-- 4. Trạng thái Online/Offline -->
@@ -283,7 +283,17 @@ const filteredContacts = computed(() => {
 
 // 1. Gọi thoại (Kiểm tra Offline cảnh báo Voicemail, chuyển sang CallsView)
 const handleCall = (contact) => {
-  if (!contact || !contact.number) return
+  if (!contact || !contact.number) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `⚠️ Liên hệ [${contact?.name || 'này'}] chưa có số máy lẻ để thực hiện cuộc gọi thoại!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
 
   // Nếu đối phương đang offline -> Hiển thị hộp thoại xác nhận Voicemail
   if (contact.status === 'offline') {
@@ -306,10 +316,11 @@ const handleCall = (contact) => {
 // 2. Nhắn tin (Chuyển sang MessagesView và mở thẳng hội thoại 1-1)
 const handleMessage = (contact) => {
   contact.unreadCount = 0
+  const ext = contact.number || (contact.email ? contact.email.split('@')[0] : contact.id)
   router.push({
     path: '/messages',
     query: {
-      ext: contact.number,
+      ext,
       name: contact.name,
     },
   })

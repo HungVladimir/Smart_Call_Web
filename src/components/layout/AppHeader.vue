@@ -2,9 +2,7 @@
   <header class="app-header">
     <div class="header-left">
       <div class="brand-logo" @click="goHome">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="#2196f3">
-          <path d="M20 15.5c-1.2 0-2.4-.2-3.6-.6-.3-.1-.7 0-1 .2l-2.2 2.2c-2.8-1.4-5.1-3.8-6.6-6.6l2.2-2.2c.3-.3.4-.7.2-1-.3-1.1-.5-2.3-.5-3.5 0-.6-.4-1-1-1H4c-.6 0-1 .4-1 1 0 9.4 7.6 17 17 17 .6 0 1-.4 1-1v-3.5c0-.6-.4-1-1-1z" />
-        </svg>
+        <img src="/app-icon.webp" alt="SmartCall" class="brand-icon-img" />
         <span>SmartCall</span>
       </div>
       <span class="badge-lan">Wazo 26.10 LAN</span>
@@ -273,6 +271,14 @@ const triggerSimulatedIncomingCall = () => {
   font-size: 1.25rem;
   color: #64b5f6;
   cursor: pointer;
+}
+
+.brand-icon-img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: contain;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .brand-logo svg {

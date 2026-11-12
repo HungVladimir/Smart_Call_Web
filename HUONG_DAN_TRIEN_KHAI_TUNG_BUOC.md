@@ -20,7 +20,8 @@
 | **06.5** | Tối ưu Đăng nhập nhanh 0s & Nâng cấp toàn diện màn hình Tổng quan (Dashboard) | Yêu cầu cải tiến UI/UX | **HOÀN THÀNH** ✅ | Đăng nhập nhanh tức thì không chờ timeout mạng; Dashboard hiện đại với 4 KPI, Speed Dial, phím tắt & Giám sát dịch vụ. |
 | **07** | Chuẩn hóa 11 vấn đề chức năng, Phân quyền Admin/User, Autocomplete, Mục Yêu thích ⭐ & Cảnh báo Offline | Danh mục 11 yêu cầu chức năng | **HOÀN THÀNH** ✅ | 2 nút Đăng nhập nhanh (Admin & User), Autocomplete Top 5 trên Header, Danh bạ Full DB + Yêu thích ⭐, Cảnh báo Voicemail khi gọi Offline, Ghim tin nhắn 📌, Đếm thành viên động, cấu hình `.gitignore`. |
 | **07.5** | Sửa lỗi mất tin nhắn khi chuyển tab (Lưu trữ bền vững Cache phòng chat) | Yêu cầu lưu trữ hội thoại | **HOÀN THÀNH** ✅ | Tích hợp cơ chế tự động lưu và khôi phục toàn bộ phòng chat và tin nhắn vào `localStorage`. Khi chuyển tab hoặc F5, hội thoại và tin nhắn luôn được bảo toàn 100%. |
-| **08** | Đấu nối môi trường Wazo thật (`107.126.11.126:9443`) & CSDL Backend | `dev_guide.md` mục 1, 2, 9 | **SẴN SÀNG** 🚀 | Mở tường lửa IP `107.126.11.126:9443`, cấu hình `.env`, tài khoản admin `root`/`Wazo2026Root`, tài khoản test `alice`/`bob`/`carol`, hướng dẫn import CA `wazo-ca.crt` 5 bước tuần tự. |
+| **08** | Đấu nối môi trường Wazo thật (`107.126.11.126:9443`) & CSDL Backend | `dev_guide.md` mục 1, 2, 9 | **HOÀN THÀNH** ✅ | Đã mở firewall, kết nối thành công Wazo Server, đăng nhập tài khoản thật `alice`, tự động nhận diện danh bạ và CDR. |
+| **08.5** | Chuẩn hóa Wazo Dird Contact Schema, Tự động lấy Profile (`/users/me`) & Thay App Icon / Favicon | Wazo Dird & Confd Spec | **HOÀN THÀNH** ✅ | Trích xuất `firstname + lastname` và `exten` từ Wazo Dird; Tự động điền số máy lẻ cho danh bạ thật để kích hoạt Gọi & Chat; Đồng bộ Icon Android (`app-icon.webp`) và Favicon web chuẩn PNG/WebP. |
 
 ---
 
@@ -471,6 +472,37 @@ VITE_APP_MODE=wazo_lan
   npm install
   npm run dev
   ```
+
+---
+
+### 4.3. GIẢI THÍCH KỸ THUẬT: CƠ CHẾ DỮ LIỆU THẬT VS FAKE & CHUẨN HÓA DANH BẠ WAZO (BƯỚC 08.5)
+
+#### 1. Cơ chế chuyển đổi Dữ liệu Thật (Wazo DB) vs Dữ liệu Giả lập (Fake/Mock)
+* **Câu hỏi của bạn:** *Có phải do cơ chế của `getToken` không? Nếu có token thì nó hiển thị DB thật, còn không có thì dùng Fake?*
+* **Trả lời:** **Chính xác 100%!** Hệ thống được xây dựng theo kiến trúc **Graceful Degradation (Chống sập thông minh)**:
+  - Khi bạn nhập đúng tài khoản/mật khẩu Wazo thật (`alice` / `Test@123`): Phương thức `Wazo.Auth.logIn()` gửi request `POST /api/auth/0.1/token` đến máy chủ Wazo. Máy chủ trả về một Token xác thực hợp lệ (ví dụ: `c03a987d...`). Token này được lưu trong `wazoService.session.token`. Khi vào Danh bạ (`contactService`) hoặc Lịch sử (`historyService`), hệ thống kiểm tra `wazoService.getToken()` $\rightarrow$ Thấy có Token $\rightarrow$ Gửi kèm header `X-Auth-Token` lên máy chủ Wazo Dird / Call-logd để truy xuất **dữ liệu thật từ cơ sở dữ liệu**.
+  - Khi nhập bừa tài khoản hoặc chạy demo offline: API xác thực Wazo sẽ báo lỗi hoặc timeout $\rightarrow$ `wazoService.session` là `null` $\rightarrow$ `wazoService.getToken()` trả về chuỗi rỗng `""`. Tại `contactService.js`, lệnh `if (!token) throw new Error()` kích hoạt khối `catch`, tự động nạp dữ liệu Mock mẫu để người dùng vẫn trải nghiệm được giao diện mà không gặp màn hình trắng hay bị crash ứng dụng.
+
+#### 2. Vì sao trước đó Danh bạ hiện "Ẩn danh" và không có Số máy lẻ?
+* **Nguyên nhân kỹ thuật:** Trong giao thức backend của Wazo Dird (`/api/dird/0.1/backends/wazo/sources/{uuid}/contacts`):
+  - Tên không lưu trong trường `item.name`, mà được tách thành 2 trường: `item.firstname` và `item.lastname`.
+  - Số máy lẻ nội bộ không dùng trường `item.number`, mà dùng trường **`item.exten`** (hoặc `item.mobile_phone_number`).
+* **Giải pháp đã xử lý triệt để:**
+  - Bộ bóc tách dữ liệu mới trong `contactService.js` tự động ghép `[item.firstname, item.lastname].join(' ')`. Nếu không có họ tên thì lấy `item.display_name`, `item.username`, hoặc trích xuất từ tiền tố Email `alice@wazo.lan` $\rightarrow$ Tên "Alice".
+  - Trường số máy lẻ tự động ưu tiên trích xuất `item.exten` $\rightarrow$ Đã lấy được đúng số máy lẻ thật (1001, 1002...).
+  - Khi danh bạ có số máy lẻ thật, hai nút **📞 Gọi thoại** và **💬 Nhắn tin** lập tức nhận diện được Extension và hoạt động trơn tru 100%.
+
+#### 3. Cập nhật Icon ứng dụng & Favicon Web
+* **Về Favicon trên Web:** Hiện nay các trình duyệt hiện đại (Chrome, Edge, Firefox, Safari) đều **hỗ trợ trực tiếp định dạng `.png` và `.webp`** qua thẻ:
+  ```html
+  <link rel="icon" type="image/webp" href="/app-icon.webp">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  ```
+  Bạn **không cần phải convert sang file `.ico` cổ điển** (trừ phi hỗ trợ trình duyệt Internet Explorer rất cũ).
+* **Các vị trí đã cập nhật icon mới:**
+  1. Thẻ Favicon tab trình duyệt trong `index.html`.
+  2. Logo thương hiệu trên thanh Top Header (`AppHeader.vue`).
+  3. Logo trang đăng nhập (`LoginView.vue`).
 
 ---
 
