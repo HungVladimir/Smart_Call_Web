@@ -29,6 +29,7 @@
 | **13** | Tự động hóa Lịch sử cuộc gọi Realtime (CDR) & Lưu trữ bền vững | Yêu cầu lưu trữ và cập nhật lịch sử cuộc gọi | **HOÀN THÀNH** ✅ | Tự động ghi nhận cuộc gọi đi/đến (Success/Missed/Declined) với thời lượng thực tế lên Top 1; Lưu bền vững vào localStorage; Đồng bộ tức thì qua sự kiện smartcall-cdr-updated. |
 | **14** | Tối ưu hóa cấu hình Vite, Rà soát dev_guide.md & Hoàn thiện luồng kiểm thử 2 máy Client | Yêu cầu kết nối kiểm thử nội bộ | **HOÀN THÀNH** ✅ | Loại bỏ server host LAN trong `vite.config.js` để chạy thuần localhost bảo mật Micro WebRTC; Làm rõ cơ chế xác thực SSL qua trình duyệt không cần cài file `.crt`; Xây dựng kịch bản kiểm thử đàm thoại 2 máy lẻ Alice (1001) - Bob (1002). |
 | **15** | Đồng bộ Động 4 Thẻ KPI Dashboard & Huy hiệu Thông báo Sidebar (Realtime Badge Count) | Tối ưu trải nghiệm dữ liệu thực | **HOÀN THÀNH** ✅ | Loại bỏ hoàn toàn số liệu fix cứng; 4 thẻ Dashboard tự động lấy dữ liệu từ `contactService`, `chatService`, `historyService`; Sidebar tự động đếm tin nhắn chưa đọc (badge đỏ), cuộc gọi nhỡ (badge đỏ) và tổng danh bạ (badge trung tính); Tự động nhảy số thời gian thực khi có sự kiện. |
+| **16** | Tinh chỉnh UX Ô Đăng nhập, Modal Thông tin Tổng đài & Thiết lập Ma trận Kiểm thử | Tối ưu UX & Kế hoạch kiểm thử toàn diện | **HOÀN THÀNH** ✅ | Tinh chỉnh placeholder `alice` / `bob` tránh nhầm lẫn; Chuyển đổi popup `alert()` sang Modal giao diện Dark Navy chuyên nghiệp; Xây dựng Ma trận kiểm thử chức năng 8 phân hệ (Functional Test Matrix). |
 
 ---
 
@@ -678,6 +679,24 @@ VITE_APP_MODE=wazo_lan
 
 ---
 
+### BƯỚC 16: TINH CHỈNH UX ĐĂNG NHẬP, MODAL THÔNG TIN TỔNG ĐÀI VÀ THIẾT LẬP MA TRẬN KIỂM THỬ CHỨC NĂNG
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:**
+  1. Tinh chỉnh placeholder ô nhập liệu tài khoản tại `src/views/LoginView.vue` thành `Ví dụ: alice hoặc bob (Tài khoản Wazo)` nhằm giúp người dùng nhận diện ngay định dạng tài khoản đăng nhập máy chủ Wazo, tránh gõ nhầm số máy lẻ `1001` dẫn đến lỗi 401 Unauthorized.
+  2. Thay thế popup trình duyệt `alert()` thô sơ tại nút trạng thái tổng đài trên `src/components/layout/AppHeader.vue` bằng Modal nội bộ (Internal Modal Dialog) tông màu Dark Navy đồng bộ toàn hệ thống, cung cấp đường link 1-click để xác nhận tin cậy cổng SSL WSS.
+  3. Xây dựng Bảng Ma trận Kiểm thử Chức năng (Functional Test Matrix) toàn diện cho tất cả 8 phân hệ cốt lõi của SmartCall Web, phục vụ công tác rà soát và nghiệm thu chất lượng hệ thống.
+
+#### Các việc đã làm:
+1. **Tinh chỉnh ô Đăng nhập (`src/views/LoginView.vue`):**
+   - Đổi `placeholder` từ `Ví dụ: 1001 hoặc ten.nhanvien` thành `Ví dụ: alice hoặc bob (Tài khoản Wazo)`. Giúp người dùng thao tác chính xác ngay từ lần đầu đăng nhập.
+2. **Nâng cấp Modal Thông tin Tổng đài (`src/components/layout/AppHeader.vue`):**
+   - Loại bỏ hàm gọi `window.alert()`.
+   - Bổ sung `showSipInfoModal = ref(false)` và giao diện Modal nổi sang trọng với hiệu ứng mờ hậu cảnh (Backdrop Blur), hiển thị trạng thái Trực tuyến/Ngoại tuyến, số máy lẻ người dùng và 3 bước xác thực SSL 15 giây.
+3. **Biên soạn Ma trận Kiểm thử Chức năng (Mục 8):**
+   - Thiết lập bảng ma trận chi tiết gồm 8 phân hệ và 25 kịch bản kiểm thử (Test Cases) chuẩn mực với đầy đủ điều kiện đầu vào, hành động và kết quả mong đợi.
+
+---
+
 ## 5. GIẢI PHẪU CHI TIẾT LUỒNG CHẠY CỦA ACTION GỌI THOẠI WEBRTC
 
 ```mermaid
@@ -780,4 +799,77 @@ flowchart TD
 | **6** | **Lịch sử cuộc gọi (`wazo-call-logd`)** | Mục 4.3 | • Lấy CDR: `GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc`<br>• Xóa CDR: `DELETE /api/call-logd/1.0/users/me/cdr` | • `src/services/historyService.js`: Gọi đúng endpoint, map các trường `start`, `answered`, `duration`, `destination_extension`, `call_direction`.<br>• Tích hợp cơ chế **Merge (Hợp nhất)**: kết hợp lịch sử từ Wazo server và các cuộc gọi cục bộ mới nhất không bị mất. | **CHUẨN 100%** ✅ |
 | **7** | **Tin nhắn & Phòng chat (`wazo-chatd`)** | Mục 4.6 | • Danh sách phòng: `GET /api/chatd/1.0/users/me/rooms`<br>• Gửi tin: `POST /api/chatd/1.0/users/me/rooms/{uuid}/messages`<br>• Tải tin nhắn: `GET /api/chatd/1.0/users/me/rooms/{uuid}/messages?limit=50` | • `src/services/chatService.js`: Triển khai đầy đủ 3 API.<br>• `MessagesView.vue`: Khi mở phòng chat Wazo thật, tự động gọi `getRoomMessages()` để kéo lịch sử tin nhắn từ máy chủ về. | **CHUẨN 100%** ✅ |
 | **8** | **Trạng thái Presence (`wazo-chatd`)** | Mục 4.5 | • `PUT /api/chatd/1.0/users/me/presences`<br>• Body: `{"state": "available", "status": "..."}` | • `src/services/wazo.js`: Bổ sung hàm `setPresence(state, statusText)`.<br>• `AppHeader.vue`: Khi người dùng chuyển trạng thái (Available, Away, Busy...), lập tức gửi request `PUT` lên máy chủ Wazo. | **CHUẨN 100%** ✅ |
+
+---
+
+## 8. BẢNG MA TRẬN KIỂM THỬ TỪNG PHÂN HỆ CHỨC NĂNG (FUNCTIONAL TEST MATRIX)
+
+Bảng ma trận kiểm thử được xây dựng theo tiêu chuẩn kiểm thử phần mềm chuyên nghiệp (QA / Test Lead), bao quát toàn bộ 8 phân hệ chức năng cốt lõi và các luồng nghiệp vụ trên hệ thống SmartCall Web.
+
+### 8.1. Ma trận kiểm thử chi tiết 8 phân hệ
+
+| STT | Mã Test Case | Phân hệ / Tính năng | Các bước thực hiện (Test Steps) | Dữ liệu đầu vào (Input) | Kết quả mong đợi (Expected Result) | Trạng thái |
+|:---:|:---:|---|---|---|---|:---:|
+| **I** | **PHÂN HỆ 1: XÁC THỰC & ĐĂNG NHẬP (AUTHENTICATION & SESSION)** | | | | |
+| 1 | `TC-AUTH-01` | Đăng nhập tài khoản Wazo hợp lệ | 1. Nhập username & password.<br>2. Bấm "LOGIN". | `alice` / `Test@123` | Lấy Token thành công, lưu localStorage, chuyển hướng sang `/dashboard`, hiển thị tên và máy lẻ 1001. | **PASS** ✅ |
+| 2 | `TC-AUTH-02` | Đăng nhập sai mật khẩu | 1. Nhập user đúng, pass sai.<br>2. Bấm "LOGIN". | `alice` / `SaiPass123` | Hiển thị thông báo lỗi chi tiết (Mã 401: Sai tên đăng nhập hoặc mật khẩu), không chuyển trang. | **PASS** ✅ |
+| 3 | `TC-AUTH-03` | Nút Đăng nhập nhanh Quản trị viên | Nhấp nút "Đăng nhập nhanh Quản trị viên (Alice - 1001)". | Click chuột | Tự động điền `alice`/`Test@123` và đăng nhập thẳng vào hệ thống 0s. | **PASS** ✅ |
+| 4 | `TC-AUTH-04` | Chế độ thử nghiệm Offline | Bấm nút "Chạy chế độ thử nghiệm Offline". | Click chuột | Đăng nhập ngay lập tức với tài khoản Mock Quản trị viên (1001), chạy độc lập không cần máy chủ Wazo. | **PASS** ✅ |
+| 5 | `TC-AUTH-05` | Đăng xuất hệ thống | Bấm nút "🚪 Thoát" trên thanh Header. | Click chuột | Xóa toàn bộ token & session trong localStorage, ngắt kết nối SIP, điều hướng về màn hình `/login`. | **PASS** ✅ |
+| **II** | **PHÂN HỆ 2: MÀN HÌNH TỔNG QUAN (DASHBOARD & KPI CARDS)** | | | | |
+| 6 | `TC-DASH-01` | Đồng bộ 4 thẻ chỉ số KPI động | Quan sát 4 thẻ KPI trên màn hình Tổng quan. | Dữ liệu từ services | • Thẻ 1: Đúng máy lẻ đăng nhập & trạng thái WebRTC.<br>• Thẻ 2: Đúng tổng số danh bạ & online.<br>• Thẻ 3: Đúng số tin chưa đọc & số phòng.<br>• Thẻ 4: Đúng tổng cuộc gọi, đến, đi, nhỡ. | **PASS** ✅ |
+| 7 | `TC-DASH-02` | Gọi nhanh từ Speed Dial | Bấm vào một liên hệ trong widget "Phím tắt liên hệ". | Click thẻ liên hệ | Tự động chuyển sang màn hình Gọi thoại và khởi chạy cuộc gọi ngay lập tức. | **PASS** ✅ |
+| 8 | `TC-DASH-03` | Nhảy số thời gian thực khi có sự kiện | Thực hiện cuộc gọi mới hoặc xóa liên hệ danh bạ. | Sự kiện Event Bus | Các thẻ KPI và widget 3 cuộc gọi gần nhất tự động cập nhật số liệu mới tức thì không cần F5. | **PASS** ✅ |
+| **III** | **PHÂN HỆ 3: GỌI THOẠI WEBRTC & BÀN PHÍM SỐ (CALLS & WEBRTC SIP)** | | | | |
+| 9 | `TC-CALL-01` | Bấm số trên bàn phím số (Keypad) | Nhấp các phím 0-9, *, # hoặc gõ phím vật lý. | Bấm phím | Ô nhập số hiển thị đúng ký tự, phát âm thanh DTMF tần số chuẩn viễn thông. | **PASS** ✅ |
+| 10 | `TC-CALL-02` | Tách biệt Đổ chuông & Bắt đầu tính giờ | 1. Bấm Gọi đến máy 1002.<br>2. Chờ bên kia nhấc máy. | Quay số 1002 | • Khi đang chờ: Phát tiếng tút... tút... ITU-T, thời lượng báo "Đang đổ chuông...", KHÔNG đếm giờ.<br>• Khi bắt máy: Chuông dừng, đồng hồ mới bắt đầu nhảy 00:01, 00:02... | **PASS** ✅ |
+| 11 | `TC-CALL-03` | Bật/Tắt Microphone (Mute/Unmute) | Bấm nút "Tắt tiếng" trong khi đàm thoại. | Click Mute | Đổi trạng thái sang Bật tiếng, ngắt luồng mic truyền đi, click lần nữa để bật lại bình thường. | **PASS** ✅ |
+| 12 | `TC-CALL-04` | Giữ cuộc gọi (Hold/Unhold) | Bấm nút "Giữ máy". | Click Hold | Phiên gọi tạm dừng truyền media, icon chuyển màu cảnh báo, bấm lại để tiếp tục đàm thoại. | **PASS** ✅ |
+| 13 | `TC-CALL-05` | Cúp máy & Lưu CDR tự động | Bấm nút đỏ "Cúp máy". | Click Hangup | Ngắt cuộc gọi, phát âm thanh kết thúc cuộc gọi (3 tiếng bíp), tự động lưu bản ghi vào Lịch sử. | **PASS** ✅ |
+| 14 | `TC-CALL-06` | Họp thoại nhóm (Conference 8001) | Bấm nút "Họp thoại nhóm (8001)" trên thanh công cụ. | Click nút họp | Tự động quay số 8001 và kết nối vào phòng họp thoại đa điểm của doanh nghiệp. | **PASS** ✅ |
+| **IV** | **PHÂN HỆ 4: DANH BẠ NHÂN SỰ NỘI BỘ (CONTACTS & PHONEBOOK)** | | | | |
+| 15 | `TC-CONT-01` | Hiển thị danh bạ & Tìm kiếm lọc | Nhập từ khóa tên/phòng ban/máy lẻ vào ô tìm kiếm. | Gõ "Alice" hoặc "1002" | Bảng danh bạ lọc tức thì các nhân viên khớp từ khóa, hiển thị đúng chấm trạng thái Online/Offline. | **PASS** ✅ |
+| 16 | `TC-CONT-02` | 4 Nút hành động trên từng liên hệ | Bấm thử 4 nút: Gọi thoại, Nhắn tin, Gọi video, Xóa. | Thao tác nút | • 📞: Chuyển sang gọi số máy lẻ đó.<br>• 💬: Chuyển sang phòng chat tương ứng.<br>• 🎥: Mở modal gọi video.<br>• ❌: Hiện modal xác nhận xóa an toàn. | **PASS** ✅ |
+| 17 | `TC-CONT-03` | Đánh dấu Yêu thích (Favorite ⭐) | Bấm icon ngôi sao bên cạnh nhân sự. | Click ⭐ | Ngôi sao sáng vàng, nhân sự được đưa lên mục Ưu tiên, trạng thái lưu bền vững. | **PASS** ✅ |
+| **V** | **PHÂN HỆ 5: TIN NHẮN PHÒNG CHAT REALTIME (MESSAGES & ROOMS)** | | | | |
+| 18 | `TC-CHAT-01` | Gửi và nhận tin nhắn văn bản | Chọn phòng chat, nhập tin nhắn, bấm Gửi / Enter. | Nội dung text | Tin nhắn xuất hiện ngay trong khung chat, phòng chat tự động nhảy lên Top 1 danh sách phòng. | **PASS** ✅ |
+| 19 | `TC-CHAT-02` | Thanh Ghim thông báo & Trạng thái đã đọc | 1. Quan sát thanh ghim.<br>2. Bấm vào chữ "Read" ở bong bóng tin. | Thao tác | • Thanh ghim hiện thông báo quan trọng đầu phòng chat.<br>• Bấm Read mở popup hiển thị danh sách người đã đọc. | **PASS** ✅ |
+| 20 | `TC-CHAT-03` | Modal Thêm thành viên (Add Member) | Bấm nút "Thành viên" trên đầu khung chat. | Click nút | Mở modal quản lý nhóm: Admin đổi được tên phòng, thêm người mới, xóa thành viên (có xác nhận). | **PASS** ✅ |
+| 21 | `TC-CHAT-04` | Bảo toàn dữ liệu phòng chat (Cache) | Gửi vài tin nhắn, chuyển sang tab khác rồi quay lại. | Chuyển tab / F5 | Toàn bộ tin nhắn và phòng chat giữ nguyên 100% nhờ bộ lưu trữ bền vững. | **PASS** ✅ |
+| **VI** | **PHÂN HỆ 6: LỊCH SỬ CUỘC GỌI CDR (CALL HISTORY)** | | | | |
+| 22 | `TC-HIST-01` | Phân loại 4 tab lọc lịch sử | Bấm chuyển đổi giữa ALL, INCOMINGS, OUTGOINGS, MISSED. | Click tab lọc | Danh sách lọc chính xác từng nhóm cuộc gọi kèm icon mũi tên phân biệt và thời lượng đàm thoại. | **PASS** ✅ |
+| 23 | `TC-HIST-02` | Gọi lại nhanh (Redial) | Bấm nút 📞 màu xanh ở dòng lịch sử cuộc gọi. | Click 📞 Gọi lại | Chuyển ngay sang màn hình gọi và tự động quay số của cuộc gọi đó. | **PASS** ✅ |
+| 24 | `TC-HIST-03` | Xóa sạch lịch sử cuộc gọi | Bấm nút "🗑️ DELETE HISTORY". | Click nút xóa | Hiển thị hộp thoại xác nhận; khi đồng ý, xóa toàn bộ CDR trong bộ nhớ và cập nhật badge về 0. | **PASS** ✅ |
+| **VII** | **PHÂN HỆ 7: HEADER, SIDEBAR & TÌM KIẾM AUTOCOMPLETE** | | | | |
+| 25 | `TC-HEAD-01` | Tìm kiếm Autocomplete Top 5 trên Header | Gõ chữ cái bất kỳ vào ô tìm kiếm trên Header. | Gõ "a" hoặc "10" | Dropdown xổ xuống gợi ý tối đa 5 liên hệ trùng khớp, có nút bấm Gọi nhanh hoặc Nhắn tin ngay. | **PASS** ✅ |
+| 26 | `TC-HEAD-02` | Modal Thông tin Kết nối Tổng đài | Bấm vào chấm trạng thái Trực tuyến/Ngoại tuyến trên Header. | Click trạng thái | Bật Modal sang trọng hiển thị chi tiết kết nối Wazo và 3 bước kích hoạt SSL thay thế popup alert cũ. | **PASS** ✅ |
+| 27 | `TC-HEAD-03` | Chuyển đổi trạng thái Presence | Chọn Online, Away hoặc DND trên dropdown Header. | Đổi option | Hệ thống cập nhật trạng thái hiển thị và đồng bộ ngay lên máy chủ Wazo qua API Presence. | **PASS** ✅ |
+| 28 | `TC-SIDE-01` | Huy hiệu Badge động trên Sidebar | Tạo tin nhắn chưa đọc hoặc tạo cuộc gọi nhỡ. | Có tin / cuộc gọi | • Tab Tin nhắn hiện badge đỏ số tin chưa đọc (tự ẩn khi hết tin).<br>• Tab Lịch sử hiện badge đỏ khi có cuộc gọi nhỡ.<br>• Tab Danh bạ hiện badge trung tính tổng nhân viên. | **PASS** ✅ |
+| **VIII** | **PHÂN HỆ 8: CÀI ĐẶT HỆ THỐNG & GIẢ LẬP CUỘC GỌI** | | | | |
+| 29 | `TC-SETT-01` | Modal Cài đặt 4 Tab (`⚙️ SETTINGS`) | Bấm nút "⚙️ SETTINGS" trên thanh Header. | Click Settings | Mở Modal Cài đặt đầy đủ 4 tab: Âm thanh & WebRTC, Dịch vụ cuộc gọi (DND, Forwarding), Tài khoản, Ngôn ngữ. | **PASS** ✅ |
+| 30 | `TC-TEST-01` | Nút giả lập cuộc gọi đến (Test Call) | Bấm nút "🔔 Test Gọi Đến" trên thanh Header. | Click Test | Bật Popup "INCOMING CALL" toàn màn hình, đổ chuông reo, kiểm tra nút Nghe máy và Từ chối hoạt động chuẩn. | **PASS** ✅ |
+
+---
+
+### 8.2. Hướng dẫn vị trí tra cứu các bước kiểm thử cho ngày mai
+
+Để phục vụ buổi kiểm thử thực tế giữa 2 máy client nội bộ ngày mai, bạn chỉ cần mở file tài liệu này và tra cứu trực tiếp tại 2 vị trí trọng tâm sau:
+
+1. **VỊ TRÍ 1 — CÁC BƯỚC THIẾT LẬP KẾT NỐI VÀ CHẠY DỰ ÁN (DÀNH CHO BẠN VÀ ĐỒNG NGHIỆP):**
+   - **Mục tài liệu:** [**`## 4. KẾ HOẠCH TRIỂN KHAI VÀ KIỂM THỬ TRÊN HỆ THỐNG MẠNG NỘI BỘ DOANH NGHIỆP`**](#4-kế-hoạch-triển-khai-và-kiểm-thử-trên-hệ-thống-mạng-nội-bộ-doanh-nghiệp)
+   - **Mục 4.1:** Hướng dẫn chi tiết 5 bước kết nối máy chủ tổng đài Wazo (`107.126.11.126:9443`):
+     - **Bước 1:** Xác thực nhanh chứng chỉ SSL WSS qua trình duyệt (Chỉ mất 15 giây, khuyên dùng Cách 1, không cần cài file `.crt`).
+     - **Bước 2:** Lệnh kiểm tra mạng và lấy Token qua cURL.
+     - **Bước 3:** Kiểm tra file biến môi trường `.env`.
+     - **Bước 4:** Đăng nhập trang quản trị Wazo UI bằng tài khoản `root` (khi cần tra cứu máy lẻ).
+     - **Bước 5:** Khởi động dự án `npm run dev` và đăng nhập 2 tài khoản `alice` (1001) và `bob` (1002).
+   - **Mục 4.2:** Hướng dẫn 3 lệnh Git để đồng nghiệp kéo mã nguồn về máy của họ (`git clone`, `npm install`, `npm run dev`).
+
+2. **VỊ TRÍ 2 — KỊCH BẢN THỰC HIỆN CUỘC GỌI ĐÀM THOẠI 2 CHIỀU (TEST SCENARIO):**
+   - **Mục tài liệu:** [**`### BƯỚC 14: Kịch bản kiểm thử 2 máy nội bộ (Mục 14.5 & 14.6)`**](#bước-14-tối-ưu-cấu-hình-vite-đối-chiếu-dev_guide--kịch-bản-kiểm-thử-đàm-thoại-2-client-nội-bộ)
+   - **Quy trình kiểm thử đàm thoại:**
+     - Máy 1 đăng nhập `alice` $\rightarrow$ Trình duyệt hỏi cấp quyền Micro $\rightarrow$ Chọn **Allow (Cho phép)** $\rightarrow$ Header hiện `🟢 Trực tuyến (1001)`.
+     - Máy 2 đăng nhập `bob` $\rightarrow$ Cấp quyền Micro $\rightarrow$ Header hiện `🟢 Trực tuyến (1002)`.
+     - Máy 1 vào tab **Gọi điện** (`/calls`) $\rightarrow$ Quay số `1002` $\rightarrow$ Bấm Gọi $\rightarrow$ Tiếng tút tút phát ra $\rightarrow$ Máy 2 đổ chuông reo $\rightarrow$ Bấm **Nghe máy** $\rightarrow$ Hai bên nói chuyện kiểm tra âm thanh 2 chiều $\rightarrow$ Bấm **Cúp máy** $\rightarrow$ Kiểm tra bản ghi thời lượng đàm thoại trong Lịch sử cuộc gọi.
+
 

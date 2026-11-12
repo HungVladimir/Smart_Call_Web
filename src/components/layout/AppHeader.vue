@@ -125,6 +125,46 @@
         🚪 Thoát
       </button>
     </div>
+
+    <!-- Modal Thông tin Trạng thái Kết nối Tổng đài SIP / WebRTC -->
+    <div v-if="showSipInfoModal" class="sip-modal-backdrop" @click.self="showSipInfoModal = false">
+      <div class="sip-modal-card">
+        <div class="sip-modal-header">
+          <div class="sip-modal-title">
+            <span class="sip-modal-dot" :class="{ online: isSipOnline }"></span>
+            <h3>Thông Tin Kết Nối Tổng Đài</h3>
+          </div>
+          <button class="btn-close-modal" @click="showSipInfoModal = false">✕</button>
+        </div>
+
+        <div class="sip-modal-body">
+          <div class="status-summary-box" :class="{ online: isSipOnline }">
+            <div class="summary-icon">{{ isSipOnline ? '🟢' : '⚪' }}</div>
+            <div class="summary-text">
+              <div class="summary-title">
+                {{ isSipOnline ? `Trực tuyến — Máy lẻ ${userExtension}` : 'Chế độ ngoại tuyến (Offline / Thử nghiệm)' }}
+              </div>
+              <div class="summary-desc">
+                {{ isSipOnline ? 'Đã kết nối an toàn với máy chủ Wazo Platform qua cổng bảo mật WSS.' : 'Các tính năng danh bạ, tin nhắn nội bộ và mô phỏng đàm thoại vẫn hoạt động trơn tru.' }}
+              </div>
+            </div>
+          </div>
+
+          <div class="sip-guide-section">
+            <div class="guide-title">💡 Kích hoạt luồng gọi thoại WebRTC thật qua máy chủ:</div>
+            <ol class="guide-steps">
+              <li>Mở tab mới trên trình duyệt và truy cập: <a href="https://107.126.11.126:9443" target="_blank" class="sip-server-link">https://107.126.11.126:9443</a></li>
+              <li>Chọn <strong>Nâng cao (Advanced)</strong> &rarr; Bấm <strong>Tiếp tục truy cập 107.126.11.126 (không an toàn)</strong> để xác nhận tin cậy cổng WSS.</li>
+              <li>Quay lại màn hình SmartCall Web và tải lại trang (<strong>F5</strong>). Tổng đài sẽ tự động nhận diện máy lẻ.</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="sip-modal-footer">
+          <button class="btn-sip-modal-close" @click="showSipInfoModal = false">Đã hiểu</button>
+        </div>
+      </div>
+    </div>
   </header>
 </template>
 
@@ -147,29 +187,14 @@ const contactsList = ref([])
 const userName = ref(localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const userExtension = ref(localStorage.getItem('smartcall_extension') || '1001')
 const isSipOnline = ref(false)
+const showSipInfoModal = ref(false)
 
 const handleRegistered = () => {
   isSipOnline.value = true
 }
 
 const showSipHelp = () => {
-  if (!isSipOnline.value) {
-    alert(
-      '💡 Thông tin kết nối máy chủ tổng đài:\n\n' +
-        '• Trạng thái hiện tại: Ngoại tuyến (Offline / Chế độ thử nghiệm).\n' +
-        '• Các tính năng tin nhắn nội bộ, danh bạ nhân sự và mô phỏng đàm thoại vẫn hoạt động bình thường.\n\n' +
-        'Nếu cần kích hoạt luồng gọi thoại WebRTC thật qua máy chủ nội bộ:\n' +
-        '1. Mở tab mới truy cập: https://107.126.11.126:9443\n' +
-        '2. Chọn Nâng cao -> Bấm Tiếp tục truy cập để xác nhận tin cậy cổng WSS.\n' +
-        '3. Tải lại trang (F5) để tổng đài tự động nhận máy lẻ.',
-    )
-  } else {
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: { message: `🟢 Tổng đài thoại máy lẻ ${userExtension.value} đang trực tuyến!`, type: 'success' },
-      }),
-    )
-  }
+  showSipInfoModal.value = true
 }
 
 onMounted(async () => {
@@ -700,5 +725,196 @@ const triggerSimulatedIncomingCall = () => {
 .btn-logout-header:hover {
   background: #e74c3c;
   color: white;
+}
+
+/* Modal Thông tin Kết nối SIP / WebRTC */
+.sip-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeInModal 0.2s ease-out;
+}
+
+@keyframes fadeInModal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sip-modal-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  width: 90%;
+  max-width: 520px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.sip-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #334155;
+  background: #0f172a;
+}
+
+.sip-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sip-modal-title h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.sip-modal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.sip-modal-dot.online {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.8);
+}
+
+.btn-close-modal {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.btn-close-modal:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+
+.sip-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.status-summary-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #0f172a;
+  border: 1px solid #334155;
+}
+
+.status-summary-box.online {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.summary-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.summary-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #f8fafc;
+  margin-bottom: 4px;
+}
+
+.status-summary-box.online .summary-title {
+  color: #4ade80;
+}
+
+.summary-desc {
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.sip-guide-section {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.guide-title {
+  font-weight: 700;
+  color: #38bdf8;
+  margin-bottom: 8px;
+  font-size: 0.88rem;
+}
+
+.guide-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.guide-steps li {
+  color: #cbd5e1;
+}
+
+.sip-server-link {
+  color: #38bdf8;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.sip-server-link:hover {
+  color: #7dd3fc;
+}
+
+.sip-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 20px;
+  border-top: 1px solid #334155;
+  background: #0f172a;
+}
+
+.btn-sip-modal-close {
+  background: #0284c7;
+  color: white;
+  border: none;
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-sip-modal-close:hover {
+  background: #0369a1;
 }
 </style>

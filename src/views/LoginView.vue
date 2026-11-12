@@ -37,7 +37,7 @@
                 id="login-username"
                 type="text"
                 v-model="username"
-                placeholder="Ví dụ: 1001 hoặc ten.nhanvien"
+                placeholder="Ví dụ: alice hoặc bob (Tài khoản Wazo)"
                 required
                 autocomplete="username"
                 :disabled="loading"
