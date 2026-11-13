@@ -62,3 +62,4 @@ export function isFeatureEnabled(key) {
 export function resetFeatures() {
   return saveFeatures(DEFAULT_FEATURES)
 }
+

@@ -1,11 +1,4 @@
-Tại sao nay tôi tới công ty không thể đăng nhập được, mặc dù hôm qua tôi đã đưng nhập được, hôm qua tôi còn bảo bất ngờ vì login acc chuẩn thì nó get đưuọc data, còn login acc fake thì nó lấy data fake ra show.
-Vậy mà tôi get code latest, nay login acc chuẩn thì lại không được. nó báo Tên đăng nhập hoặc mật khẩu không chính xác.
-
-tôi check f12 thì nó ghi như sau :
-Access to fetch at 'https://107.126.11.126:9443/api/confd/1.1/users/me' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: It does not have HTTP ok status.
-LoginView.vue:177 
- 
- GET https://107.126.11.126:9443/api/confd/1.1/users/me net::ERR_FAILED
-handleLogin	@	LoginView.vue:177
-
-Kiểm tra giúp tôi xem ở đâu, thông báo với tôi trước khi code và push
+1. cái nút trực tuyết ( thông tin tổng đài) , sau khi tôi login acc chính vào thì nó vẫn hiện offline, phải f5 lại page thì mới hiện trực tuyến.
+2. phần trạng thái trong danh bạ , có get được trạng thái online offline thật không? hiện tại đang là fake đúng không?
+3. phần setting , hiện tại đang fake mic, loa, và tín hiệu micro đúng không? có get được mic loa, và tín hiệu thật từ máy không?
+Trả lời cho tôi trước khi code, tôi sẽ review trước.

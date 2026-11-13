@@ -402,3 +402,4 @@ const handleCopy = async () => {
   transform: translateY(20px) scale(0.96);
 }
 </style>
+
