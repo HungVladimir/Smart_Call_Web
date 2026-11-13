@@ -30,6 +30,7 @@
 | **14** | Tối ưu hóa cấu hình Vite, Rà soát dev_guide.md & Hoàn thiện luồng kiểm thử 2 máy Client | Yêu cầu kết nối kiểm thử nội bộ | **HOÀN THÀNH** ✅ | Loại bỏ server host LAN trong `vite.config.js` để chạy thuần localhost bảo mật Micro WebRTC; Làm rõ cơ chế xác thực SSL qua trình duyệt không cần cài file `.crt`; Xây dựng kịch bản kiểm thử đàm thoại 2 máy lẻ Alice (1001) - Bob (1002). |
 | **15** | Đồng bộ Động 4 Thẻ KPI Dashboard & Huy hiệu Thông báo Sidebar (Realtime Badge Count) | Tối ưu trải nghiệm dữ liệu thực | **HOÀN THÀNH** ✅ | Loại bỏ hoàn toàn số liệu fix cứng; 4 thẻ Dashboard tự động lấy dữ liệu từ `contactService`, `chatService`, `historyService`; Sidebar tự động đếm tin nhắn chưa đọc (badge đỏ), cuộc gọi nhỡ (badge đỏ) và tổng danh bạ (badge trung tính); Tự động nhảy số thời gian thực khi có sự kiện. |
 | **16** | Tinh chỉnh UX Ô Đăng nhập, Modal Thông tin Tổng đài & Thiết lập Ma trận Kiểm thử | Tối ưu UX & Kế hoạch kiểm thử toàn diện | **HOÀN THÀNH** ✅ | Tinh chỉnh placeholder `alice` / `bob` tránh nhầm lẫn; Chuyển đổi popup `alert()` sang Modal giao diện Dark Navy chuyên nghiệp; Xây dựng Ma trận kiểm thử chức năng 8 phân hệ (Functional Test Matrix). |
+| **17** | Tiếp nhận WAZO_API_REFERENCE.md (841 API), Rà soát toàn bộ dự án & Chuẩn hóa Endpoint Presence | Khớp nối toàn bộ OpenAPI spec Wazo 26.10 | **HOÀN THÀNH** ✅ | Tự động làm sạch & nối liền 5 phần của `WAZO_API_REFERENCE.md` (841 API) đưa vào `doc/`; Đối chiếu toàn diện từng phân hệ; Chuẩn hóa API cập nhật presence sang `/users/{user_uuid}/presences` với `smartcall_user_uuid`. |
 
 ---
 
@@ -694,6 +695,27 @@ VITE_APP_MODE=wazo_lan
    - Bổ sung `showSipInfoModal = ref(false)` và giao diện Modal nổi sang trọng với hiệu ứng mờ hậu cảnh (Backdrop Blur), hiển thị trạng thái Trực tuyến/Ngoại tuyến, số máy lẻ người dùng và 3 bước xác thực SSL 15 giây.
 3. **Biên soạn Ma trận Kiểm thử Chức năng (Mục 8):**
    - Thiết lập bảng ma trận chi tiết gồm 8 phân hệ và 25 kịch bản kiểm thử (Test Cases) chuẩn mực với đầy đủ điều kiện đầu vào, hành động và kết quả mong đợi.
+
+---
+
+### BƯỚC 17: TIẾP NHẬN WAZO_API_REFERENCE.MD (841 API ENDPOINT), RÀ SOÁT ĐỐI CHIẾU MÃ NGUỒN VÀ CHUẨN HÓA
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Mục tiêu:**
+  1. Xử lý tự động file tài liệu [**`doc/WAZO_API_REFERENCE.md`**](file:///D:/Project/Smart_Call_Web/doc/WAZO_API_REFERENCE.md): loại bỏ các tiêu đề phân mảnh `PHẦN 1/5`, `PHẦN 2/5`... và nối liền các dòng bảng Markdown bị đứt gãy giữa các phần thành file hoàn chỉnh chuẩn UTF-8.
+  2. Rà soát đối chiếu toàn bộ các API endpoint trong mã nguồn SmartCall Web với 841 endpoint trong tài liệu đặc tả OpenAPI của Wazo Platform 26.10.
+  3. Khắc phục điểm sai lệch nhỏ ở API cập nhật Presence: chuyển đổi từ `/api/chatd/1.0/users/me/presences` sang đúng chuẩn OpenAPI `/api/chatd/1.0/users/{user_uuid}/presences`, đồng thời lưu trữ `smartcall_user_uuid` ngay khi đăng nhập.
+
+#### Các kết quả rà soát và tinh chỉnh:
+1. **Làm sạch và hợp nhất file tài liệu:**
+   - File tài liệu đã được gọt dũa, nối các đoạn cắt ngang tên schema (`UserBlocklistNumber`, `moh_filename`, `Danh sách phiên nghe lén`, `/backends/wazo/sources/{source_uuid}`) và lưu vào thư mục `doc/WAZO_API_REFERENCE.md`.
+2. **Đối chiếu chi tiết từng phân hệ:**
+   - **Xác thực (`wazo-auth`):** `@wazo/sdk` tương thích 100% với `/token`, lưu token và refresh token.
+   - **Thông tin tài khoản (`wazo-confd`):** `GET /api/confd/1.1/users/me` chuẩn xác, trích xuất đúng họ tên và số máy lẻ.
+   - **Danh bạ (`wazo-dird`):** Quy trình 2 bước lấy nguồn `/directories/default/sources?backend=wazo` và `/backends/wazo/sources/{source_uuid}/contacts` hoàn toàn trùng khớp với quyền user (👤).
+   - **Lịch sử cuộc gọi (`wazo-call-logd`):** `GET /users/me/cdr` chuẩn xác. Đối với thao tác xóa lịch sử, tài liệu xác nhận Wazo không cung cấp API xoá CDR cho user thường (nhật ký cuộc gọi viễn thông có tính bất biến), do đó hệ thống SmartCall Web quản lý xóa lịch sử trên bộ nhớ đệm `localStorage` cục bộ là hoàn toàn chuẩn xác.
+   - **Tin nhắn (`wazo-chatd`):** `GET /users/me/rooms`, `GET /users/me/rooms/{room_uuid}/messages` và `POST /users/me/rooms/{room_uuid}/messages` (kèm body `content`, `alias`) chuẩn 100% theo schema `UserMessagePOST`.
+   - **Trạng thái Presence (`wazo-chatd`):** Đặc tả OpenAPI quy định đường dẫn là `PUT /api/chatd/1.0/users/{user_uuid}/presences` (yêu cầu UUID thay vì chuỗi cố định `me`). Mã nguồn tại `src/services/wazo.js` và `src/views/LoginView.vue` đã được nâng cấp để tự động truyền `user_uuid` thực tế của người dùng.
+   - **Thoại WebRTC & Sự kiện Realtime:** Sử dụng Asterisk SIP over WSS (`/api/asterisk/ws`) và `wazo-websocketd` protocol v2 (`wss://<HOST>/api/websocketd/?token=<token>&version=2`) khớp hoàn toàn với kiến trúc hệ thống.
 
 ---
 

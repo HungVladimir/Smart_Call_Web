@@ -179,6 +179,9 @@ const handleLogin = async () => {
       })
       if (meRes.ok) {
         const meData = await meRes.json()
+        if (meData.uuid) {
+          localStorage.setItem('smartcall_user_uuid', meData.uuid)
+        }
         const fullName = [meData.firstname, meData.lastname].filter(Boolean).join(' ').trim()
         realDisplayName = fullName || meData.username
         realExtension = meData.lines?.[0]?.extensions?.[0]?.exten || ''

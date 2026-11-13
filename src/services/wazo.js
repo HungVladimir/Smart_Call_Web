@@ -21,6 +21,9 @@ class WazoService {
       if (this.session && this.session.token) {
         localStorage.setItem('smartcall_wazo_token', this.session.token)
         localStorage.setItem('smartcall_wazo_refreshToken', this.session.refreshToken || '')
+        if (this.session.uuid) {
+          localStorage.setItem('smartcall_user_uuid', this.session.uuid)
+        }
       }
       return true
     } catch (error) {
@@ -38,6 +41,9 @@ class WazoService {
       try {
         this.session = await Wazo.Auth.validateToken(token, refreshToken)
         if (this.session) {
+          if (this.session.uuid) {
+            localStorage.setItem('smartcall_user_uuid', this.session.uuid)
+          }
           console.log('Đã khôi phục phiên đăng nhập Wazo từ token!')
           return true
         }
@@ -217,15 +223,16 @@ class WazoService {
 
   /**
    * Cập nhật trạng thái Presence người dùng lên máy chủ tổng đài Wazo Chatd
-   * PUT /api/chatd/1.0/users/me/presences (dev_guide.md mục 4.5)
+   * PUT /api/chatd/1.0/users/{user_uuid}/presences (theo OpenAPI spec Wazo Platform 26.10)
    */
   async setPresence(state = 'available', statusText = '') {
     const token = this.getToken()
     if (!token) return false
 
     const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+    const userUuid = this.session?.uuid || localStorage.getItem('smartcall_user_uuid') || 'me'
     try {
-      const res = await fetch(`${host}/api/chatd/1.0/users/me/presences`, {
+      const res = await fetch(`${host}/api/chatd/1.0/users/${userUuid}/presences`, {
         method: 'PUT',
         headers: {
           'X-Auth-Token': token,
