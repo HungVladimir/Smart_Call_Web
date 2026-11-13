@@ -223,7 +223,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { contactService } from '@/services/contactService'
 
@@ -255,6 +255,14 @@ onMounted(() => {
   }
   loadContacts()
   window.addEventListener('smartcall-contacts-updated', onContactsUpdated)
+})
+
+onActivated(() => {
+  if (contactService.cachedContacts && contactService.cachedContacts.length > 0) {
+    contacts.value = [...contactService.cachedContacts]
+  } else {
+    loadContacts()
+  }
 })
 
 onUnmounted(() => {

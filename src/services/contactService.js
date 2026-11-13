@@ -259,14 +259,16 @@ class ContactService {
       if (!res.ok) return contacts
 
       const data = await res.json()
-      const presences = {}
+      this.presences = this.presences || {}
       ;(data.items || []).forEach((p) => {
         const u = p.uuid || p.user_uuid
-        if (u) presences[u] = p
+        if (u) {
+          this.presences[u] = { ...(this.presences[u] || {}), ...p }
+        }
       })
 
       contacts.forEach((c) => {
-        const p = presences[c.uuid || c.id]
+        const p = this.presences[c.uuid || c.id]
         if (p) {
           const lines = (p.lines || []).map((l) => l.state)
           if (lines.some((s) => s === 'talking' || s === 'holding')) {
@@ -295,24 +297,34 @@ class ContactService {
   updateSinglePresence(presenceRecord) {
     if (!this.cachedContacts || !presenceRecord) return
     const uuid = presenceRecord.uuid || presenceRecord.user_uuid
-    if (!uuid) return
+    if (!uuid) {
+      // Nếu sự kiện presence từ WebSocket không kèm UUID cụ thể, làm mới toàn bộ trạng thái danh bạ
+      this.loadPresencesForContacts(this.cachedContacts).then(() => {
+        window.dispatchEvent(new CustomEvent('smartcall-contacts-updated'))
+      })
+      return
+    }
+
+    this.presences = this.presences || {}
+    this.presences[uuid] = { ...(this.presences[uuid] || {}), ...presenceRecord }
+    const p = this.presences[uuid]
 
     let changed = false
     this.cachedContacts.forEach((c) => {
       if (c.uuid === uuid || c.id === uuid) {
-        const lines = (presenceRecord.lines || []).map((l) => l.state)
+        const lines = (p.lines || []).map((l) => l.state)
         let newStatus = 'offline'
         if (lines.some((s) => s === 'talking' || s === 'holding')) {
           newStatus = 'busy'
         } else if (lines.some((s) => s === 'ringing' || s === 'progressing')) {
           newStatus = 'ringing'
-        } else if (presenceRecord.do_not_disturb) {
+        } else if (p.do_not_disturb) {
           newStatus = 'dnd'
-        } else if (presenceRecord.state === 'away') {
+        } else if (p.state === 'away') {
           newStatus = 'away'
         } else {
           const isLineOnline = lines.length ? lines.some((s) => s !== 'unavailable') : false
-          const isUserOnline = presenceRecord.state === 'available' || presenceRecord.connected === true
+          const isUserOnline = p.state === 'available' || p.connected === true
           const online = isLineOnline || isUserOnline
           newStatus = online ? 'online' : 'offline'
         }
