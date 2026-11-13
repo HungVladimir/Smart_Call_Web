@@ -390,7 +390,7 @@ const handleDial = async () => {
   }
 }
 
-const hangupCall = () => {
+const hangupCall = (dispatchEnded = true) => {
   audioService.stopAllTones()
   audioService.playCallEndedTone()
 
@@ -426,6 +426,11 @@ const hangupCall = () => {
   isHeld.value = false
   isMuted.value = false
   clearInterval(timer)
+
+  // Đồng bộ phát sự kiện wazo-ended để App.vue và toàn hệ thống cập nhật trạng thái đã kết thúc
+  if (dispatchEnded) {
+    window.dispatchEvent(new CustomEvent('wazo-ended'))
+  }
 }
 
 const toggleMute = () => {
@@ -467,8 +472,9 @@ const onRemoteAccepted = () => {
 }
 
 const onRemoteEnded = () => {
+  if (callState.value === 'idle') return
   audioService.stopAllTones()
-  hangupCall()
+  hangupCall(false)
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: { message: `Cuộc gọi đã kết thúc.`, type: 'info' },
@@ -477,8 +483,9 @@ const onRemoteEnded = () => {
 }
 
 const onRemoteFailed = () => {
+  if (callState.value === 'idle') return
   audioService.stopAllTones()
-  hangupCall()
+  hangupCall(false)
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: { message: `Cuộc gọi không thành công (Máy bận hoặc đối phương chưa đăng nhập).`, type: 'warning' },
@@ -531,6 +538,9 @@ onActivated(() => {
 })
 
 onUnmounted(() => {
+  if (callState.value !== 'idle') {
+    hangupCall(true)
+  }
   audioService.stopAllTones()
   window.removeEventListener('wazo-accepted', onRemoteAccepted)
   window.removeEventListener('wazo-ended', onRemoteEnded)

@@ -392,6 +392,7 @@ class WazoService {
       }
     }
     this.stopRemoteAudio()
+    window.dispatchEvent(new CustomEvent('wazo-ended', { detail: session }))
   }
 
   accept(callSession = null) {

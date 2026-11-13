@@ -155,20 +155,44 @@ const tryConnectPhone = async () => {
 
 const handleIncomingCall = (event) => {
   const session = event.detail
-  const ext = session?.number || session?.callerNumber || ''
-  const name = session?.displayName || session?.realDisplayName || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
+  const ext = session?.number || session?.callerNumber || session?.extension || ''
+  const contact = contactService.findContactByExtension(ext)
+  const name =
+    session?.displayName ||
+    session?.realDisplayName ||
+    session?.name ||
+    contact?.name ||
+    (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
+  const dept = session?.dept || contact?.dept || 'Nội bộ công ty'
 
-  // Nếu đang có cuộc gọi hoạt động (Đang đàm thoại hoặc đổ chuông) -> Tự động từ chối máy bận và ghi nhận cuộc gọi nhỡ
-  if (hasActiveCall.value) {
+  // Kiểm tra nếu thực sự đang có cuộc gọi hoạt động:
+  // - Modal cuộc gọi đến đang mở (showIncomingModal = true)
+  // - HOẶC wazoService đang có một phiên gọi khác đang hoạt động
+  const isActuallyInCall =
+    showIncomingModal.value ||
+    (wazoService.currentCallSession && wazoService.currentCallSession !== session)
+
+  // Nếu cờ hasActiveCall bị kẹt mà không có phiên gọi thực tế nào -> tự động giải phóng cờ
+  if (hasActiveCall.value && !isActuallyInCall) {
+    hasActiveCall.value = false
+    currentCall.value = null
+  }
+
+  // Nếu thực sự đang có cuộc gọi hoạt động -> Tự động từ chối máy bận và ghi nhận cuộc gọi nhỡ
+  if (isActuallyInCall) {
     try {
-      if (session) wazoService.reject(session)
+      if (session && typeof session.reject === 'function') {
+        session.reject()
+      } else if (session) {
+        wazoService.reject(session)
+      }
     } catch (e) {
       /* ignore */
     }
     historyService.addRecord({
       name,
       extension: ext,
-      dept: 'Nội bộ công ty',
+      dept,
       duration: 0,
       direction: 'inbound',
       status: 'missed',
@@ -182,7 +206,8 @@ const handleIncomingCall = (event) => {
     rawSession: session,
     name,
     extension: ext,
-    sipUri: ext ? `sip:${ext}@107.126.11.126` : '',
+    dept,
+    sipUri: session?.sipUri || (ext ? `sip:${ext}@107.126.11.126` : ''),
   }
   showIncomingModal.value = true
   currentCall.value = session
@@ -312,6 +337,8 @@ const onDial = (extension) => {
         hasActiveCall.value = true
         showToast(`Đang kết nối cuộc gọi thử nghiệm tới: ${extension}`, 'info')
       } else {
+        currentCall.value = null
+        hasActiveCall.value = false
         showToast(`Không thể kết nối cuộc gọi tới: ${extension}`, 'error')
       }
     })

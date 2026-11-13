@@ -1207,6 +1207,31 @@ Dựa trên kết quả rà soát toàn diện trong tài liệu báo cáo kiể
 10. **Dọn dẹp rò rỉ sự kiện và kiểm tra ngoại tuyến trên `DashboardView.vue`:**
     - Gỡ bỏ listener `wazo-registered` trong `onUnmounted`, xóa hàm dead code `openSettings`, kiểm tra trạng thái ngoại tuyến trước khi gọi nhanh.
 
+---
+
+## 17. SỬA LỖI ĐỒNG BỘ TRẠNG THÁI CUỘC GỌI VÀ CHUẨN HÓA TRÍCH XUẤT THÔNG TIN NGƯỜI GỌI ĐẾN (HOTFIX)
+
+### 17.1. Bối cảnh và Hiện tượng lỗi
+- **Hiện tượng**: Người dùng ở màn hình Dashboard, không trong cuộc gọi với bất kỳ ai, nhưng khi bấm nút "Thử cuộc gọi đến" (Test gọi đến) thì hệ thống không mở modal nhận cuộc gọi mà liên tục hiển thị Toast: `📞 Cuộc gọi nhỡ từ Đồng nghiệp (Máy bận)` và ghi nhận cuộc gọi nhỡ vào CDR.
+- **Nguyên nhân cốt lõi**:
+  1. *Kẹt cờ `hasActiveCall`:* Khi cuộc gọi trước đó kết thúc (hoặc bấm Cúp máy trong `CallsView.vue`, hoặc cúp máy qua `wazoService.hangup()`), sự kiện toàn cục `wazo-ended` không được phát ra. Biến cờ `hasActiveCall.value` trong `App.vue` bị kẹt ở trạng thái `true` vĩnh viễn trong phiên làm việc của tab trình duyệt.
+  2. *Thiếu trích xuất trường dữ liệu người gọi:* Hàm `handleIncomingCall()` trong `App.vue` chỉ đọc `session?.number` và `session?.displayName`. Nút mô phỏng gửi `{ name: '...', extension: '...' }`, khiến `ext` rỗng và `name` rơi vào fallback mặc định là `"Đồng nghiệp"`.
+
+### 17.2. Các thay đổi kỹ thuật chi tiết
+1. **[App.vue](file:///d:/Project/Smart_Call_Web/src/App.vue):**
+   - **Chuẩn hóa thông tin người gọi:** Bổ sung trích xuất `session?.extension`, `session?.name`, và tra cứu danh bạ qua `contactService.findContactByExtension(ext)` để luôn có tên và phòng ban chính xác.
+   - **Tự động giải phóng cờ ảo (Self-healing Guard):** Kiểm tra `isActuallyInCall = showIncomingModal.value || (wazoService.currentCallSession && wazoService.currentCallSession !== session)`. Nếu `hasActiveCall` mang giá trị `true` nhưng không có phiên gọi hay modal thực tế nào đang mở, hệ thống tự động reset `hasActiveCall.value = false`.
+   - **Đặt lại cờ trong `onDial`:** Trong khối `catch` khi quay số thất bại, đảm bảo đặt `hasActiveCall.value = false` và `currentCall.value = null`.
+2. **[CallsView.vue](file:///d:/Project/Smart_Call_Web/src/views/CallsView.vue):**
+   - Trong `hangupCall(dispatchEnded = true)`: Khi cúp máy, phát sự kiện `window.dispatchEvent(new CustomEvent('wazo-ended'))` để `App.vue` và toàn hệ thống đồng bộ trạng thái về `idle`.
+   - Ngăn chặn vòng lặp sự kiện trong `onRemoteEnded` và `onRemoteFailed` bằng cờ kiểm tra `callState.value === 'idle'`.
+   - Trong `onUnmounted()`: Nếu người dùng rời khỏi trang khi cuộc gọi chưa cúp, tự động kích hoạt `hangupCall(true)` để dọn dẹp tài nguyên.
+3. **[wazo.js](file:///d:/Project/Smart_Call_Web/src/services/wazo.js):**
+   - Trong hàm `hangup()`: Đảm bảo phát sự kiện `wazo-ended` khi người dùng chủ động cúp máy.
+4. **Đồng bộ song song:**
+   - Cập nhật đầy đủ logic trên cả `Smart_Call_Web` và `Smart_Call_Web_Mock`.
+
+
 
 
 
