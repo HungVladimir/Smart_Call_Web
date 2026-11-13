@@ -357,8 +357,12 @@ class ContactService {
   findContactByExtension(ext) {
     if (!ext) return null
     const str = String(ext).trim()
+    const pool = [
+      ...(Array.isArray(this.cachedContacts) ? this.cachedContacts : []),
+      ...(Array.isArray(this.localContacts) ? this.localContacts : []),
+    ]
     return (
-      this.localContacts.find(
+      pool.find(
         (c) => String(c.number).trim() === str || String(c.id).includes(str),
       ) || null
     )

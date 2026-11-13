@@ -347,12 +347,15 @@ const handleCall = (contact) => {
     return
   }
 
-  // Nếu đối phương đang offline -> Hiển thị hộp thoại xác nhận Voicemail
-  if (contact.status === 'offline') {
-    const confirmVoicemail = confirm(
-      `Máy lẻ [${contact.name} - ${contact.number}] hiện đang Offline (Không kết nối mạng tổng đài).\nBạn có muốn chuyển tiếp vào Hộp thư thoại (Voicemail) không?`,
+  // Nếu đối phương đang offline -> Hiển thị hộp thoại hỏi chuyển sang nhắn tin
+  if (contact.status === 'offline' || contact.status === 'unavailable') {
+    const confirmMessage = confirm(
+      `Máy lẻ [${contact.name} - ${contact.number}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
     )
-    if (!confirmVoicemail) return
+    if (confirmMessage) {
+      handleMessage(contact)
+    }
+    return
   }
 
   // Chuyển sang màn hình bàn phím gọi điện và tự động kích hoạt cuộc gọi

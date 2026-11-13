@@ -146,7 +146,6 @@ import { wazoService } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
 import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
-import { isFeatureEnabled } from '@/config/features'
 import { logger } from '@/services/loggerService'
 
 const route = useRoute()
@@ -162,7 +161,6 @@ const isHeld = ref(false)
 const isSpeaker = ref(false)
 const callSeconds = ref(0)
 let timer = null
-let mockAnswerTimer = null
 
 const keys = [
   { num: '1', sub: '' },
@@ -261,7 +259,16 @@ const handleDial = async () => {
   }
 
   // 2. Chặn cuộc gọi nếu đối phương đang trong cuộc gọi khác (busy)
-  const targetContact = contactService.findContactByExtension(ext)
+  let targetContact = contactService.findContactByExtension(ext)
+  if (!targetContact && (!contactService.cachedContacts || contactService.cachedContacts.length === 0)) {
+    try {
+      await contactService.getContacts()
+      targetContact = contactService.findContactByExtension(ext)
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (targetContact && targetContact.status === 'busy') {
     logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang bận trong cuộc gọi khác.`)
     window.dispatchEvent(
@@ -275,7 +282,21 @@ const handleDial = async () => {
     return
   }
 
-  // 3. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
+  // 3. Chặn cuộc gọi nếu đối phương đang ngoại tuyến (offline)
+  if (targetContact && (targetContact.status === 'offline' || targetContact.status === 'unavailable')) {
+    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} hiện đang ngoại tuyến.`)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `📴 Người này hiện đang ngoại tuyến, xin vui lòng gọi lại lúc khác!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // 4. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
   try {
     if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       const devices = await navigator.mediaDevices.enumerateDevices()
@@ -297,30 +318,26 @@ const handleDial = async () => {
     /* ignore */
   }
 
-  // 3. Khóa chống spam nút gọi (Throttle 1.5 giây)
+  // 5. Khóa chống spam nút gọi (Throttle 1.5 giây)
   isDialing.value = true
   setTimeout(() => {
     isDialing.value = false
   }, 1500)
 
   logger.info('UI', `Người dùng bấm nút Gọi tới máy lẻ: ${ext}`)
-  clearTimeout(mockAnswerTimer)
   clearInterval(timer)
   callSeconds.value = 0
   isHeld.value = false
   isMuted.value = false
 
-  // Bước 1: Chuyển sang trạng thái Đang đổ chuông (Chưa tính giờ)
+  // Bước 1: Chuyển sang trạng thái Đang đổ chuông (Chờ sự kiện Wazo WebRTC)
   callState.value = 'ringing'
   audioService.startRingbackTone()
-
-  let isRealWazoCall = false
 
   // Thử gọi thật qua Wazo WebRTC
   try {
     const session = await wazoService.makeCall(ext)
     if (session) {
-      isRealWazoCall = true
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -332,28 +349,20 @@ const handleDial = async () => {
     }
   } catch (e) {
     logger.warn('CALL', `Cuộc gọi Wazo WebRTC tới ${ext} không thành công: ${e.message || e}`)
-  }
-
-  // Chỉ kích hoạt giả lập đối phương nhấc máy khi cờ mockData = true (Chế độ thử nghiệm offline)
-  if (isFeatureEnabled('mockData') && (!isRealWazoCall || localStorage.getItem('smartcall_offline_mode') === 'true')) {
-    mockAnswerTimer = setTimeout(() => {
-      if (callState.value === 'ringing') {
-        startCallTimer()
-        window.dispatchEvent(
-          new CustomEvent('app-toast', {
-            detail: {
-              message: `🎉 [Mô phỏng] Đối phương đã nhấc máy! Bắt đầu đàm thoại...`,
-              type: 'success',
-            },
-          }),
-        )
-      }
-    }, 2500)
+    audioService.stopAllTones()
+    callState.value = 'idle'
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `❌ Cuộc gọi tới ${ext} không thành công: ${e.message || 'Lỗi kết nối máy chủ'}`,
+          type: 'error',
+        },
+      }),
+    )
   }
 }
 
 const hangupCall = () => {
-  clearTimeout(mockAnswerTimer)
   audioService.stopAllTones()
   audioService.playCallEndedTone()
 
@@ -421,7 +430,6 @@ const toggleHold = () => {
 
 // Xử lý các sự kiện cuộc gọi thật từ máy chủ Wazo
 const onRemoteAccepted = () => {
-  clearTimeout(mockAnswerTimer)
   startCallTimer()
   window.dispatchEvent(
     new CustomEvent('app-toast', {
@@ -470,14 +478,22 @@ watch(
   { immediate: true },
 )
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('wazo-accepted', onRemoteAccepted)
   window.addEventListener('wazo-ended', onRemoteEnded)
   window.addEventListener('wazo-failed', onRemoteFailed)
+
+  // Nạp danh bạ trước nếu chưa có dữ liệu để kiểm tra trạng thái máy bận / ngoại tuyến chính xác
+  if (!contactService.cachedContacts || contactService.cachedContacts.length === 0) {
+    try {
+      await contactService.getContacts()
+    } catch {
+      /* ignore */
+    }
+  }
 })
 
 onUnmounted(() => {
-  clearTimeout(mockAnswerTimer)
   audioService.stopAllTones()
   window.removeEventListener('wazo-accepted', onRemoteAccepted)
   window.removeEventListener('wazo-ended', onRemoteEnded)
