@@ -31,6 +31,8 @@
 | **15** | Đồng bộ Động 4 Thẻ KPI Dashboard & Huy hiệu Thông báo Sidebar (Realtime Badge Count) | Tối ưu trải nghiệm dữ liệu thực | **HOÀN THÀNH** ✅ | Loại bỏ hoàn toàn số liệu fix cứng; 4 thẻ Dashboard tự động lấy dữ liệu từ `contactService`, `chatService`, `historyService`; Sidebar tự động đếm tin nhắn chưa đọc (badge đỏ), cuộc gọi nhỡ (badge đỏ) và tổng danh bạ (badge trung tính); Tự động nhảy số thời gian thực khi có sự kiện. |
 | **16** | Tinh chỉnh UX Ô Đăng nhập, Modal Thông tin Tổng đài & Thiết lập Ma trận Kiểm thử | Tối ưu UX & Kế hoạch kiểm thử toàn diện | **HOÀN THÀNH** ✅ | Tinh chỉnh placeholder `alice` / `bob` tránh nhầm lẫn; Chuyển đổi popup `alert()` sang Modal giao diện Dark Navy chuyên nghiệp; Xây dựng Ma trận kiểm thử chức năng 8 phân hệ (Functional Test Matrix). |
 | **17** | Tiếp nhận WAZO_API_REFERENCE.md (841 API), Rà soát toàn bộ dự án & Chuẩn hóa Endpoint Presence | Khớp nối toàn bộ OpenAPI spec Wazo 26.10 | **HOÀN THÀNH** ✅ | Tự động làm sạch & nối liền 5 phần của `WAZO_API_REFERENCE.md` (841 API) đưa vào `doc/`; Đối chiếu toàn diện từng phân hệ; Chuẩn hóa API cập nhật presence sang `/users/{user_uuid}/presences` với `smartcall_user_uuid`. |
+| **18** | Kiểm toán Chuyên sâu & Khắc phục Triệt để 8 Lỗ hổng Nghiệp vụ VoIP / WebRTC | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Khắc phục treo modal cuộc gọi đến, tách DTMF khỏi số máy lẻ, sửa 2 chiều Mute/Hold, chặn xung đột gọi đè, đồng bộ thời lượng chuẩn xác, auto-reconnect SIP, auto-hangup tab close. |
+| **19** | Thiết lập Wazo Local Server Emulator Độc lập (Port 9443) Phục vụ Kiểm thử 2 Tài khoản | Yêu cầu kiểm thử ngoài mạng văn phòng | **HOÀN THÀNH** ✅ | Xây dựng Wazo Server Emulator độc lập ngoài thư mục dự án (`wazo-emulator`), hỗ trợ REST API (Auth, Confd, Dird, Chatd, CDR), WebSocket Events (`websocketd`) và SIP WebRTC Signaling (`asterisk/ws`). Chạy 2 tài khoản thật Alice (1001) - Bob (1002) mà không cần fake data trong frontend. |
 
 ---
 
@@ -1265,6 +1267,42 @@ Dựa trên báo cáo kiểm toán chuyên sâu toàn diện về giao thức th
    - Trong `Wazo.Phone.ON_UNREGISTERED`, tự động đặt lịch thử kết nối lại sau 5 giây nếu người dùng đang đăng nhập, giúp máy lẻ tự phục hồi sau khi mạng chập chờn hoặc máy tính thức dậy từ chế độ Sleep.
 8. **Tự động cúp máy dọn dẹp phiên trên tổng đài khi đóng tab (`App.vue`):**
    - Bổ sung listener `beforeunload` trên `window`, tự động kích hoạt `wazoService.hangup()` gửi bản tin SIP BYE tới Asterisk khi người dùng đóng tab hoặc reload trang, không để đường dây bị treo trạng thái máy bận.
+
+---
+
+## 19. THIẾT LẬP WAZO LOCAL SERVER EMULATOR ĐỘC LẬP (PORT 9443) PHỤC VỤ KIỂM THỬ 2 TÀI KHOẢN
+
+### 19.1. Bối cảnh & Yêu cầu Kỹ thuật
+- Dự án chính `Smart_Call_Web` tuân thủ nguyên tắc bất biến: **100% dữ liệu thật, không chứa bất kỳ dữ liệu fake hay mock nào trong frontend**.
+- Khi người dùng ở ngoài mạng nội bộ công ty (không thể kết nối trực tiếp đến máy chủ Wazo `107.126.11.126`), cần có một môi trường máy chủ giả lập độc lập bên ngoài mã nguồn để có thể đăng nhập 2 tài khoản (`alice` - 1001 và `bob` - 1002) và thực hiện đầy đủ các luồng tương tác thời gian thực như trên môi trường máy chủ thật.
+
+### 19.2. Kiến trúc Máy chủ Giả lập (`d:\Project\wazo-emulator`)
+- Đặt hoàn toàn độc lập tại `d:\Project\wazo-emulator`, không nằm trong cây thư mục Git của công ty.
+- **HTTPS REST API (Port 9443):**
+  - `POST /api/auth/0.1/token`: Tiếp nhận xác thực Basic Auth, cấp phát Wazo Token và session hợp lệ.
+  - `GET /api/confd/1.1/users/me`: Trả về thông tin hồ sơ người dùng và cấu hình đường dây SIP extension.
+  - `GET /api/dird/0.1/.../contacts`: Trả về danh bạ người dùng nội bộ (Alice, Bob, Bình, Hiếu).
+  - `GET /api/chatd/1.0/users/me/rooms` & `/messages`: Trả về và tiếp nhận tin nhắn chat phòng 1-1.
+  - `PUT /api/chatd/1.0/users/:uuid/presences`: Tiếp nhận cập nhật trạng thái online/busy/away/dnd.
+  - `GET /api/call-logd/1.0/users/me/cdr`: Trả về lịch sử cuộc gọi.
+- **WebSocket Realtime Events (`/api/websocketd/`):**
+  - Quản lý danh sách kết nối WebSocket của từng tài khoản theo token.
+  - Tự động broadcast các sự kiện `chatd_user_message_created` và `chatd_presence_updated` tới tất cả các client đang kết nối.
+- **SIP WebRTC Signaling (`/api/asterisk/ws`):**
+  - Lắng nghe bản tin SIP `REGISTER` từ Wazo SDK và phản hồi `200 OK` để đưa chỉ báo WebRTC Phone trên UI sang màu xanh ("Registered").
+  - Lắng nghe bản tin SIP `INVITE` khi gọi đi, trả về `180 Ringing` và chuyển tiếp tín hiệu cuộc gọi đến máy lẻ đối phương.
+  - Lắng nghe bản tin SIP `BYE` / `CANCEL` khi cúp máy và dọn dẹp phiên.
+
+### 19.3. Hướng dẫn Vận hành Kiểm thử
+1. **Khởi động Emulator:** Mở thư mục `d:\Project\wazo-emulator`, chạy file `start-emulator.bat` (hoặc lệnh `node server.js`).
+2. **Chấp nhận Chứng chỉ SSL Local:** Mở trình duyệt vào `https://localhost:9443/api/confd/1.1/users/me`, bấm "Nâng cao" $\rightarrow$ "Tiếp tục truy cập localhost".
+3. **Cấu hình kết nối trên `Smart_Call_Web`:** Trong file `.env`, chuyển `VITE_WAZO_HOST=localhost:9443`.
+4. **Khởi chạy Frontend:** Chạy `npm run dev` trong `Smart_Call_Web`.
+5. **Kiểm thử 2 tài khoản song song:**
+   - Tab thường: Đăng nhập `alice` / `Test@123` (Máy lẻ 1001).
+   - Tab ẩn danh (Incognito): Đăng nhập `bob` / `Test@123` (Máy lẻ 1002).
+   - Kiểm tra: Danh bạ hiển thị đầy đủ, chấm trạng thái presence nhảy tức thì, gửi tin nhắn chat 2 chiều thời gian thực, bấm gọi máy lẻ từ Alice sang Bob kích hoạt modal cuộc gọi đến.
+
 
 
 
