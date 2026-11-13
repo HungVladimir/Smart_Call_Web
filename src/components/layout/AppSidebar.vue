@@ -19,9 +19,6 @@
         <router-link to="/contacts" class="nav-btn" active-class="active">
           <span class="icon">📇</span>
           <span>Danh bạ</span>
-          <span v-if="contactsCount > 0" class="badge-count badge-neutral" title="Tổng số liên hệ nội bộ">
-            {{ contactsCount }}
-          </span>
         </router-link>
       </li>
 
@@ -39,9 +36,6 @@
         <router-link to="/history" class="nav-btn" active-class="active">
           <span class="icon">🕒</span>
           <span>Lịch sử cuộc gọi</span>
-          <span v-if="missedCallsCount > 0" class="badge-count badge-danger" title="Cuộc gọi nhỡ">
-            {{ missedCallsCount }}
-          </span>
         </router-link>
       </li>
     </ul>

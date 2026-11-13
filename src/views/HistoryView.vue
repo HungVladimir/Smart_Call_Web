@@ -41,28 +41,28 @@
           :class="['tab-btn', { active: currentTab === 'all' }]"
           @click="currentTab = 'all'"
         >
-          ALL <span class="tab-badge">{{ counts.all }}</span>
+          ALL
         </button>
 
         <button
           :class="['tab-btn', { active: currentTab === 'incomings' }]"
           @click="currentTab = 'incomings'"
         >
-          INCOMINGS <span class="tab-badge">{{ counts.incomings }}</span>
+          INCOMINGS
         </button>
 
         <button
           :class="['tab-btn', { active: currentTab === 'outgoings' }]"
           @click="currentTab = 'outgoings'"
         >
-          OUTGOINGS <span class="tab-badge">{{ counts.outgoings }}</span>
+          OUTGOINGS
         </button>
 
         <button
           :class="['tab-btn', { active: currentTab === 'missed' }]"
           @click="currentTab = 'missed'"
         >
-          MISSED <span class="tab-badge danger">{{ counts.missed }}</span>
+          MISSED
         </button>
       </div>
 

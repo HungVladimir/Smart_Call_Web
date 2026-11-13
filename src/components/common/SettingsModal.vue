@@ -44,7 +44,7 @@
           :class="{ active: activeTab === 'features' }"
           @click="activeTab = 'features'"
         >
-          🚩 Phân hệ & Mock Data
+          🚩 Phân hệ tính năng
         </button>
       </div>
 
@@ -177,7 +177,7 @@
         </div>
       </div>
 
-      <!-- Tab 5: Cấu hình Phân hệ & Dữ liệu Mock -->
+      <!-- Tab 5: Cấu hình Phân hệ tính năng -->
       <div v-show="activeTab === 'features'" class="st-panel">
         <div class="features-intro">
           <strong>Cấu hình Bật / Tắt 5 phân hệ màn hình (Feature Flags):</strong>
@@ -205,19 +205,6 @@
             <input type="checkbox" v-model="featureConfig.history" />
             <span class="feature-name">🕒 Lịch sử cuộc gọi (/history)</span>
           </label>
-        </div>
-
-        <div class="mock-data-section">
-          <div class="st-toggle-row">
-            <div class="st-toggle-info">
-              <strong style="color: #2563eb;">⚡ Cho phép dữ liệu thử nghiệm (Mock Data & Offline Mode)</strong>
-              <small>
-                • <strong>KHI BẬT:</strong> Hiển thị nút "Chạy chế độ thử nghiệm Offline" ở trang Login và dùng dữ liệu mẫu khi mất kết nối Wazo.<br>
-                • <strong>KHI TẮT:</strong> Hệ thống chỉ chạy 100% dữ liệu thật từ máy chủ Wazo. Nếu máy chủ trả về rỗng hoặc lỗi, màn hình sẽ để trắng danh sách, tuyệt đối không dùng dữ liệu fake.
-              </small>
-            </div>
-            <input v-model="featureConfig.mockData" type="checkbox" class="toggle-cb" />
-          </div>
         </div>
 
         <div class="reset-row">
@@ -815,14 +802,6 @@ const handleSave = () => {
   font-size: 0.86rem;
   font-weight: 500;
   color: #1e293b;
-}
-
-.mock-data-section {
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: 8px;
-  padding: 10px 14px;
-  margin-bottom: 16px;
 }
 
 .reset-row {
