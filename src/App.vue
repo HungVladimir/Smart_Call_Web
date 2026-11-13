@@ -110,6 +110,7 @@ onMounted(async () => {
   window.addEventListener('wazo-incoming', handleIncomingCall)
   window.addEventListener('wazo-ended', handleCallEnded)
   window.addEventListener('wazo-registered', handleWazoRegistered)
+  window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
 onUnmounted(() => {
@@ -119,8 +120,15 @@ onUnmounted(() => {
   window.removeEventListener('wazo-incoming', handleIncomingCall)
   window.removeEventListener('wazo-ended', handleCallEnded)
   window.removeEventListener('wazo-registered', handleWazoRegistered)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   wazoService.disconnectPhone()
 })
+
+const handleBeforeUnload = () => {
+  if (wazoService.currentCallSession) {
+    wazoService.hangup()
+  }
+}
 
 const handleWazoRegistered = () => {
   isPhoneConnected.value = true
@@ -294,6 +302,7 @@ const onMissedIncomingCall = (callData) => {
 const handleCallEnded = () => {
   currentCall.value = null
   hasActiveCall.value = false
+  showIncomingModal.value = false
   audioService.stopAllTones()
 }
 
@@ -319,11 +328,16 @@ const handleLogout = () => {
   isPhoneConnected.value = false
   currentCall.value = null
   hasActiveCall.value = false
+  showIncomingModal.value = false
   router.push('/login')
 }
 
 const onDial = (extension) => {
   if (!extension) return
+  if (wazoService.hasActiveCall()) {
+    showToast('Bạn đang có một cuộc gọi khác. Vui lòng cúp máy trước khi gọi số mới!', 'warning')
+    return
+  }
   wazoService
     .makeCall(extension)
     .then((call) => {

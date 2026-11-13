@@ -68,7 +68,8 @@
           <p v-if="isCalling" class="duration-text" :class="{ ringingText: callState === 'ringing' }">
             {{ durationText }}
           </p>
-          <p v-else class="idle-text">Sẵn sàng thực hiện cuộc gọi</p>
+          <p v-if="isCalling && dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
+          <p v-else-if="!isCalling" class="idle-text">Sẵn sàng thực hiện cuộc gọi</p>
         </div>
 
         <!-- Điều khiển cuộc gọi -->
@@ -214,32 +215,61 @@ const durationText = computed(() => {
   return '00:00'
 })
 
+const dtmfLog = ref('')
+let callStartTime = null
+
 const pressKey = (key) => {
   audioService.playDtmfTone(key)
-  if (extension.value.length < 6) {
-    extension.value += key
+  if (callState.value === 'idle') {
+    // Khi đang rảnh: Nhập số máy lẻ để chuẩn bị quay số
+    if (extension.value.length < 8) {
+      extension.value += key
+    }
+  } else {
+    // Khi đang trong cuộc gọi (Ringing hoặc Talking): Gửi tín hiệu DTMF tới máy chủ tổng đài
+    dtmfLog.value += key
+    wazoService.sendDTMF(key)
+    logger.info('CALL', `Phát tín hiệu DTMF [${key}] trong cuộc gọi tới máy lẻ: ${extension.value}`)
   }
 }
 
 const clearDigit = () => {
-  extension.value = extension.value.slice(0, -1)
+  if (callState.value === 'idle') {
+    extension.value = extension.value.slice(0, -1)
+  }
 }
 
-// Bắt đầu đếm giây đàm thoại khi đối phương đã nhấc máy
+// Bắt đầu đếm giây đàm thoại khi đối phương đã nhấc máy (tính mốc thời gian chuẩn tránh lag khi ẩn tab)
 const startCallTimer = () => {
   callState.value = 'connected'
   audioService.stopRingbackTone()
+  callStartTime = Date.now()
   callSeconds.value = 0
   clearInterval(timer)
   timer = setInterval(() => {
-    if (!isHeld.value) {
-      callSeconds.value++
+    if (callStartTime && !isHeld.value) {
+      callSeconds.value = Math.max(0, Math.floor((Date.now() - callStartTime) / 1000))
     }
   }, 1000)
 }
 
 const handleDial = async () => {
   if (isDialing.value) return
+
+  // Chặn thực hiện cuộc gọi mới nếu đang trong cuộc gọi khác
+  if (callState.value !== 'idle' || wazoService.hasActiveCall()) {
+    logger.warn('CALL', 'Chặn quay số: Người dùng đang trong một cuộc gọi khác.')
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: '⚠️ Bạn đang có một cuộc gọi khác đang hoạt động. Vui lòng cúp máy trước khi gọi số mới!',
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
   const ext = extension.value.trim()
   if (!ext) return
 
@@ -425,6 +455,8 @@ const hangupCall = (dispatchEnded = true) => {
   callState.value = 'idle'
   isHeld.value = false
   isMuted.value = false
+  callStartTime = null
+  dtmfLog.value = ''
   clearInterval(timer)
 
   // Đồng bộ phát sự kiện wazo-ended để App.vue và toàn hệ thống cập nhật trạng thái đã kết thúc
@@ -436,16 +468,26 @@ const hangupCall = (dispatchEnded = true) => {
 const toggleMute = () => {
   isMuted.value = !isMuted.value
   try {
-    wazoService.mute()
+    wazoService.setMute(isMuted.value)
   } catch (e) {
     /* ignore */
   }
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message: isMuted.value
+          ? '🔇 Đã tắt Microphone (Mute).'
+          : '🎙️ Đã bật lại Microphone (Unmute).',
+        type: 'info',
+      },
+    }),
+  )
 }
 
 const toggleHold = () => {
   isHeld.value = !isHeld.value
   try {
-    wazoService.hold()
+    wazoService.setHold(isHeld.value)
   } catch (e) {
     /* ignore */
   }
@@ -469,6 +511,12 @@ const onRemoteAccepted = () => {
       detail: { message: `🎉 Cuộc gọi đã được kết nối thành công! Đang đàm thoại...`, type: 'success' },
     }),
   )
+}
+
+const onRemoteProgress = () => {
+  if (callState.value === 'ringing') {
+    audioService.startRingbackTone()
+  }
 }
 
 const onRemoteEnded = () => {
@@ -515,6 +563,7 @@ watch(
 
 onMounted(async () => {
   window.addEventListener('wazo-accepted', onRemoteAccepted)
+  window.addEventListener('wazo-progress', onRemoteProgress)
   window.addEventListener('wazo-ended', onRemoteEnded)
   window.addEventListener('wazo-failed', onRemoteFailed)
 
@@ -543,6 +592,7 @@ onUnmounted(() => {
   }
   audioService.stopAllTones()
   window.removeEventListener('wazo-accepted', onRemoteAccepted)
+  window.removeEventListener('wazo-progress', onRemoteProgress)
   window.removeEventListener('wazo-ended', onRemoteEnded)
   window.removeEventListener('wazo-failed', onRemoteFailed)
   clearInterval(timer)

@@ -257,6 +257,26 @@ class WazoService {
       this.isRegistered = false
       logger.warn('SIP', '🔴 Wazo WebRTC SIP Phone: Unregistered!')
       window.dispatchEvent(new CustomEvent('wazo-unregistered'))
+
+      // Tự động kết nối lại SIP sau 5 giây nếu đang đăng nhập và không ở chế độ offline
+      if (this.isLogged() && localStorage.getItem('smartcall_offline_mode') !== 'true') {
+        setTimeout(async () => {
+          if (this.isLogged() && !this.isRegistered) {
+            try {
+              logger.info('SIP', 'Đang tự động kết nối lại WebRTC Phone sau khi mất đăng ký...')
+              await this.connectPhone()
+            } catch (err) {
+              logger.warn('SIP', 'Tự động kết nối lại WebRTC Phone thất bại:', err)
+            }
+          }
+        }, 5000)
+      }
+    })
+
+    Wazo.Phone.on(Wazo.Phone.ON_PROGRESS, (callSession) => {
+      logger.info('CALL', '🔔 Sự kiện Wazo: Đường dây đang đổ chuông (ON_PROGRESS / 180 Ringing)')
+      audioService.startRingbackTone()
+      window.dispatchEvent(new CustomEvent('wazo-progress', { detail: callSession }))
     })
 
     Wazo.Phone.on(Wazo.Phone.ON_CALL_INCOMING, (callSession) => {
@@ -425,20 +445,70 @@ class WazoService {
     }
   }
 
-  mute(callSession = null) {
+  setMute(isMuted, callSession = null) {
     const session = callSession || this.currentCallSession
     if (session) {
-      Wazo.Phone.mute(session)
-      logger.info('CALL', 'Đã chuyển trạng thái Microphone (Mute/Unmute)')
+      try {
+        if (isMuted) {
+          Wazo.Phone.mute(session)
+          logger.info('CALL', 'Đã tắt Microphone (Mute)')
+        } else {
+          Wazo.Phone.unmute(session)
+          logger.info('CALL', 'Đã bật lại Microphone (Unmute)')
+        }
+      } catch (e) {
+        logger.warn('CALL', 'Lỗi chuyển trạng thái Mic:', e)
+      }
     }
   }
 
-  hold(callSession = null) {
+  setHold(isHeld, callSession = null) {
     const session = callSession || this.currentCallSession
     if (session) {
-      Wazo.Phone.hold(session)
-      logger.info('CALL', 'Đã chuyển trạng thái Giữ máy (Hold/Unhold)')
+      try {
+        if (isHeld) {
+          Wazo.Phone.hold(session)
+          logger.info('CALL', 'Đã giữ máy (Hold)')
+        } else {
+          if (typeof Wazo.Phone.unhold === 'function') {
+            Wazo.Phone.unhold(session)
+          } else if (typeof Wazo.Phone.resume === 'function') {
+            Wazo.Phone.resume(session)
+          }
+          logger.info('CALL', 'Đã tiếp tục đàm thoại (Unhold / Resume)')
+        }
+      } catch (e) {
+        logger.warn('CALL', 'Lỗi chuyển trạng thái Giữ máy:', e)
+      }
     }
+  }
+
+  sendDTMF(tone, callSession = null) {
+    const session = callSession || this.currentCallSession
+    if (session) {
+      try {
+        if (typeof Wazo.Phone.sendDTMF === 'function') {
+          Wazo.Phone.sendDTMF(tone, session)
+        } else if (typeof session.sendDtmf === 'function') {
+          session.sendDtmf(tone)
+        }
+        logger.info('CALL', `Đã gửi tín hiệu DTMF [${tone}] qua WebRTC tới máy chủ Asterisk.`)
+      } catch (e) {
+        logger.warn('CALL', `Lỗi gửi tín hiệu DTMF [${tone}]:`, e)
+      }
+    }
+  }
+
+  hasActiveCall() {
+    return Boolean(this.currentCallSession)
+  }
+
+  mute(callSession = null) {
+    this.setMute(true, callSession)
+  }
+
+  hold(callSession = null) {
+    this.setHold(true, callSession)
   }
 
   /**

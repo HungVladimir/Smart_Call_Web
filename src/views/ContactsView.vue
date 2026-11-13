@@ -327,6 +327,19 @@ const handleCall = (contact) => {
     return
   }
 
+  // Chặn nếu bản thân người dùng đang trong một cuộc gọi khác
+  if (wazoService.hasActiveCall()) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: '⚠️ Bạn đang có một cuộc gọi khác đang hoạt động. Vui lòng kết thúc cuộc gọi trước khi gọi số mới!',
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
   // Nếu đối phương đang trong cuộc gọi khác (busy) -> Chặn gọi và cảnh báo
   if (contact.status === 'busy') {
     window.dispatchEvent(

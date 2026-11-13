@@ -1243,6 +1243,30 @@ Dựa trên kết quả rà soát toàn diện trong tài liệu báo cáo kiể
 - **Dự án chính `Smart_Call_Web` (Production):** 100% dữ liệu thật từ máy chủ Wazo, tuyệt đối không chứa dữ liệu mock / fake data / timer giả lập.
 - **Chỉ sửa `Smart_Call_Web_Mock`:** Đối với mọi yêu cầu chỉnh sửa, bổ sung hoặc tối ưu liên quan đến Mock Data, dữ liệu mẫu, kịch bản thử nghiệm ngoại tuyến (danh bạ mẫu, tin nhắn mẫu, lịch sử mẫu, timer tự động nhấc máy giả lập), AI chỉ được thực hiện duy nhất trên dự án `Smart_Call_Web_Mock`, tuyệt đối không tác động hay sửa đổi mã nguồn của `Smart_Call_Web`.
 
+---
+
+## 18. KIỂM TOÁN CHUYÊN SÂU & KHẮC PHỤC TRIỆT ĐỂ 8 LỖ HỔNG NGHIỆP VỤ VOIP / WEBRTC
+
+Dựa trên báo cáo kiểm toán chuyên sâu toàn diện về giao thức thoại SIP và WebRTC, hệ thống đã được tối ưu hóa đồng bộ trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`):
+
+1. **Khắc phục Modal cuộc gọi đến bị treo khi người gọi hủy sớm (`App.vue`):**
+   - Bổ sung `showIncomingModal.value = false` vào `handleCallEnded()`, đảm bảo khi đối phương cúp máy hoặc sự kiện `ON_CALL_CANCELED` kích hoạt, modal lập tức đóng ngay và chuông dừng đổ.
+2. **Chuẩn hóa bấm phím DTMF & Ngăn chặn làm sai lệch số máy lẻ (`CallsView.vue` & `wazo.js`):**
+   - Phân định rõ ràng: Khi ở trạng thái rảnh (`idle`), phím số dùng để nhập số máy lẻ (`extension`). Khi đang trong cuộc gọi (`ringing` / `connected`), phím số chuyển sang chế độ phát tín hiệu DTMF: lưu vào `dtmfLog`, phát tiếng bíp cục bộ và gửi trực tiếp tín hiệu `Wazo.Phone.sendDTMF(tone, session)` sang máy chủ Asterisk để phục vụ tương tác cây menu IVR. Biến `extension` được bảo toàn nguyên vẹn, loại bỏ hoàn toàn lỗi lưu CDR sai số máy.
+3. **Sửa lỗi một chiều của nút Tắt/Bật Micro (Mute) và Giữ máy (Hold) (`wazo.js` & `CallsView.vue`):**
+   - Bổ sung 2 phương thức chuẩn hóa 2 chiều: `setMute(isMuted, session)` (gọi `Wazo.Phone.mute()` hoặc `Wazo.Phone.unmute()`) và `setHold(isHeld, session)` (gọi `Wazo.Phone.hold()` hoặc `Wazo.Phone.unhold()` / `resume()`), giúp người dùng có thể bật lại mic và tiếp tục đàm thoại sau khi giữ máy.
+4. **Chống xung đột gọi đè (Call Collision on Dial) (`CallsView.vue`, `ContactsView.vue`, `App.vue`):**
+   - Bổ sung guard kiểm tra `wazoService.hasActiveCall()` và `callState !== 'idle'` trước khi thực hiện bất kỳ lệnh gọi nào từ Bàn phím số, Danh bạ, Tin nhắn hoặc Quick Dial, ngăn chặn việc gọi đè làm đứt gãy phiên WebRTC đang hoạt động.
+5. **Đồng bộ thời lượng cuộc gọi chuẩn xác chống lag khi chuyển tab (`CallsView.vue`):**
+   - Chuyển đổi từ `setInterval` đếm giây tuần tự sang cơ chế lưu mốc thời gian bắt đầu nhấc máy `callStartTime = Date.now()` và tính thời lượng thực bằng `Math.floor((Date.now() - callStartTime) / 1000)`, triệt tiêu hoàn toàn hiện tượng thời lượng bị bóp nghẹt khi trình duyệt chạy nền.
+6. **Lắng nghe sự kiện `ON_PROGRESS` (180 Ringing) (`wazo.js` & `CallsView.vue`):**
+   - Đăng ký sự kiện `Wazo.Phone.ON_PROGRESS`, phát `wazo-progress` để đồng bộ âm chuông chờ chính xác theo phản hồi từ tổng đài.
+7. **Tự động kết nối lại SIP WebRTC khi mất đăng ký (`wazo.js`):**
+   - Trong `Wazo.Phone.ON_UNREGISTERED`, tự động đặt lịch thử kết nối lại sau 5 giây nếu người dùng đang đăng nhập, giúp máy lẻ tự phục hồi sau khi mạng chập chờn hoặc máy tính thức dậy từ chế độ Sleep.
+8. **Tự động cúp máy dọn dẹp phiên trên tổng đài khi đóng tab (`App.vue`):**
+   - Bổ sung listener `beforeunload` trên `window`, tự động kích hoạt `wazoService.hangup()` gửi bản tin SIP BYE tới Asterisk khi người dùng đóng tab hoặc reload trang, không để đường dây bị treo trạng thái máy bận.
+
+
 
 
 
