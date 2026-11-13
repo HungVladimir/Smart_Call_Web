@@ -259,6 +259,9 @@ const handleLogin = async () => {
     )
 
     window.dispatchEvent(new CustomEvent('app-login-success'))
+    if (wazoService.isPhoneRegistered()) {
+      window.dispatchEvent(new CustomEvent('wazo-registered'))
+    }
     loading.value = false
     router.push('/dashboard')
   } catch (err) {

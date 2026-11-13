@@ -186,11 +186,26 @@ const contactsList = ref([])
 // Lấy thông tin tài khoản đang đăng nhập
 const userName = ref(localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const userExtension = ref(localStorage.getItem('smartcall_extension') || '1001')
-const isSipOnline = ref(false)
+const isSipOnline = ref(
+  wazoService.isPhoneRegistered() ||
+    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true')
+)
 const showSipInfoModal = ref(false)
 
 const handleRegistered = () => {
   isSipOnline.value = true
+}
+
+const handleUnregistered = () => {
+  isSipOnline.value = false
+}
+
+const syncStatus = () => {
+  userName.value = localStorage.getItem('smartcall_username') || 'Quản trị viên'
+  userExtension.value = localStorage.getItem('smartcall_extension') || '1001'
+  const isOffline = localStorage.getItem('smartcall_offline_mode') === 'true'
+  const hasToken = Boolean(localStorage.getItem('smartcall_wazo_token'))
+  isSipOnline.value = wazoService.isPhoneRegistered() || (hasToken && !isOffline)
 }
 
 const showSipHelp = () => {
@@ -198,8 +213,7 @@ const showSipHelp = () => {
 }
 
 onMounted(async () => {
-  userName.value = localStorage.getItem('smartcall_username') || 'Quản trị viên'
-  userExtension.value = localStorage.getItem('smartcall_extension') || '1001'
+  syncStatus()
   try {
     contactsList.value = await contactService.getContacts()
   } catch (e) {
@@ -207,11 +221,15 @@ onMounted(async () => {
   }
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('wazo-registered', handleRegistered)
+  window.addEventListener('wazo-unregistered', handleUnregistered)
+  window.addEventListener('app-login-success', syncStatus)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('wazo-registered', handleRegistered)
+  window.removeEventListener('wazo-unregistered', handleUnregistered)
+  window.removeEventListener('app-login-success', syncStatus)
 })
 
 const handleClickOutside = (e) => {

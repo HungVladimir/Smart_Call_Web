@@ -10,6 +10,7 @@ class WazoService {
     this.host = import.meta.env.VITE_WAZO_HOST || '107.126.11.126:9443'
     this.clientId = import.meta.env.VITE_WAZO_CLIENT_ID || 'webapp-vue'
     this.listenersAttached = false
+    this.isRegistered = false
   }
 
   init() {
@@ -121,6 +122,7 @@ class WazoService {
 
   disconnectPhone() {
     try {
+      this.isRegistered = false
       this.stopRemoteAudio()
       audioService.stopAllTones()
       Wazo.Phone.disconnect()
@@ -131,17 +133,23 @@ class WazoService {
     }
   }
 
+  isPhoneRegistered() {
+    return Boolean(this.isRegistered)
+  }
+
   attachListeners() {
     if (this.listenersAttached) return
     this.listenersAttached = true
 
     // Lắng nghe sự kiện từ SDK và phát ra event toàn cục qua window
     Wazo.Phone.on(Wazo.Phone.ON_REGISTERED, () => {
+      this.isRegistered = true
       logger.success('SIP', '🟢 Wazo WebRTC SIP Phone: Registered thành công!')
       window.dispatchEvent(new CustomEvent('wazo-registered'))
     })
 
     Wazo.Phone.on(Wazo.Phone.ON_UNREGISTERED, () => {
+      this.isRegistered = false
       logger.warn('SIP', '🔴 Wazo WebRTC SIP Phone: Unregistered!')
       window.dispatchEvent(new CustomEvent('wazo-unregistered'))
     })

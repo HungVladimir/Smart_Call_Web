@@ -48,32 +48,38 @@
         </button>
       </div>
 
-      <!-- Tab 1: Âm thanh & WebRTC -->
+      <!-- Tab 1: Âm thanh & WebRTC (Thiết bị thật từ máy tính) -->
       <div v-show="activeTab === 'audio'" class="st-panel">
         <div class="st-field-group">
-          <label class="st-label">Microphone thu âm (Audio Input):</label>
-          <select v-model="selectedMic" class="st-select">
-            <option value="default">Microphone Array (Realtek High Definition Audio)</option>
-            <option value="headset">Headset Microphone (Jabra Evolve 65 Link)</option>
-            <option value="sys">Default System Microphone</option>
+          <label class="st-label">Microphone thu âm (Audio Input - Thiết bị thật):</label>
+          <select v-model="selectedMic" class="st-select" @change="restartMicMeter">
+            <option v-for="mic in availableMics" :key="mic.deviceId" :value="mic.deviceId">
+              {{ mic.label }}
+            </option>
+            <option v-if="availableMics.length === 0" value="default">
+              Microphone Mặc định của hệ thống
+            </option>
           </select>
 
           <div class="mic-meter-box">
-            <span class="meter-text">Tín hiệu Micro:</span>
+            <span class="meter-text">Tín hiệu Micro (VU Meter thật):</span>
             <div class="mic-meter-bar">
-              <div class="mic-meter-fill"></div>
+              <div class="mic-meter-fill" :style="{ width: `${micLevel}%` }"></div>
             </div>
-            <span class="meter-status">Hoạt động tốt</span>
+            <span class="meter-status" :class="{ active: micLevel > 5 }">{{ micStatusText }}</span>
           </div>
         </div>
 
         <div class="st-field-group">
-          <label class="st-label">Loa / Tai nghe phát tiếng (Audio Output):</label>
+          <label class="st-label">Loa / Tai nghe phát tiếng (Audio Output - Thiết bị thật):</label>
           <div class="output-row">
             <select v-model="selectedSpeaker" class="st-select">
-              <option value="headset">Headset Earphone (Jabra Evolve 65 Link)</option>
-              <option value="speakers">Speakers / Headphones (Realtek Audio)</option>
-              <option value="sys">Default System Audio Output</option>
+              <option v-for="spk in availableSpeakers" :key="spk.deviceId" :value="spk.deviceId">
+                {{ spk.label }}
+              </option>
+              <option v-if="availableSpeakers.length === 0" value="default">
+                Loa / Tai nghe Mặc định của hệ thống
+              </option>
             </select>
             <button class="btn-test-sound" @click="testSound">🔊 Thử loa</button>
           </div>
@@ -228,7 +234,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getFeatures, saveFeatures, resetFeatures } from '@/config/features'
 
 const props = defineProps({
@@ -240,14 +246,169 @@ const emit = defineEmits(['close'])
 const activeTab = ref('audio')
 const featureConfig = ref(getFeatures())
 
+// Danh sách thiết bị thật từ máy tính
+const availableMics = ref([])
+const availableSpeakers = ref([])
+const selectedMic = ref(localStorage.getItem('smartcall_selected_mic') || 'default')
+const selectedSpeaker = ref(localStorage.getItem('smartcall_selected_speaker') || 'default')
+const ringtoneVol = ref(80)
+
+// Quản lý VU Meter đo tín hiệu Micro thật
+const micLevel = ref(0)
+const micStatusText = computed(() => {
+  if (micLevel.value > 15) return '🟢 Đang thu âm giọng nói'
+  if (micLevel.value > 2) return '🟡 Tín hiệu micro nhẹ'
+  return '⚪ Sẵn sàng (Hãy nói vào mic để thử)'
+})
+
+let audioContext = null
+let analyser = null
+let micStream = null
+let animFrameId = null
+
+const loadAudioDevices = async () => {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return
+
+  try {
+    // Xin quyền nhẹ để lấy tên đầy đủ của thiết bị (label)
+    if (navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach((t) => t.stop())
+      } catch {
+        /* ignore nếu user đã cấp hoặc hủy */
+      }
+    }
+
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const mics = devices
+      .filter((d) => d.kind === 'audioinput')
+      .map((d, i) => ({
+        deviceId: d.deviceId,
+        label: d.label || `Microphone ${i + 1} (${d.deviceId.slice(0, 8)}...)`,
+      }))
+    const speakers = devices
+      .filter((d) => d.kind === 'audiooutput')
+      .map((d, i) => ({
+        deviceId: d.deviceId,
+        label: d.label || `Loa / Tai nghe ${i + 1} (${d.deviceId.slice(0, 8)}...)`,
+      }))
+
+    availableMics.value = mics
+    availableSpeakers.value = speakers
+
+    if (mics.length > 0 && (!selectedMic.value || selectedMic.value === 'default')) {
+      selectedMic.value = mics[0].deviceId
+    }
+    if (speakers.length > 0 && (!selectedSpeaker.value || selectedSpeaker.value === 'default')) {
+      selectedSpeaker.value = speakers[0].deviceId
+    }
+  } catch (err) {
+    console.warn('Lỗi quét thiết bị âm thanh:', err)
+  }
+}
+
+const startMicMeter = async () => {
+  stopMicMeter()
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return
+
+  try {
+    const constraints = {
+      audio:
+        selectedMic.value && selectedMic.value !== 'default'
+          ? { deviceId: { exact: selectedMic.value } }
+          : true,
+    }
+    micStream = await navigator.mediaDevices.getUserMedia(constraints)
+    const AudioCtx = window.AudioContext || window.webkitAudioContext
+    if (!AudioCtx) return
+    audioContext = new AudioCtx()
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume()
+    }
+    analyser = audioContext.createAnalyser()
+    analyser.fftSize = 256
+    analyser.smoothingTimeConstant = 0.4
+
+    const source = audioContext.createMediaStreamSource(micStream)
+    source.connect(analyser)
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount)
+
+    const updateVolume = () => {
+      if (!analyser) return
+      analyser.getByteFrequencyData(dataArray)
+      let sum = 0
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i]
+      }
+      const avg = sum / dataArray.length
+      // Chuẩn hóa mức âm lượng từ 0% đến 100%
+      micLevel.value = Math.min(100, Math.round((avg / 64) * 100))
+      animFrameId = requestAnimationFrame(updateVolume)
+    }
+    updateVolume()
+  } catch (e) {
+    micLevel.value = 0
+    console.warn('Lỗi kết nối Micro đo tín hiệu VU:', e)
+  }
+}
+
+const stopMicMeter = () => {
+  if (animFrameId) {
+    cancelAnimationFrame(animFrameId)
+    animFrameId = null
+  }
+  if (micStream) {
+    micStream.getTracks().forEach((t) => t.stop())
+    micStream = null
+  }
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close().catch(() => {})
+    audioContext = null
+  }
+  micLevel.value = 0
+}
+
+const restartMicMeter = () => {
+  localStorage.setItem('smartcall_selected_mic', selectedMic.value)
+  startMicMeter()
+}
+
 watch(
   () => props.isOpen,
   (val) => {
     if (val) {
       featureConfig.value = getFeatures()
+      if (activeTab.value === 'audio') {
+        loadAudioDevices().then(() => startMicMeter())
+      }
+    } else {
+      stopMicMeter()
     }
   },
 )
+
+watch(
+  () => activeTab.value,
+  (tab) => {
+    if (props.isOpen && tab === 'audio') {
+      loadAudioDevices().then(() => startMicMeter())
+    } else {
+      stopMicMeter()
+    }
+  },
+)
+
+onMounted(() => {
+  if (props.isOpen && activeTab.value === 'audio') {
+    loadAudioDevices().then(() => startMicMeter())
+  }
+})
+
+onUnmounted(() => {
+  stopMicMeter()
+})
 
 const handleResetFeatures = () => {
   featureConfig.value = resetFeatures()
@@ -257,10 +418,6 @@ const handleResetFeatures = () => {
     }),
   )
 }
-
-const selectedMic = ref('default')
-const selectedSpeaker = ref('headset')
-const ringtoneVol = ref(80)
 
 const dndEnabled = ref(false)
 const forwardBusy = ref('1002')
@@ -272,11 +429,35 @@ const notifyDesktop = ref(true)
 const notifySound = ref(true)
 
 const testSound = () => {
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: '🔊 Đang phát âm thanh thử nghiệm qua loa/tai nghe...' },
-    }),
-  )
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext
+    if (!AudioCtx) return
+    const ctx = new AudioCtx()
+    const now = ctx.currentTime
+
+    // Chuỗi 3 nốt nhạc du dương C5 - E5 - G5 để test loa thật
+    const notes = [523.25, 659.25, 783.99]
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(freq, now + idx * 0.16)
+      gain.gain.setValueAtTime(0.2, now + idx * 0.16)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.16 + 0.28)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now + idx * 0.16)
+      osc.stop(now + idx * 0.16 + 0.28)
+    })
+
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: '🔊 Đang phát âm thanh kiểm tra loa (3 nốt nhạc)!', type: 'info' },
+      }),
+    )
+  } catch (e) {
+    console.warn('Lỗi thử loa:', e)
+  }
 }
 
 const savePassword = () => {
@@ -288,11 +469,14 @@ const savePassword = () => {
 }
 
 const handleSave = () => {
+  localStorage.setItem('smartcall_selected_mic', selectedMic.value)
+  localStorage.setItem('smartcall_selected_speaker', selectedSpeaker.value)
   saveFeatures(featureConfig.value)
+  stopMicMeter()
   emit('close')
   window.dispatchEvent(
     new CustomEvent('app-toast', {
-      detail: { message: '✅ Đã lưu cấu hình Cài đặt và Cờ phân hệ thành công!' },
+      detail: { message: '✅ Đã lưu cấu hình Cài đặt, Thiết bị âm thanh và Phân hệ thành công!' },
     }),
   )
 }
@@ -468,23 +652,20 @@ const handleSave = () => {
 
 .mic-meter-fill {
   height: 100%;
-  width: 60%;
-  background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
+  background: linear-gradient(90deg, #22c55e 0%, #eab308 70%, #ef4444 100%);
   border-radius: 4px;
-  animation: micPulse 1.2s infinite alternate ease-in-out;
-}
-
-@keyframes micPulse {
-  from {
-    width: 20%;
-  }
-  to {
-    width: 80%;
-  }
+  transition: width 0.06s ease-out;
 }
 
 .meter-status {
   font-size: 0.75rem;
+  color: #94a3b8;
+  font-weight: 500;
+  min-width: 175px;
+  text-align: right;
+}
+
+.meter-status.active {
   color: #4ade80;
   font-weight: 600;
 }

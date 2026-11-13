@@ -107,15 +107,27 @@
               <span class="ext-tag">📞 {{ contact.number || 'Chưa gán máy lẻ' }}</span>
             </td>
 
-            <!-- 4. Trạng thái Online/Offline -->
+            <!-- 4. Trạng thái Online/Offline/Busy từ Wazo Presence -->
             <td>
               <div class="status-cell">
                 <span
                   class="status-dot"
-                  :class="contact.status === 'online' ? 'status-online' : 'status-offline'"
+                  :class="`status-${contact.status || 'offline'}`"
                 ></span>
-                <span class="status-label" :class="{ online: contact.status === 'online' }">
-                  {{ contact.status === 'online' ? 'Online' : 'Offline' }}
+                <span class="status-label" :class="`label-${contact.status || 'offline'}`">
+                  {{
+                    contact.status === 'online'
+                      ? 'Trực tuyến'
+                      : contact.status === 'busy'
+                        ? 'Đang gọi'
+                        : contact.status === 'dnd'
+                          ? 'Bận (DND)'
+                          : contact.status === 'away'
+                            ? 'Vắng mặt'
+                            : contact.status === 'ringing'
+                              ? 'Chuông reo'
+                              : 'Ngoại tuyến'
+                  }}
                 </span>
               </div>
             </td>
@@ -629,6 +641,24 @@ const getAvatarColor = (name) => {
   box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
 }
 
+.status-busy {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.status-dnd {
+  background: #f59e0b;
+}
+
+.status-away {
+  background: #f97316;
+}
+
+.status-ringing {
+  background: #3b82f6;
+  animation: pulse 1s infinite alternate;
+}
+
 .status-offline {
   background: #94a3b8;
 }
@@ -638,8 +668,23 @@ const getAvatarColor = (name) => {
   color: #64748b;
 }
 
-.status-label.online {
+.label-online {
   color: #16a34a;
+  font-weight: 600;
+}
+
+.label-busy {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.label-dnd {
+  color: #d97706;
+  font-weight: 600;
+}
+
+.label-ringing {
+  color: #2563eb;
   font-weight: 600;
 }
 

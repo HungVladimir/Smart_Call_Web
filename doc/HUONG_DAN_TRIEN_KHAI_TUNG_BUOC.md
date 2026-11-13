@@ -992,6 +992,30 @@ Hệ thống ghi log trực quan đã được tích hợp toàn diện:
   - Ở góc dưới bên phải màn hình có nút nổi **`📋 Logs`**.
   - Nhấp vào nút để mở bảng điều khiển **Live Debug Console**: Có bộ lọc theo danh mục, nút **Sao chép**, nút **Xóa**, tự động cập nhật từng giây khi bạn hoặc đồng nghiệp thao tác.
 
+---
+
+## 11. ĐỒNG BỘ TRẠNG THÁI TRỰC TUYẾN TỨC THÌ, PRESENCE THẬT VÀ PHẦN CỨNG ÂM THANH
+
+### 11.1. Xử lý trạng thái Trực tuyến tổng đài ngay lập tức sau khi đăng nhập (Không cần F5)
+- **Cơ chế trước đây:** Header chỉ lắng nghe sự kiện `wazo-registered`. Khi đăng nhập tại màn hình `/login`, sự kiện SIP bắn ra trước khi router chuyển trang sang `/dashboard`, khiến Header khi vừa sinh ra bị lỡ sự kiện và tiếp tục hiển thị trạng thái Offline cho đến khi bấm F5.
+- **Giải pháp tối ưu:** Lưu cờ `this.isRegistered` trong `wazoService`. Khi `AppHeader.vue` và `AppSidebar.vue` khởi tạo trong `onMounted`, hệ thống chủ động gọi hàm kiểm tra `wazoService.isPhoneRegistered()` để chuyển ngay sang `🟢 Trực tuyến (1001)` tức thì.
+
+### 11.2. Đồng bộ trạng thái Presence thật cho toàn bộ Danh bạ qua Wazo Chatd
+- Thay vì gán cứng trạng thái `online`, sau khi nạp danh bạ từ `wazo-dird`, hệ thống gom toàn bộ `user_uuid` của các nhân viên và gọi API:
+  `GET /api/chatd/1.0/users/presences?user_uuid=uuid1,uuid2,...`
+- Phân loại chính xác 5 trạng thái hiển thị trên giao diện:
+  - 🟢 **Trực tuyến (Online):** Có line SIP đang khả dụng (`lines[].state !== 'unavailable'`).
+  - 🔴 **Đang gọi (Busy):** Line đang ở trạng thái `talking` hoặc `holding`.
+  - 🔵 **Đang đổ chuông (Ringing):** Line đang nhận cuộc gọi (`ringing` / `progressing`).
+  - 🟠 **Bận / DND (Do Not Disturb):** Nhân viên đang kích hoạt chế độ Không làm phiền.
+  - ⚪ **Ngoại tuyến (Offline):** Chưa đăng nhập hoặc không có line SIP đăng ký.
+
+### 11.3. Quét thiết bị phần cứng âm thanh thật và Tín hiệu Micro thời gian thực (VU Meter)
+- **Thiết bị thật:** Sử dụng `navigator.mediaDevices.enumerateDevices()` để quét và hiển thị đúng 100% tên các Micro và Loa/Tai nghe thực tế cắm trên máy tính.
+- **Tín hiệu Micro thật:** Dùng Web Audio API `AudioContext` + `AnalyserNode` thu âm trực tiếp luồng mic thật để tính toán biên độ âm lượng (0% - 100%), thanh VU Meter co giãn mượt mà theo độ lớn giọng nói của người dùng và tự hạ về 0% khi im lặng.
+- **Thử loa thật:** Nút "🔊 Thử loa" phát chuỗi âm thanh 3 nốt nhạc du dương qua AudioContext ra thiết bị xuất âm thanh đã chọn.
+
+
 
 
 

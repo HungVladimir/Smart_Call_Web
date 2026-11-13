@@ -168,7 +168,8 @@ class ContactService {
       // Trường hợp 1: Dạng danh sách đối tượng (items)
       if (Array.isArray(contactsData.items) && contactsData.items.length > 0) {
         return contactsData.items.map((item, index) => {
-          const id = item.uuid || item.id || `wazo-${index}`
+          const userUuid = item.user_uuid || item.uuid || (typeof item.relations === 'object' && item.relations?.user_uuid) || null
+          const id = userUuid || item.id || `wazo-${index}`
 
           // 1. Tên hiển thị: Wazo Dird trả firstname và lastname riêng biệt
           const fn = (item.firstname || item.firstName || '').trim()
@@ -206,26 +207,29 @@ class ContactService {
 
           return {
             id,
+            uuid: userUuid,
             name,
             email,
             dept,
             number: String(number || ''),
-            status: 'online',
+            status: 'offline', // Sẽ được cập nhật bằng presence thật từ chatd bên dưới
             unreadCount: 0,
             isFavorite: favorites.includes(id),
           }
         })
+        return await this.loadPresencesForContacts(mappedList)
       }
 
       // Trường hợp 2: Dạng bảng cột (column_types & results)
       if (Array.isArray(contactsData.results) && Array.isArray(contactsData.column_types)) {
         const cols = contactsData.column_types
-        return contactsData.results.map((r, index) => {
+        const mappedList = contactsData.results.map((r, index) => {
           const getVal = (colName) => {
             const idx = cols.indexOf(colName)
             return idx !== -1 ? r.column_values[idx] : null
           }
-          const id = r.relations?.user_uuid || `wazo-${index}`
+          const userUuid = r.relations?.user_uuid || null
+          const id = userUuid || `wazo-${index}`
           const fn = (getVal('firstname') || '').trim()
           const ln = (getVal('lastname') || '').trim()
           const fullName = [fn, ln].filter(Boolean).join(' ').trim()
@@ -236,15 +240,17 @@ class ContactService {
 
           return {
             id,
+            uuid: userUuid,
             name,
             email,
             dept,
             number: String(number || ''),
-            status: 'online',
+            status: 'offline',
             unreadCount: 0,
             isFavorite: favorites.includes(id),
           }
         })
+        return await this.loadPresencesForContacts(mappedList)
       }
 
       if (!isFeatureEnabled('mockData')) {
@@ -264,6 +270,60 @@ class ContactService {
         isFavorite: favorites.includes(c.id),
       }))
     }
+  }
+
+  /**
+   * Tải trạng thái hiện diện (Presence) thời gian thực của danh sách nhân sự từ Wazo Chatd
+   * GET /api/chatd/1.0/users/presences?user_uuid=...
+   */
+  async loadPresencesForContacts(contacts) {
+    if (!Array.isArray(contacts) || contacts.length === 0) return contacts
+    const token = wazoService.getToken()
+    if (!token) return contacts
+
+    const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
+    const uuids = contacts
+      .map((c) => c.uuid || c.id)
+      .filter((id) => id && String(id).includes('-') && !String(id).startsWith('emp-') && !String(id).startsWith('wazo-'))
+
+    if (uuids.length === 0) return contacts
+
+    try {
+      const res = await fetch(`${host}/api/chatd/1.0/users/presences?user_uuid=${encodeURIComponent(uuids.join(','))}`, {
+        headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+      })
+      if (!res.ok) return contacts
+
+      const data = await res.json()
+      const presences = {}
+      ;(data.items || []).forEach((p) => {
+        const u = p.uuid || p.user_uuid
+        if (u) presences[u] = p
+      })
+
+      contacts.forEach((c) => {
+        const p = presences[c.uuid || c.id]
+        if (p) {
+          const lines = (p.lines || []).map((l) => l.state)
+          if (lines.some((s) => s === 'talking' || s === 'holding')) {
+            c.status = 'busy'
+          } else if (lines.some((s) => s === 'ringing' || s === 'progressing')) {
+            c.status = 'ringing'
+          } else if (p.do_not_disturb) {
+            c.status = 'dnd'
+          } else if (p.state === 'away') {
+            c.status = 'away'
+          } else {
+            const online = lines.length ? lines.some((s) => s !== 'unavailable') : p.connected === true
+            c.status = online ? 'online' : 'offline'
+          }
+        }
+      })
+      logger.info('API', `Đã cập nhật trạng thái Presence thật cho ${data.items?.length || 0} nhân sự từ Wazo Chatd`)
+    } catch (e) {
+      logger.warn('API', 'Không thể nạp trạng thái presence từ chatd:', e.message)
+    }
+    return contacts
   }
 
   /**

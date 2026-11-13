@@ -60,11 +60,15 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { contactService } from '@/services/contactService'
 import { chatService } from '@/services/chatService'
 import { historyService } from '@/services/historyService'
+import { wazoService } from '@/services/wazo'
 import { getFeatures } from '@/config/features'
 
 const features = ref(getFeatures())
 const userExt = ref(localStorage.getItem('smartcall_extension') || '1001')
-const isWebRtcReady = ref(false)
+const isWebRtcReady = ref(
+  wazoService.isPhoneRegistered() ||
+    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true')
+)
 
 const onFeaturesChanged = (e) => {
   features.value = e.detail || getFeatures()
@@ -78,8 +82,15 @@ const handleRegistered = () => {
   isWebRtcReady.value = true
 }
 
+const handleUnregistered = () => {
+  isWebRtcReady.value = false
+}
+
 const updateSidebarCounts = async () => {
   userExt.value = localStorage.getItem('smartcall_extension') || '1001'
+  const isOffline = localStorage.getItem('smartcall_offline_mode') === 'true'
+  const hasToken = Boolean(localStorage.getItem('smartcall_wazo_token'))
+  isWebRtcReady.value = wazoService.isPhoneRegistered() || (hasToken && !isOffline)
 
   // 1. Thống kê tổng số danh bạ
   try {
@@ -117,6 +128,7 @@ const updateSidebarCounts = async () => {
 onMounted(() => {
   updateSidebarCounts()
   window.addEventListener('wazo-registered', handleRegistered)
+  window.addEventListener('wazo-unregistered', handleUnregistered)
   window.addEventListener('app-login-success', updateSidebarCounts)
   window.addEventListener('smartcall-rooms-updated', updateSidebarCounts)
   window.addEventListener('smartcall-contacts-updated', updateSidebarCounts)
@@ -126,6 +138,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('wazo-registered', handleRegistered)
+  window.removeEventListener('wazo-unregistered', handleUnregistered)
   window.removeEventListener('app-login-success', updateSidebarCounts)
   window.removeEventListener('smartcall-rooms-updated', updateSidebarCounts)
   window.removeEventListener('smartcall-contacts-updated', updateSidebarCounts)
