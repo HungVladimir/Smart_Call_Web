@@ -195,16 +195,39 @@ class WazoService {
 
     Wazo.Phone.on(Wazo.Phone.ON_CALL_ACCEPTED, (callSession) => {
       this.currentCallSession = callSession
-      logger.success('CALL', '🟢 Sự kiện Wazo: Cuộc gọi đã được kết nối! Đang đàm thoại 2 chiều.')
+      logger.success('CALL', '🟢 Sự kiện Wazo: Cuộc gọi đã được kết nối! Đang đàm thoại 2 chiều (Full-Duplex).')
       audioService.stopRingbackTone()
+
+      // 1. Thử gắn luồng âm thanh ngay lập tức nếu stream đã sẵn sàng
       try {
-        const stream = Wazo.Phone.getRemoteStream(callSession)
-        if (stream) {
-          this.playRemoteStream(stream)
+        const immediateStream = Wazo.Phone.getRemoteStream(callSession)
+        if (immediateStream) {
+          this.playRemoteStream(immediateStream)
         }
       } catch (err) {
-        logger.warn('CALL', 'Lỗi gắn luồng âm thanh đàm thoại', err)
+        /* ignore */
       }
+
+      // 2. Dự phòng an toàn theo mã tham chiếu: Kiểm tra sau 600ms xem SDK đã phát audio chưa, nếu chưa thì kích hoạt phát
+      setTimeout(() => {
+        try {
+          const sdkAudios = [...document.querySelectorAll('audio')].filter(
+            (a) => a.id !== 'wazo-remote-audio' && a.srcObject && !a.paused
+          )
+          if (sdkAudios.length > 0) {
+            logger.info('AUDIO', 'Luồng âm thanh WebRTC đã được phát tự động bởi Wazo SDK.')
+            return
+          }
+          const stream = Wazo.Phone.getRemoteStream(callSession)
+          if (stream) {
+            this.playRemoteStream(stream)
+            logger.info('AUDIO', 'Đã kích hoạt luồng âm thanh đàm thoại 2 chiều dự phòng.')
+          }
+        } catch (err) {
+          logger.warn('AUDIO', 'Cảnh báo đồng bộ luồng âm thanh:', err)
+        }
+      }, 600)
+
       window.dispatchEvent(new CustomEvent('wazo-accepted', { detail: callSession }))
     })
   }
@@ -256,8 +279,14 @@ class WazoService {
         /* ignore */
       }
       this.currentCallSession = null
-      this.stopRemoteAudio()
+    } else {
+      try {
+        Wazo.Phone.hangup()
+      } catch (e) {
+        /* ignore */
+      }
     }
+    this.stopRemoteAudio()
   }
 
   accept(callSession = null) {

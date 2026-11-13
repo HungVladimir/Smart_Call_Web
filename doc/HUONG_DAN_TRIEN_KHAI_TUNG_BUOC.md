@@ -1015,6 +1015,30 @@ Hệ thống ghi log trực quan đã được tích hợp toàn diện:
 - **Tín hiệu Micro thật:** Dùng Web Audio API `AudioContext` + `AnalyserNode` thu âm trực tiếp luồng mic thật để tính toán biên độ âm lượng (0% - 100%), thanh VU Meter co giãn mượt mà theo độ lớn giọng nói của người dùng và tự hạ về 0% khi im lặng.
 - **Thử loa thật:** Nút "🔊 Thử loa" phát chuỗi âm thanh 3 nốt nhạc du dương qua AudioContext ra thiết bị xuất âm thanh đã chọn.
 
+---
+
+## 12. KIỂM SOÁT LUỒNG GỌI ĐIỆN 1-1 VÀ CƠ CHẾ ÂM THANH SONG CÔNG (FULL-DUPLEX)
+
+### 12.1. Bản chất luồng thoại 1-1 trong WebRTC và Wazo Platform
+- **Song công toàn phần (Full-Duplex):** Hệ thống sử dụng 2 luồng RTP âm thanh hai chiều độc lập (`sendrecv`) truyền tải bằng codec Opus tần số 48kHz. Hai bên tham gia cuộc gọi hoàn toàn có thể vừa nói vừa nghe đồng thời trong cùng một thời điểm mà không bị ngắt hoặc phải chờ nhau (khác với cơ chế bộ đàm Half-Duplex Push-to-Talk).
+- **Cơ chế gắn luồng âm thanh dự phòng (Fallback Audio Attachment):**
+  - Khi bắt sự kiện `Wazo.Phone.ON_CALL_ACCEPTED`, Wazo SDK tự động tạo thẻ `<audio id="audio-{sessionId}">` và phát luồng âm thanh nhận được.
+  - Nhằm phòng ngừa tình trạng trình duyệt chậm gắn `remoteMediaStream` trên các mạng có độ trễ cao, hệ thống bổ sung cơ chế kiểm tra dự phòng sau 600ms (theo mã nguồn tham chiếu chuẩn). Nếu phát hiện chưa có thẻ audio nào đang phát, hệ thống tự động gắn `stream` vào thẻ `wazo-remote-audio` để kích hoạt luồng phát ngay tức thì.
+
+### 12.2. Vấn đề thử nghiệm trên cùng 1 máy tính với 1 Microphone
+Khi thử nghiệm cuộc gọi giữa 2 tài khoản (ví dụ mở 2 tab trình duyệt trên cùng 1 máy tính):
+1. **Bộ lọc khử tiếng vọng (WebRTC Acoustic Echo Cancellation - AEC):**
+   - Khi Tab A thu tiếng từ Mic máy tính gửi sang Tab B.
+   - Tab B phát tiếng ra Loa máy tính.
+   - Chiếc Mic duy nhất trên máy tính ngay lập tức thu ngược âm thanh vừa phát ra từ Loa (gây vòng lặp Acoustic Feedback Loop).
+   - Bộ xử lý WebRTC AEC của trình duyệt sẽ phát hiện tín hiệu lặp và lập tức **dập tắt (mute) tín hiệu micro** để chống rú rít, khiến người dùng lầm tưởng một bên không nói được hoặc không nghe được.
+2. **Tranh chấp quyền kiểm soát Micro (Exclusive Mic Access):**
+   - Một số sound card/driver (Realtek, tai nghe Bluetooth) chỉ cấp dữ liệu âm thanh cho ứng dụng/tab đang được focus; tab chạy nền sẽ bị trả về tín hiệu im lặng (zero-stream).
+3. **Khuyến nghị kiểm thử chuẩn xác:**
+   - **Tốt nhất:** Kiểm thử trên 2 thiết bị máy tính riêng biệt (hoặc 1 máy tính và 1 phần mềm Softphone/điện thoại di động).
+   - **Nếu kiểm thử trên 1 máy tính:** Cần đeo tai nghe (Headphone) để Loa không phát vọng ngược vào Micro, hoặc cấu hình 2 Micro riêng biệt cho 2 trình duyệt.
+
+
 
 
 
