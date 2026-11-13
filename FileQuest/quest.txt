@@ -1,3 +1,7 @@
-[x] 1. cái nút trực tuyết ( thông tin tổng đài) , sau khi tôi login acc chính vào thì nó vẫn hiện offline, phải f5 lại page thì mới hiện trực tuyến. -> ĐÃ XỬ LÝ (Đồng bộ tức thì qua wazoService.isPhoneRegistered() trong onMounted)
-[x] 2. phần trạng thái trong danh bạ , có get được trạng thái online offline thật không? hiện tại đang là fake đúng không? -> ĐÃ XỬ LÝ (Tích hợp API Wazo Chatd GET /api/chatd/1.0/users/presences lấy trạng thái thật của từng nhân sự)
-[x] 3. phần setting , hiện tại đang fake mic, loa, và tín hiệu micro đúng không? có get được mic loa, và tín hiệu thật từ máy không? -> ĐÃ XỬ LÝ (Tích hợp Web Audio API + enumerateDevices quét thiết bị thật và live VU meter phân tích giọng nói thật)
+[x] 1. Nút delete history: Giữ nguyên logic gọi DELETE /api/call-logd/1.0/users/me/cdr theo chuẩn Wazo server.
+[x] 2. Phần trạng thái danh bạ: Đã sửa lệnh return sớm, chuẩn hóa query param ?user_uuid=uuid1,uuid2 và kết nối websocketd realtime presence.
+[x] 3. Chặn tự gọi cho chính mình: Đã thêm kiểm tra myExtension trong CallsView và lọc bỏ tài khoản của chính mình khỏi danh bạ.
+[x] 4. F5 ở tab danh bạ: Khắc phục triệt để bằng cách đọc token trực tiếp từ localStorage và in-memory cache trong contactService.
+[x] 5. Máy không có Mic ngắt gọi ngay: Đã thêm kiểm tra phần cứng microphone bằng enumerateDevices(), toast thông báo chi tiết và khóa chống spam nút gọi 1.5s.
+[x] 6. Chuyển tab bị giật/load lại: Đã bọc <keep-alive> cho router-view trong App.vue, chuyển tab mượt mà 0ms.
+[x] 7. View SmartCall : Đang đàm thoại: Đã dọn dẹp widget nổi CallControlPanel bị trùng lặp, tối ưu tập trung 100% vào CallsView.

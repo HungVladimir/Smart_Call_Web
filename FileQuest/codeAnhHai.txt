@@ -1,0 +1,152 @@
+
+CallPanel.vue	<script setup>
+import { onBeforeUnmount, ref } from 'vue';
+import { state, call, accept, reject, hangup } from '../wazo';
+
+const number = ref('');
+const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
+
+// Đồng hồ cho thời lượng cuộc gọi
+const now = ref(Date.now());
+const tick = setInterval(() => (now.value = Date.now()), 1000);
+onBeforeUnmount(() => clearInterval(tick));
+
+function duration(startedAt) {
+  if (!startedAt) return '';
+  const s = Math.max(0, Math.floor((now.value - startedAt) / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function label(c) {
+  if (c.status === 'active') return `Đang nói · ${duration(c.startedAt)}`;
+  if (c.direction === 'in') return 'Cuộc gọi đến…';
+  return c.status === 'ringing' ? 'Đang đổ chuông…' : 'Đang gọi…';
+}
+
+function dial() {
+  call(number.value);
+  number.value = '';
+}
+</script>
+
+<template>
+  <section class="card phone">
+    <h2>Điện thoại</h2>
+
+    <div v-if="state.calls.length" class="calls">
+      <div v-for="c in state.calls" :key="c.id" class="call" :class="[c.status, c.direction]">
+        <div>
+          <strong>{{ c.name || c.number }}</strong>
+          <span class="muted" v-if="c.name && c.name !== c.number"> · {{ c.number }}</span>
+          <div class="muted">{{ label(c) }}</div>
+        </div>
+        <div class="actions">
+          <template v-if="c.direction === 'in' && c.status === 'ringing'">
+            <button class="accept" @click="accept(c.id)">Nghe</button>
+            <button class="hang" @click="reject(c.id)">Từ chối</button>
+          </template>
+          <button v-else class="hang" @click="hangup(c.id)">Cúp máy</button>
+        </div>
+      </div>
+    </div>
+
+    <form class="dial" @submit.prevent="dial">
+      <input v-model="number" inputmode="tel" placeholder="Nhập số máy lẻ, vd. 1002" />
+      <div class="pad">
+        <button type="button" v-for="k in keys" :key="k" @click="number += k">{{ k }}</button>
+      </div>
+      <div class="dial-actions">
+        <button type="button" class="ghost" @click="number = number.slice(0, -1)">⌫</button>
+        <button class="accept" :disabled="!number || !state.registered">Gọi</button>
+      </div>
+    </form>
+  </section>
+</template>
+ 	 
+ContactList.vue	<script setup>
+import { computed, ref } from 'vue';
+import { state, call, statusOf, searchContacts, loadContacts } from '../wazo';
+
+const filter = ref('');
+
+const visible = computed(() => {
+  const f = filter.value.trim().toLowerCase();
+  if (!f || state.contactsMode === 'search') return state.contacts;
+  return state.contacts.filter((c) => c.name.toLowerCase().includes(f) || String(c.exten).includes(f));
+});
+
+const busyNow = computed(() => state.calls.length > 0);
+
+function onSearch() {
+  if (state.contactsMode === 'search') searchContacts(filter.value);
+}
+</script>
+
+<template>
+  <section class="card contacts">
+    <div class="card-head">
+      <h2>Danh bạ</h2>
+      <button class="ghost small" @click="loadContacts" title="Tải lại">↻</button>
+    </div>
+
+    <input
+      v-model="filter"
+      :placeholder="state.contactsMode === 'search' ? 'Nhập tên hoặc số rồi Enter' : 'Lọc theo tên hoặc số'"
+      @keyup.enter="onSearch"
+    />
+
+    <p v-if="state.contactsError" class="error">{{ state.contactsError }}</p>
+    <p v-else-if="!visible.length" class="muted">Không có ai.</p>
+
+    <ul>
+      <li v-for="c in visible" :key="c.uuid || c.exten">
+        <span class="dot" :class="statusOf(c.uuid).key" :title="statusOf(c.uuid).label"></span>
+        <div class="who">
+          <strong>{{ c.name }}</strong>
+          <span class="muted">{{ c.exten || '—' }} · {{ statusOf(c.uuid).label }}</span>
+        </div>
+        <button class="call-btn" :disabled="!c.exten || busyNow" @click="call(c.exten)" title="Gọi">📞</button>
+      </li>
+    </ul>
+  </section>
+</template>
+ 	 
+App.vue	<script setup>
+import { ref } from 'vue';
+import { state, logout } from './wazo';
+import LoginForm from './components/LoginForm.vue';
+import ContactList from './components/ContactList.vue';
+import CallPanel from './components/CallPanel.vue';
+
+const showLogs = ref(false);
+</script>
+
+<template>
+  <LoginForm v-if="state.phase !== 'ready'" />
+
+  <div v-else class="shell">
+    <header class="topbar">
+      <div class="me">
+        <span class="dot" :class="state.registered ? 'online' : 'offline'"></span>
+        <strong>{{ state.me?.name }}</strong>
+        <span class="muted" v-if="state.me?.exten">· máy lẻ {{ state.me.exten }}</span>
+        <span class="muted">· {{ state.registered ? 'đã đăng ký SIP' : 'chưa đăng ký SIP' }}</span>
+      </div>
+      <button class="ghost" @click="logout">Đăng xuất</button>
+    </header>
+
+    <p v-if="state.error" class="error banner" @click="state.error = ''">{{ state.error }} (bấm để ẩn)</p>
+
+    <main class="grid">
+      <CallPanel />
+      <ContactList />
+    </main>
+
+    <section class="logs">
+      <button class="ghost" @click="showLogs = !showLogs">
+        {{ showLogs ? 'Ẩn' : 'Xem' }} nhật ký ({{ state.logs.length }})
+      </button>
+      <pre v-if="showLogs">{{ state.logs.join('\n') }}</pre>
+    </section>
+  </div>
+</template>

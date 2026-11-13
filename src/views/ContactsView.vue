@@ -52,8 +52,11 @@
       <p v-if="activeTab === 'favorites'">
         Chưa có liên hệ nào trong mục Yêu thích. Hãy bấm vào biểu tượng ⭐ trên dòng nhân viên để ghim nhanh.
       </p>
-      <p v-else>
+      <p v-else-if="searchTerm">
         Không tìm thấy nhân viên nào phù hợp với từ khóa "{{ searchTerm }}".
+      </p>
+      <p v-else>
+        Chưa có liên hệ nào trong danh bạ hệ thống.
       </p>
     </div>
 
@@ -220,7 +223,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { contactService } from '@/services/contactService'
 
@@ -240,15 +243,26 @@ const newContact = ref({
   email: '',
 })
 
+const onContactsUpdated = () => {
+  if (contactService.cachedContacts) {
+    contacts.value = [...contactService.cachedContacts]
+  }
+}
+
 onMounted(() => {
   if (route.query.q) {
     searchTerm.value = String(route.query.q)
   }
   loadContacts()
+  window.addEventListener('smartcall-contacts-updated', onContactsUpdated)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('smartcall-contacts-updated', onContactsUpdated)
 })
 
 const loadContacts = async () => {
-  loading.value = true
+  loading.value = !contactService.cachedContacts
   try {
     contacts.value = await contactService.getContacts()
   } finally {

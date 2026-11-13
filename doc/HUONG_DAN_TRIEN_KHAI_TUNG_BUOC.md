@@ -1038,6 +1038,34 @@ Khi thử nghiệm cuộc gọi giữa 2 tài khoản (ví dụ mở 2 tab trìn
    - **Tốt nhất:** Kiểm thử trên 2 thiết bị máy tính riêng biệt (hoặc 1 máy tính và 1 phần mềm Softphone/điện thoại di động).
    - **Nếu kiểm thử trên 1 máy tính:** Cần đeo tai nghe (Headphone) để Loa không phát vọng ngược vào Micro, hoặc cấu hình 2 Micro riêng biệt cho 2 trình duyệt.
 
+---
+
+## 13. TỐI ƯU HÓA TRẢI NGHIỆM GIAO DIỆN, HIỆN DIỆN THỜI GIAN THỰC VÀ CHỐNG SPAM CUỘC GỌI
+
+### 13.1. Đồng bộ trạng thái Presence thật qua Wazo Chatd và Websocketd
+- Sửa lỗi trả về sớm (`return`) trong `contactService.js`: Toàn bộ danh bạ từ `wazo-dird` đều được đưa qua hàm `loadPresencesForContacts()`.
+- Chuẩn hóa chuỗi tham số query: Sử dụng dấu phẩy nguyên bản `?user_uuid=${uuids.join(',')}` thay vì mã hóa `%2C`.
+- Tích hợp kết nối sự kiện thời gian thực `wss://<host>/api/websocketd/?token=...&version=2`: Tự động nhận diện sự kiện `chatd_presence_updated` và cập nhật tức thì màu sắc trạng thái nhân sự trên danh bạ mà không cần tải lại trang.
+
+### 13.2. Chặn tự gọi tới chính mình (Self-calling Protection)
+- Trong `CallsView.vue`, kiểm tra số máy lẻ đích so với `wazoService.getMyExtension()`. Nếu trùng khớp, hệ thống chặn phát tín hiệu SIP và hiển thị cảnh báo: `⚠️ Bạn không thể thực hiện cuộc gọi tới chính máy lẻ của mình!`.
+- Danh bạ tự động lọc bỏ tài khoản của chính người dùng đăng nhập để tránh nhầm lẫn khi thao tác.
+
+### 13.3. Khắc phục sự cố F5 trên tab Danh bạ
+- Sửa hàm `wazoService.getToken()` để ưu tiên nạp ngay từ `localStorage.getItem('smartcall_wazo_token')` trong trường hợp tiến trình bất đồng bộ `restoreSession()` chưa hoàn tất.
+- Bổ sung bộ nhớ đệm `cachedContacts` trong `contactService`: Giúp giao diện hiển thị tức thì (0ms) ngay khi vào trang hoặc chuyển đổi giữa các tab.
+
+### 13.4. Kiểm tra thiết bị Microphone phần cứng & Chống spam nút gọi
+- Trước khi thực hiện cuộc gọi, hệ thống gọi `navigator.mediaDevices.enumerateDevices()` để xác minh máy tính có ít nhất 1 thiết bị thu âm (Microphone). Nếu không có, hệ thống lập tức thông báo rõ ràng: `❌ Không tìm thấy thiết bị Microphone! Vui lòng cắm Mic/Tai nghe vào máy tính để gọi.`.
+- Thêm cơ chế Throttle khóa nút Gọi trong 1.5 giây sau khi bấm nhằm tránh tình trạng spam nhiều request SIP liên tục.
+
+### 13.5. Chuyển đổi tab siêu mượt trong 0ms với `<KeepAlive>`
+- Bọc thẻ `<KeepAlive>` cho `<router-view>` trong `App.vue`. Trạng thái DOM và dữ liệu các view (`DashboardView`, `CallsView`, `ContactsView`, `MessagesView`, `HistoryView`) được lưu trong RAM, chuyển qua lại tức thì mà không bị giật, không bị tải lại API.
+
+### 13.6. Dọn dẹp Floating Call Widget trùng lặp
+- Loại bỏ Widget nổi `CallControlPanel.vue` ở góc dưới bên phải màn hình để tránh trùng lặp với màn hình đàm thoại chính `CallsView.vue`, giúp giao diện thông thoáng và không che khuất bảng điều khiển `DebugLogDrawer`.
+
+
 
 
 

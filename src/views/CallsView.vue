@@ -36,7 +36,7 @@
             class="btn-dial"
             title="Bắt đầu gọi"
             @click="handleDial"
-            :disabled="isCalling"
+            :disabled="isCalling || isDialing"
           >
             <svg class="dial-svg-icon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
               <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z" />
@@ -155,6 +155,7 @@ const extension = ref('1002')
 // Quản lý trạng thái cuộc gọi: 'idle' (sẵn sàng), 'ringing' (đang đổ chuông), 'connected' (đang đàm thoại)
 const callState = ref('idle')
 const isCalling = computed(() => callState.value !== 'idle')
+const isDialing = ref(false)
 
 const isMuted = ref(false)
 const isHeld = ref(false)
@@ -240,8 +241,52 @@ const startCallTimer = () => {
 }
 
 const handleDial = async () => {
+  if (isDialing.value) return
   const ext = extension.value.trim()
   if (!ext) return
+
+  // 1. Chặn người dùng tự gọi cho chính mình
+  const myExt = wazoService.getMyExtension()
+  if (myExt && ext === myExt) {
+    logger.warn('CALL', `Chặn thao tác: Người dùng cố gắng gọi tới chính máy lẻ của mình (${ext})`)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `⚠️ Không thể thực hiện cuộc gọi tới chính máy lẻ của bạn (${ext})!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // 2. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
+  try {
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const hasMic = devices.some((d) => d.kind === 'audioinput')
+      if (devices.length > 0 && !hasMic) {
+        logger.error('CALL', 'Không tìm thấy thiết bị Microphone trên máy tính để thực hiện cuộc gọi WebRTC!')
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: {
+              message: '❌ Không tìm thấy thiết bị Microphone! Vui lòng cắm Mic/Tai nghe vào máy tính để gọi.',
+              type: 'error',
+            },
+          }),
+        )
+        return
+      }
+    }
+  } catch (micErr) {
+    /* ignore */
+  }
+
+  // 3. Khóa chống spam nút gọi (Throttle 1.5 giây)
+  isDialing.value = true
+  setTimeout(() => {
+    isDialing.value = false
+  }, 1500)
 
   logger.info('UI', `Người dùng bấm nút Gọi tới máy lẻ: ${ext}`)
   clearTimeout(mockAnswerTimer)

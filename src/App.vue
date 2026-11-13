@@ -12,9 +12,13 @@
       <!-- Sidebar điều hướng bên trái -->
       <AppSidebar />
 
-      <!-- Nội dung chính của từng trang -->
+      <!-- Nội dung chính của từng trang với KeepAlive mượt mà, chuyển tab 0ms -->
       <main class="app-content">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <keep-alive>
+            <component :is="Component" :key="$route.name" />
+          </keep-alive>
+        </router-view>
       </main>
     </div>
 
@@ -35,20 +39,7 @@
       @timeout="onMissedIncomingCall"
     />
 
-    <!-- 5. Panel Điều khiển Cuộc gọi nổi (Chỉ hiển thị khi đang có cuộc gọi đàm thoại thực sự) -->
-    <CallControlPanel
-      v-show="hasActiveCall"
-      :current-call="currentCall"
-      :phone-status="phoneStatus"
-      @hangup="onHangup"
-      @accept="onAccept"
-      @reject="onReject"
-      @mute="onToggleMute"
-      @hold="onToggleHold"
-      @dial="onDial"
-    />
-
-    <!-- 6. Thông báo Toast nổi -->
+    <!-- 5. Thông báo Toast nổi -->
     <transition name="slide-fade">
       <div v-if="toastMessage" class="toast-notification" :class="toastType">
         {{ toastMessage }}
@@ -68,7 +59,6 @@ import { audioService } from '@/services/audioService'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import SettingsModal from '@/components/common/SettingsModal.vue'
-import CallControlPanel from '@/components/call/CallControlPanel.vue'
 import IncomingCallModal from '@/components/call/IncomingCallModal.vue'
 import DebugLogDrawer from '@/components/common/DebugLogDrawer.vue'
 import { historyService } from '@/services/historyService'

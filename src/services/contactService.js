@@ -63,6 +63,17 @@ const MOCK_CONTACTS = [
 class ContactService {
   constructor() {
     this.localContacts = isFeatureEnabled('mockData') ? [...MOCK_CONTACTS] : []
+    this.cachedContacts = null
+    this.presencePollTimer = null
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('wazo-presence-updated', (ev) => {
+        if (ev.detail) {
+          this.updateSinglePresence(ev.detail)
+        }
+      })
+    }
+    this.startPresencePolling()
   }
 
   // Quản lý danh sách Yêu thích (Favorites)
@@ -96,7 +107,10 @@ class ContactService {
    * 1. Thử gọi API máy chủ tổng đài Wazo Dird.
    * 2. Nếu không có kết nối máy chủ -> Sử dụng dữ liệu dự phòng.
    */
-  async getContacts() {
+  async getContacts({ forceRefresh = false } = {}) {
+    if (!forceRefresh && this.cachedContacts && this.cachedContacts.length > 0) {
+      return this.cachedContacts
+    }
     const favorites = this.getFavoriteIds()
     try {
       const token = wazoService.getToken()
@@ -167,7 +181,7 @@ class ContactService {
       // Xử lý dữ liệu trả về từ Wazo Dird:
       // Trường hợp 1: Dạng danh sách đối tượng (items)
       if (Array.isArray(contactsData.items) && contactsData.items.length > 0) {
-        return contactsData.items.map((item, index) => {
+        const mappedList = contactsData.items.map((item, index) => {
           const userUuid = item.user_uuid || item.uuid || (typeof item.relations === 'object' && item.relations?.user_uuid) || null
           const id = userUuid || item.id || `wazo-${index}`
 
@@ -217,7 +231,8 @@ class ContactService {
             isFavorite: favorites.includes(id),
           }
         })
-        return await this.loadPresencesForContacts(mappedList)
+        const finalContacts = await this.loadPresencesForContacts(mappedList)
+        return this._filterAndCache(finalContacts)
       }
 
       // Trường hợp 2: Dạng bảng cột (column_types & results)
@@ -250,7 +265,8 @@ class ContactService {
             isFavorite: favorites.includes(id),
           }
         })
-        return await this.loadPresencesForContacts(mappedList)
+        const finalContacts = await this.loadPresencesForContacts(mappedList)
+        return this._filterAndCache(finalContacts)
       }
 
       if (!isFeatureEnabled('mockData')) {
@@ -272,6 +288,21 @@ class ContactService {
     }
   }
 
+  _filterAndCache(list) {
+    const meUuid = wazoService.session?.uuid || localStorage.getItem('smartcall_user_uuid')
+    const meExten = wazoService.getMyExtension()
+    let filtered = list
+    if (meUuid || meExten) {
+      filtered = list.filter((c) => {
+        if (meUuid && c.uuid && c.uuid === meUuid) return false
+        if (meExten && c.number && String(c.number).trim() === String(meExten).trim()) return false
+        return true
+      })
+    }
+    this.cachedContacts = filtered
+    return filtered
+  }
+
   /**
    * Tải trạng thái hiện diện (Presence) thời gian thực của danh sách nhân sự từ Wazo Chatd
    * GET /api/chatd/1.0/users/presences?user_uuid=...
@@ -289,7 +320,8 @@ class ContactService {
     if (uuids.length === 0) return contacts
 
     try {
-      const res = await fetch(`${host}/api/chatd/1.0/users/presences?user_uuid=${encodeURIComponent(uuids.join(','))}`, {
+      // Dùng dấu phẩy nguyên bản uuids.join(',') theo mã tham chiếu mẫu (tránh %2C)
+      const res = await fetch(`${host}/api/chatd/1.0/users/presences?user_uuid=${uuids.join(',')}`, {
         headers: { 'X-Auth-Token': token, Accept: 'application/json' },
       })
       if (!res.ok) return contacts
@@ -324,6 +356,50 @@ class ContactService {
       logger.warn('API', 'Không thể nạp trạng thái presence từ chatd:', e.message)
     }
     return contacts
+  }
+
+  updateSinglePresence(presenceRecord) {
+    if (!this.cachedContacts || !presenceRecord) return
+    const uuid = presenceRecord.uuid || presenceRecord.user_uuid
+    if (!uuid) return
+
+    let changed = false
+    this.cachedContacts.forEach((c) => {
+      if (c.uuid === uuid || c.id === uuid) {
+        const lines = (presenceRecord.lines || []).map((l) => l.state)
+        let newStatus = 'offline'
+        if (lines.some((s) => s === 'talking' || s === 'holding')) {
+          newStatus = 'busy'
+        } else if (lines.some((s) => s === 'ringing' || s === 'progressing')) {
+          newStatus = 'ringing'
+        } else if (presenceRecord.do_not_disturb) {
+          newStatus = 'dnd'
+        } else if (presenceRecord.state === 'away') {
+          newStatus = 'away'
+        } else {
+          const online = lines.length ? lines.some((s) => s !== 'unavailable') : presenceRecord.connected === true
+          newStatus = online ? 'online' : 'offline'
+        }
+        if (c.status !== newStatus) {
+          c.status = newStatus
+          changed = true
+        }
+      }
+    })
+
+    if (changed) {
+      window.dispatchEvent(new CustomEvent('smartcall-contacts-updated'))
+    }
+  }
+
+  startPresencePolling() {
+    if (this.presencePollTimer) return
+    this.presencePollTimer = setInterval(async () => {
+      if (this.cachedContacts && this.cachedContacts.length > 0 && wazoService.isLogged()) {
+        await this.loadPresencesForContacts(this.cachedContacts)
+        window.dispatchEvent(new CustomEvent('smartcall-contacts-updated'))
+      }
+    }, 10000)
   }
 
   /**

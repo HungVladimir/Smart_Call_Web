@@ -11,6 +11,7 @@ class WazoService {
     this.clientId = import.meta.env.VITE_WAZO_CLIENT_ID || 'webapp-vue'
     this.listenersAttached = false
     this.isRegistered = false
+    this.eventWs = null
   }
 
   init() {
@@ -31,8 +32,17 @@ class WazoService {
         if (this.session.uuid) {
           localStorage.setItem('smartcall_user_uuid', this.session.uuid)
         }
+        let exten = ''
+        try {
+          exten = this.session.primaryNumber?.() || ''
+        } catch (e) {}
+        if (exten) {
+          localStorage.setItem('smartcall_user_exten', exten)
+        }
         logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
       }
+
+      this.openWebSocketEvents()
 
       // Tự động kết nối WebRTC Phone sau khi login thành công (theo code mẫu)
       try {
@@ -61,7 +71,15 @@ class WazoService {
           if (this.session.uuid) {
             localStorage.setItem('smartcall_user_uuid', this.session.uuid)
           }
+          let exten = ''
+          try {
+            exten = this.session.primaryNumber?.() || ''
+          } catch (e) {}
+          if (exten) {
+            localStorage.setItem('smartcall_user_exten', exten)
+          }
           logger.success('AUTH', 'Đã khôi phục phiên đăng nhập Wazo từ Token thành công!')
+          this.openWebSocketEvents()
           try {
             await this.connectPhone()
           } catch (phoneErr) {
@@ -79,6 +97,7 @@ class WazoService {
   logout() {
     logger.info('AUTH', 'Thực hiện đăng xuất khỏi hệ thống Wazo...')
     audioService.stopAllTones()
+    this.closeWebSocketEvents()
     if (this.session) {
       try {
         Wazo.Auth.logout(this.session)
@@ -89,6 +108,7 @@ class WazoService {
     }
     localStorage.removeItem('smartcall_wazo_token')
     localStorage.removeItem('smartcall_wazo_refreshToken')
+    localStorage.removeItem('smartcall_user_exten')
     localStorage.removeItem('smartcall_offline_mode')
     this.currentCallSession = null
     this.stopRemoteAudio()
@@ -97,11 +117,71 @@ class WazoService {
   }
 
   isLogged() {
-    return (!!this.session && !!this.session.token) || true
+    return Boolean(this.session?.token || localStorage.getItem('smartcall_wazo_token'))
   }
 
   getToken() {
-    return this.session?.token || ''
+    return this.session?.token || localStorage.getItem('smartcall_wazo_token') || ''
+  }
+
+  getMyExtension() {
+    try {
+      const ext = this.session?.primaryNumber?.()
+      if (ext) return String(ext)
+    } catch (e) {}
+    return localStorage.getItem('smartcall_user_exten') || localStorage.getItem('smartcall_sip_user') || ''
+  }
+
+  openWebSocketEvents() {
+    const token = this.getToken()
+    if (!token || this.eventWs) return
+
+    const cleanHost = (this.host || '107.126.11.126:9443').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
+    try {
+      this.eventWs = new WebSocket(`wss://${cleanHost}/api/websocketd/?token=${token}&version=2`)
+
+      this.eventWs.onopen = () => {
+        logger.info('API', 'Kết nối wazo-websocketd đã mở thành công.')
+        try {
+          for (const name of ['chatd_presence_updated', 'chatd_user_presence_updated']) {
+            this.eventWs.send(JSON.stringify({ op: 'subscribe', data: { event_name: name } }))
+          }
+          this.eventWs.send(JSON.stringify({ op: 'start' }))
+        } catch (err) {
+          /* ignore */
+        }
+      }
+
+      this.eventWs.onmessage = (m) => {
+        try {
+          const msg = JSON.parse(m.data)
+          const ev = msg.op === 'event' ? msg.data : msg
+          const name = ev?.name || ''
+          if (name.includes('presence')) {
+            const d = ev.data || {}
+            window.dispatchEvent(new CustomEvent('wazo-presence-updated', { detail: d }))
+          }
+        } catch (e) {
+          /* ignore */
+        }
+      }
+
+      this.eventWs.onclose = () => {
+        this.eventWs = null
+      }
+    } catch (e) {
+      logger.warn('API', 'Không thể mở kết nối wazo-websocketd:', e.message)
+    }
+  }
+
+  closeWebSocketEvents() {
+    if (this.eventWs) {
+      try {
+        this.eventWs.onclose = null
+        this.eventWs.close()
+      } catch (e) {}
+      this.eventWs = null
+    }
   }
 
   async connectPhone() {
