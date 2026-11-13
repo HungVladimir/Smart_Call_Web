@@ -10,8 +10,9 @@ class WazoService {
   }
 
   init() {
+    const cleanHost = (this.host || '107.126.11.126:9443').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
     Wazo.Auth.init(this.clientId)
-    Wazo.Auth.setHost(this.host)
+    Wazo.Auth.setHost(cleanHost)
   }
 
   async login(username, password) {
@@ -25,7 +26,15 @@ class WazoService {
           localStorage.setItem('smartcall_user_uuid', this.session.uuid)
         }
       }
-      return true
+
+      // Tự động kết nối WebRTC Phone sau khi login thành công (theo code mẫu)
+      try {
+        await this.connectPhone()
+      } catch (phoneErr) {
+        console.warn('Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login):', phoneErr)
+      }
+
+      return this.session
     } catch (error) {
       console.error('Login failed:', error)
       throw error
@@ -45,6 +54,11 @@ class WazoService {
             localStorage.setItem('smartcall_user_uuid', this.session.uuid)
           }
           console.log('Đã khôi phục phiên đăng nhập Wazo từ token!')
+          try {
+            await this.connectPhone()
+          } catch (phoneErr) {
+            console.warn('Khôi phục WebRTC phone cảnh báo:', phoneErr)
+          }
           return true
         }
       } catch (e) {
@@ -103,10 +117,15 @@ class WazoService {
     if (this.listenersAttached) return
     this.listenersAttached = true
 
-    // Lắng nghe sự kiện từ SDK và phát ra event toàn cục qua window
+    // Lắng nghe sự kiện từ SDK và phát ra event toàn cục qua window (bổ sung đầy đủ theo code mẫu)
     Wazo.Phone.on(Wazo.Phone.ON_REGISTERED, () => {
       console.log('Wazo WebRTC SIP Phone: Registered thành công!')
       window.dispatchEvent(new CustomEvent('wazo-registered'))
+    })
+
+    Wazo.Phone.on(Wazo.Phone.ON_UNREGISTERED, () => {
+      console.log('Wazo WebRTC SIP Phone: Unregistered!')
+      window.dispatchEvent(new CustomEvent('wazo-unregistered'))
     })
 
     Wazo.Phone.on(Wazo.Phone.ON_CALL_INCOMING, (callSession) => {
@@ -124,6 +143,18 @@ class WazoService {
       this.currentCallSession = null
       this.stopRemoteAudio()
       window.dispatchEvent(new CustomEvent('wazo-failed', { detail: callSession }))
+    })
+
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_REJECTED, (callSession) => {
+      this.currentCallSession = null
+      this.stopRemoteAudio()
+      window.dispatchEvent(new CustomEvent('wazo-ended', { detail: callSession }))
+    })
+
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_CANCELED, (callSession) => {
+      this.currentCallSession = null
+      this.stopRemoteAudio()
+      window.dispatchEvent(new CustomEvent('wazo-ended', { detail: callSession }))
     })
 
     Wazo.Phone.on(Wazo.Phone.ON_CALL_ACCEPTED, (callSession) => {
@@ -162,10 +193,10 @@ class WazoService {
     }
   }
 
-  // Các hàm điều khiển cuộc gọi
+  // Các hàm điều khiển cuộc gọi (truyền false cho audio-only WebRTC theo code mẫu)
   async makeCall(extension) {
     try {
-      this.currentCallSession = await Wazo.Phone.call(extension)
+      this.currentCallSession = await Wazo.Phone.call(extension, false)
       return this.currentCallSession
     } catch (err) {
       console.warn('Wazo Phone.call warning:', err)
@@ -191,7 +222,7 @@ class WazoService {
     if (session) {
       this.currentCallSession = session
       try {
-        Wazo.Phone.accept(session)
+        Wazo.Phone.accept(session, false)
       } catch (e) {
         /* ignore */
       }

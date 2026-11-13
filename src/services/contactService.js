@@ -104,35 +104,59 @@ class ContactService {
         ? wazoService.host
         : `https://${wazoService.host}`
 
-      // 1. Lấy nguồn danh bạ tổng đài
-      const sourceRes = await fetch(
-        `${host}/api/dird/0.1/directories/default/sources?backend=wazo`,
-        {
-          headers: { 'X-Auth-Token': token },
-        },
-      )
+      // 1. Lấy nguồn danh bạ tổng đài (Cách 1)
+      let contactsData = null
+      try {
+        const sourceRes = await fetch(
+          `${host}/api/dird/0.1/directories/default/sources?backend=wazo`,
+          {
+            headers: { 'X-Auth-Token': token },
+          },
+        )
 
-      if (!sourceRes.ok) throw new Error('Cannot fetch sources')
-      const sourcesData = await sourceRes.json()
-      if (!sourcesData.items || sourcesData.items.length === 0) {
+        if (sourceRes.ok) {
+          const sourcesData = await sourceRes.json()
+          const sourceUuid = sourcesData.items?.[0]?.uuid
+          if (sourceUuid) {
+            // Lấy toàn bộ danh sách liên hệ từ nguồn (lấy full danh bạ)
+            const contactsRes = await fetch(
+              `${host}/api/dird/0.1/backends/wazo/sources/${sourceUuid}/contacts?limit=1000`,
+              {
+                headers: { 'X-Auth-Token': token },
+              },
+            )
+            if (contactsRes.ok) {
+              contactsData = await contactsRes.json()
+            }
+          }
+        }
+      } catch (srcErr) {
+        console.warn('Lỗi lấy nguồn danh bạ wazo dird:', srcErr)
+      }
+
+      // 2. Cách 2: Dự phòng tra cứu lookup/default (theo mã nguồn tham chiếu mẫu)
+      if (!contactsData) {
+        try {
+          const lookupRes = await fetch(
+            `${host}/api/dird/0.1/directories/lookup/default?term=1`,
+            {
+              headers: { 'X-Auth-Token': token },
+            },
+          )
+          if (lookupRes.ok) {
+            contactsData = await lookupRes.json()
+          }
+        } catch (lookErr) {
+          console.warn('Lỗi tra cứu danh bạ lookup:', lookErr)
+        }
+      }
+
+      if (!contactsData) {
         return this.localContacts.map((c) => ({
           ...c,
           isFavorite: favorites.includes(c.id),
         }))
       }
-
-      const sourceUuid = sourcesData.items[0].uuid
-
-      // 2. Lấy toàn bộ danh sách liên hệ từ nguồn (lấy full danh bạ)
-      const contactsRes = await fetch(
-        `${host}/api/dird/0.1/backends/wazo/sources/${sourceUuid}/contacts?limit=1000`,
-        {
-          headers: { 'X-Auth-Token': token },
-        },
-      )
-
-      if (!contactsRes.ok) throw new Error('Cannot fetch contacts')
-      const contactsData = await contactsRes.json()
 
       // Xử lý dữ liệu trả về từ Wazo Dird:
       // Trường hợp 1: Dạng danh sách đối tượng (items)

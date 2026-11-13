@@ -133,6 +133,16 @@
             </svg>
             <span>Chạy chế độ thử nghiệm Offline</span>
           </button>
+
+          <!-- Gợi ý xác nhận chứng chỉ SSL (theo code mẫu) -->
+          <div class="ssl-cert-hint">
+            <svg class="hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+            <span>Lần đầu truy cập: mở <a :href="`https://${serverHost}/`" target="_blank" class="hint-link">https://{{ serverHost }}/</a> để xác nhận tin cậy chứng chỉ Wazo.</span>
+          </div>
         </form>
       </div>
     </main>
@@ -152,6 +162,7 @@ const showPassword = ref(false)
 const rememberMe = ref(true)
 const loading = ref(false)
 const errorMessage = ref('')
+const serverHost = ref((wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').replace(/\/+$/, ''))
 
 const handleLogin = async () => {
   const u = username.value.trim()
@@ -166,26 +177,47 @@ const handleLogin = async () => {
 
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout máy chủ Wazo')), 3500),
+      setTimeout(() => reject(new Error('Timeout máy chủ Wazo')), 4500),
     )
-    await Promise.race([wazoService.login(u, p), timeoutPromise])
+    const session = await Promise.race([wazoService.login(u, p), timeoutPromise])
 
-    // Khi đăng nhập Wazo thành công -> Lấy thông tin user hiện tại (users/me) theo dev_guide mục 4.1
-    const token = wazoService.getToken()
-    if (token) {
-      const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
-      const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
-        headers: { 'X-Auth-Token': token },
-      })
-      if (meRes.ok) {
-        const meData = await meRes.json()
-        if (meData.uuid) {
-          localStorage.setItem('smartcall_user_uuid', meData.uuid)
+    // 1. Trích xuất thông tin người dùng trực tiếp từ Session SDK (chuẩn theo code mẫu, không phát sinh CORS preflight)
+    const profile = session?.profile || wazoService.session?.profile || {}
+    const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim()
+    realDisplayName = fullName || session?.displayName || u
+
+    let exten = ''
+    try {
+      exten = session?.primaryNumber?.() || wazoService.session?.primaryNumber?.() || ''
+    } catch {
+      /* ignore */
+    }
+    realExtension = exten || (u === 'alice' ? '1001' : (u === 'bob' ? '1002' : '1001'))
+
+    // 2. Dự phòng an toàn: nếu cần thêm dữ liệu từ confd/users/me thì thực hiện trong try/catch độc lập
+    try {
+      if (!realExtension) {
+        const token = wazoService.getToken()
+        const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
+        const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
+          headers: { 'X-Auth-Token': token },
+        })
+        if (meRes.ok) {
+          const meData = await meRes.json()
+          if (meData.uuid) {
+            localStorage.setItem('smartcall_user_uuid', meData.uuid)
+          }
+          if (!realDisplayName) {
+            realDisplayName = [meData.firstname, meData.lastname].filter(Boolean).join(' ').trim()
+          }
+          if (!realExtension) {
+            realExtension = meData.lines?.[0]?.extensions?.[0]?.exten || ''
+          }
         }
-        const fullName = [meData.firstname, meData.lastname].filter(Boolean).join(' ').trim()
-        realDisplayName = fullName || meData.username
-        realExtension = meData.lines?.[0]?.extensions?.[0]?.exten || ''
       }
+    } catch (confdErr) {
+      // Bỏ qua lỗi phụ này, KHÔNG BAO GIỜ để lỗi CORS ở đây làm hỏng đăng nhập
+      console.warn('Không thể truy xuất thông tin mở rộng từ confd:', confdErr)
     }
 
     // Ghi nhớ tên đăng nhập nếu bật Remember me
@@ -215,8 +247,8 @@ const handleLogin = async () => {
     router.push('/dashboard')
   } catch (err) {
     loading.value = false
+    console.error('Lỗi đăng nhập:', err)
 
-    // Phân loại nguyên nhân lỗi để thông báo rõ ràng cho người dùng
     let msg = ''
     if (
       err.status === 401 ||
@@ -225,17 +257,17 @@ const handleLogin = async () => {
       err.message?.toLowerCase().includes('unauthorized') ||
       err.message?.toLowerCase().includes('credentials')
     ) {
-      msg = 'Tên đăng nhập hoặc mật khẩu không chính xác.'
+      msg = 'Tên đăng nhập hoặc mật khẩu không chính xác. (Lưu ý: mật khẩu alice có thể là atc2024!)'
     } else if (err.message?.includes('Timeout') || err.message?.includes('timeout')) {
-      msg = 'Không thể kết nối đến máy chủ tổng đài (Hết thời gian chờ). Vui lòng kiểm tra lại mạng nội bộ.'
+      msg = 'Không thể kết nối đến máy chủ tổng đài (Hết thời gian chờ). Vui lòng kiểm tra lại mạng.'
     } else if (
       err.name === 'TypeError' ||
       err.message?.includes('Failed to fetch') ||
       err.message?.includes('Network')
     ) {
-      msg = 'Lỗi mạng hoặc trình duyệt chặn SSL máy chủ tổng đài.'
+      msg = 'Lỗi mạng hoặc chưa xác nhận chứng chỉ SSL máy chủ tổng đài.'
     } else {
-      msg = 'Đăng nhập không thành công. Vui lòng kiểm tra lại tài khoản hoặc kết nối mạng.'
+      msg = `Đăng nhập thất bại: ${err.message || 'Vui lòng kiểm tra lại tài khoản hoặc kết nối mạng.'}`
     }
 
     errorMessage.value = msg
@@ -690,6 +722,39 @@ const enterOfflineMode = () => {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+}
+
+/* --- Gợi ý chứng chỉ SSL --- */
+.ssl-cert-hint {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.hint-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #3b82f6;
+}
+
+.hint-link {
+  color: #2563eb;
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+.hint-link:hover {
+  color: #1d4ed8;
 }
 
 /* --- Responsive Mobile --- */

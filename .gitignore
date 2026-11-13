@@ -36,3 +36,8 @@ Thumbs.db
 .temp/
 .cache/
 
+# Tệp tham chiếu tạm thời
+FileQuest/fileLogin*
+FileQuest/wazo_api_reference*.txt
+
+

@@ -894,4 +894,39 @@ Bảng ma trận kiểm thử được xây dựng theo tiêu chuẩn kiểm th�
      - Máy 2 đăng nhập `bob` $\rightarrow$ Cấp quyền Micro $\rightarrow$ Header hiện `🟢 Trực tuyến (1002)`.
      - Máy 1 vào tab **Gọi điện** (`/calls`) $\rightarrow$ Quay số `1002` $\rightarrow$ Bấm Gọi $\rightarrow$ Tiếng tút tút phát ra $\rightarrow$ Máy 2 đổ chuông reo $\rightarrow$ Bấm **Nghe máy** $\rightarrow$ Hai bên nói chuyện kiểm tra âm thanh 2 chiều $\rightarrow$ Bấm **Cúp máy** $\rightarrow$ Kiểm tra bản ghi thời lượng đàm thoại trong Lịch sử cuộc gọi.
 
+---
+
+## 9. ĐỐI CHIẾU MÃ NGUỒN THAM CHIẾU MẪU VÀ GIẢI MÃ NGUYÊN NHÂN LỖI ĐĂNG NHẬP CORS PREFLIGHT
+
+### 9.1. Hiện tượng và Nguyên nhân gốc rễ (Root Cause Analysis)
+
+Khi mở trình duyệt mới hoặc chuyển sang mạng công ty và đăng nhập bằng tài khoản Wazo thật, trình duyệt xuất hiện lỗi console:
+```text
+Access to fetch at 'https://107.126.11.126:9443/api/confd/1.1/users/me' from origin 'http://localhost:5173' 
+has been blocked by CORS policy: Response to preflight request doesn't pass access control check: 
+It does not have HTTP ok status.
+GET https://107.126.11.126:9443/api/confd/1.1/users/me net::ERR_FAILED
+```
+
+**Phân tích nguyên nhân kỹ thuật:**
+1. **Bước đăng nhập thực chất ĐÃ THÀNH CÔNG:** Lệnh `Wazo.Auth.logIn(u, p)` đã xác thực với máy chủ Wazo và nhận về Session kèm Token thành công.
+2. **Điểm nghẽn gây crash luồng:** Ngay sau khi login, mã nguồn cũ gọi tiếp `fetch('https://107.126.11.126:9443/api/confd/1.1/users/me', { headers: { 'X-Auth-Token': token } })`. Do `X-Auth-Token` là Custom HTTP Header, trình duyệt Chrome bắt buộc phải gửi một HTTP Request `OPTIONS` (CORS Preflight) trước khi gửi request `GET`.
+3. Do máy chủ Wazo sử dụng SSL tự ký (`self-signed certificate`), trong phiên trình duyệt mới người dùng chưa mở tab xác nhận tin cậy URL `https://107.126.11.126:9443/`, trình duyệt từ chối request `OPTIONS` này và phát sinh lỗi mạng `net::ERR_FAILED`.
+4. Khi `fetch()` bị lỗi, nó văng ngoại lệ `TypeError: Failed to fetch`. Do khối này nằm trong `try` chính của `handleLogin`, lỗi đã khiến toàn bộ quá trình đăng nhập bị coi là thất bại và báo thông báo `"Tên đăng nhập hoặc mật khẩu không chính xác."`.
+
+---
+
+### 9.2. So sánh đối chiếu giữa Mã nguồn dự án và Mã nguồn tham chiếu mẫu
+
+| Tiêu chí so sánh | Mã nguồn tham chiếu mẫu (`LoginForm.vue` & `wazo.js`) | Mã nguồn dự án cũ | Mã nguồn dự án sau khi tối ưu |
+|---|---|---|---|
+| **Cách lấy thông tin User & Số máy lẻ** | **Không gọi REST API phụ**. Trích xuất trực tiếp từ đối tượng `session` trong RAM:<br>• `session.profile.firstName`, `session.profile.lastName`<br>• `session.primaryNumber?.()` | Gọi `fetch('/api/confd/1.1/users/me')` với header `X-Auth-Token`, gây phát sinh CORS Preflight `OPTIONS`. | **Đồng bộ chuẩn theo mã tham chiếu**: Trích xuất ngay từ `session.profile` và `session.primaryNumber?.()`. Nếu cần gọi `confd/users/me` thì bọc trong `try/catch` độc lập không gây lỗi luồng chính. |
+| **Mật khẩu tài khoản mẫu** | `username: "alice"`, `password: "atc2024!"` | `username: "alice"`, `password: "Test@123"` | Bổ sung gợi ý mật khẩu chuẩn `atc2024!` khi người dùng đăng nhập tài khoản Alice. |
+| **Kích hoạt WebRTC Phone** | Tự động gọi `Wazo.Phone.connect({ audio: true, video: false })` ngay lập tức trong hàm `login()`. | Không tự động kết nối sau login, phụ thuộc vào trigger thủ công. | Tự động kết nối WebRTC Phone ngay trong `wazoService.login()` và `wazoService.restoreSession()`. |
+| **Sự kiện WebRTC Phone** | Lắng nghe đầy đủ: `ON_REGISTERED`, `ON_UNREGISTERED`, `ON_CALL_INCOMING`, `ON_CALL_OUTGOING`, `ON_PROGRESS`, `ON_CALL_ACCEPTED`, `ON_CALL_ENDED`, `ON_CALL_FAILED`, `ON_CALL_REJECTED`, `ON_CALL_CANCELED`. | Thiếu `ON_UNREGISTERED`, `ON_CALL_REJECTED`, `ON_CALL_CANCELED`. | Bổ sung đầy đủ 100% các sự kiện theo mã tham chiếu. |
+| **Tham số cuộc gọi WebRTC** | `Wazo.Phone.call(number, false)` và `Wazo.Phone.accept(cs, false)` (tham số `false` quy định audio-only). | Gọi thiếu tham số `false` cho video. | Bổ sung tham số `false` chuẩn cho thoại audio WebRTC. |
+| **Chế độ nạp danh bạ (Dird)** | Hỗ trợ 2 cơ chế: Cách 1 liệt kê toàn bộ qua nguồn (`sources`), nếu lỗi tự động fallback sang Cách 2 tra cứu tìm kiếm (`lookup/default?term=1`). | Chỉ hỗ trợ cách 1, nếu lỗi rơi thẳng về Mock data. | Hỗ trợ đầy đủ cả Cách 1 và fallback Cách 2 trước khi dùng dữ liệu dự phòng. |
+| **Gợi ý xác thực SSL CA** | Có dòng hướng dẫn mở `https://107.126.11.126:9443/` để tin cậy chứng chỉ Wazo. | Chỉ có trong modal hướng dẫn header. | Hiển thị trực tiếp dòng hướng dẫn và link 1 click ngay dưới form đăng nhập. |
+
+
 
