@@ -45,8 +45,8 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
 - **Chặn gọi máy ngoại tuyến (Offline)**:
   - Khi người dùng bấm gọi tới một số đang offline (từ màn hình Calls hoặc bàn phím số), không kích hoạt WebRTC, hiển thị cảnh báo:
     > `📴 Người này hiện đang ngoại tuyến, xin vui lòng gọi lại lúc khác!`
-- **Cấm tự động nhấc máy giả lập (Timer 1.5s / 2.5s)**:
-  - Tuyệt đối **không** khôi phục bộ đếm thời gian tự động nhấc máy giả lập (`mockAnswerTimer`). Trạng thái đàm thoại phải phụ thuộc hoàn toàn vào tín hiệu WebRTC thật từ máy chủ tổng đài.
+- **Cấm tự động nhấc máy giả lập trên nhánh chính (Timer 1.5s / 2.5s)**:
+  - Tuyệt đối **không** khôi phục bộ đếm thời gian tự động nhấc máy giả lập (`mockAnswerTimer`) trên nhánh chính `Smart_Call_Web`. Trạng thái đàm thoại phải phụ thuộc hoàn toàn vào tín hiệu WebRTC thật từ máy chủ tổng đài. (Chỉ duy nhất bản `Smart_Call_Web_Mock` được hỗ trợ tính năng này để kiểm thử ngoại tuyến).
 - **Kiểm tra phần cứng Microphone**:
   - Trước khi gửi lệnh gọi, phải kiểm tra thiết bị `audioinput`. Nếu máy tính không có microphone, thông báo người dùng cắm mic/tai nghe và hủy lệnh gọi.
 

@@ -1169,6 +1169,7 @@ Wazo Platform quản lý trạng thái qua 2 tầng độc lập:
 ### 15.4. Thiết lập phiên bản thử nghiệm Offline (`Smart_Call_Web_Mock`)
 - Để phục vụ việc chạy demo độc lập khi không kết nối máy chủ tổng đài Wazo, đã tạo bản clone độc lập tại thư mục: `D:\Project\Smart_Call_Web_Mock`.
 - Bản Mock được khôi phục đầy đủ các mảng mock data (`MOCK_CONTACTS`, `MOCK_HISTORY`, `INITIAL_MOCK_ROOMS`), nút "Chạy chế độ thử nghiệm Offline" tại trang Login và tab cài đặt Mock Data.
+- **Khôi phục bộ đếm tự nhấc máy mô phỏng (`mockAnswerTimer` 2.5s):** Được tích hợp riêng trên bản Mock để khi chạy ngoại tuyến, hệ thống phát chuông chờ 2.5s rồi tự động chuyển sang trạng thái đàm thoại (`talking`), phục vụ việc kiểm thử các nút chức năng trong cuộc gọi (Mute, Hold, Keypad, Hangup lưu CDR).
 - Bản Mock được sao chép sẵn `node_modules`, có thể khởi chạy ngay bằng `npm run dev` mà không cần cài đặt lại thư viện.
 
 ### 15.5. Quy trình làm việc bắt buộc (Review-First Workflow & Rule File GEMINI.md)
