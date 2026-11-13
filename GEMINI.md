@@ -115,5 +115,36 @@ Trước khi thực hiện hoặc chỉnh sửa bất kỳ logic gọi API, xác
    - Sau khi hoàn thành việc chỉnh sửa code và chạy kiểm tra `npm run build` thành công, AI phải cập nhật đầy đủ nội dung kỹ thuật vào tài liệu `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`.
    - Tiến hành commit và push lên Git công ty (`origin/main`) để người dùng kiểm tra và theo dõi tiến độ.
 
+---
+
+## 7. NGUYÊN TẮC KIỂM SOÁT CHẤT LƯỢNG TOÀN DIỆN & TRUY VẾT VÒNG ĐỜI TRẠNG THÁI (STATE LIFECYCLE & QUALITY ASSURANCE)
+
+Để triệt tiêu hoàn toàn các lỗi sơ đẳng, cấm tuyệt đối tư duy "sửa chắp vá cục bộ" (local patch). Trong mọi yêu cầu phát triển hoặc sửa lỗi trên toàn bộ hệ thống (Cuộc gọi, Tin nhắn, Danh bạ, Hiện diện Presence, Xác thực Token, v.v.), AI phải tuân thủ nghiêm ngặt 5 nguyên tắc sau:
+
+### 7.1. Nguyên tắc "Truy vết khép kín toàn vòng đời" (Full Lifecycle Closed-Loop Trace)
+Mọi biến cờ trạng thái (flag), phiên kết nối (session), bộ đếm thời gian (timer), hoặc sự kiện (event listener) khi được tạo ra bắt buộc phải được truy vết đủ 3 điểm:
+1. **Khởi tạo (Trigger/Init):** Điều kiện nào bật cờ/kích hoạt tài nguyên?
+2. **Chuyển tiếp (Transition):** Khi người dùng chuyển tab (KeepAlive), chuyển route, hoặc thu nhỏ giao diện thì trạng thái được chuyển giao ra sao?
+3. **Giải phóng (Cleanup/Termination):** Khi tác vụ kết thúc (thành công, thất bại, người dùng bấm hủy/cúp máy, mất kết nối mạng, hoặc unmount component), cờ trạng thái PHẢI ĐƯỢC GIẢI PHÓNG VỀ SẠCH (`idle` / `false` / `null`). Cấm tuyệt đối để sót cờ bị kẹt (stuck state) làm sai lệch các lượt thao tác tiếp theo.
+
+### 7.2. Nguyên tắc "Nguồn chân lý duy nhất" (Single Source of Truth - SSOT)
+- Cấm tạo các biến trạng thái trùng lặp độc lập ở nhiều component khác nhau (ví dụ: cấm tạo cờ cuộc gọi riêng ở `App.vue`, `CallsView.vue` và `wazo.js`).
+- Mọi phân hệ cốt lõi phải có một Service / Composable quản lý trạng thái tập trung. Các component UI chỉ được đăng ký lắng nghe (react/computed) và phát lệnh điều khiển qua Service đó, đảm bảo toàn bộ ứng dụng luôn đồng bộ 100% về cùng một trạng thái.
+
+### 7.3. Nguyên tắc "Chuẩn hóa dữ liệu ngay tại cổng vào" (Input Data Normalizer)
+- Dữ liệu đến từ bên ngoài (Wazo REST API, Chatd WebSocket, Presence WebSocket, WebRTC SDK, hoặc các sự kiện giả lập Test) phải được chuẩn hóa qua một hàm duy nhất (Normalizer) trước khi đẩy vào State/UI.
+- Cấm để UI tự đoán trường dữ liệu rải rác (ví dụ: nơi đọc `item.number`, nơi đọc `item.extension`, nơi đọc `item.displayName`, nơi đọc `item.name`).
+
+### 7.4. Checklist tự kiểm tra 4 kịch bản biên (Cross-Scenario Self-Verification)
+Trước khi báo cáo giải pháp cho người dùng, AI phải tự kiểm tra code qua đủ 4 kịch bản:
+1. **Happy Path (Thành công):** Luồng chính chạy trơn tru từ đầu đến cuối.
+2. **Cancellation Path (Hủy/Ngắt giữa chừng):** Người dùng cúp máy, bấm Hủy, bấm Đóng modal, hoặc đổi ý chuyển trang giữa chừng -> Hệ thống có dọn dẹp sạch tài nguyên và trả về trạng thái sẵn sàng không?
+3. **Failure/Network Path (Sự cố):** Máy tính không có mic/loa, mạng ngắt, API trả 4xx/5xx -> Có thông báo lỗi dễ hiểu và đưa giao diện về trạng thái an toàn không (không được để đơ/treo UI)?
+4. **Collision Path (Xung đột đồng thời):** Thao tác đè (bấm nút liên tục 2 lần, cuộc gọi thứ 2 gọi đến khi đang đàm thoại, 2 tin nhắn gửi cùng lúc) -> Đã có cơ chế khóa (throttle / anti-collision / queue) bảo vệ chưa?
+
+### 7.5. Sửa lỗi từ gốc rễ (Root-Cause Architecture Fix)
+- Khi phát hiện lỗi, phải truy nguyên nhân về tận gốc rễ luồng dữ liệu (Tầng Service / Store / WebSocket). Cấm viết thêm các câu lệnh `if/else` chữa cháy tạm thời tại tầng View làm rối mã nguồn và phát sinh lỗi dây chuyền.
+
+
 
 

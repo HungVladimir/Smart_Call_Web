@@ -1231,6 +1231,15 @@ Dựa trên kết quả rà soát toàn diện trong tài liệu báo cáo kiể
 4. **Đồng bộ song song:**
    - Cập nhật đầy đủ logic trên cả `Smart_Call_Web` và `Smart_Call_Web_Mock`.
 
+### 17.3. Thiết lập Nguyên tắc Kiểm soát Chất lượng Toàn diện (Mục 7 GEMINI.md)
+Để ngăn chặn dứt điểm tình trạng sửa chắp vá và bỏ sót trường hợp biên trên tất cả các phân hệ của dự án, đã chính thức bổ sung **Mục 7 vào file quy tắc cốt lõi GEMINI.md** với 5 nguyên tắc bắt buộc:
+1. *Truy vết khép kín toàn vòng đời (Full Lifecycle Closed-Loop Trace):* Khởi tạo $\rightarrow$ Chuyển tiếp $\rightarrow$ Giải phóng sạch tài nguyên.
+2. *Nguồn chân lý duy nhất (Single Source of Truth - SSOT):* Quản lý trạng thái tập trung tại tầng Service, cấm phân mảnh cờ ở nhiều component.
+3. *Chuẩn hóa dữ liệu ngay tại cổng vào (Input Data Normalizer):* Đi qua hàm chuẩn hóa dữ liệu duy nhất trước khi đổ về State/UI.
+4. *Checklist tự kiểm tra 4 kịch bản biên (Cross-Scenario Self-Verification):* Happy path, Cancellation, Failure/Network, Collision/Concurrency.
+5. *Sửa lỗi từ gốc rễ (Root-Cause Architecture Fix):* Không dùng `if/else` chữa cháy tạm thời tại View.
+
+
 
 
 
