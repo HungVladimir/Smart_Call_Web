@@ -39,6 +39,13 @@
         >
           🌐 Ngôn ngữ & Tùy chọn
         </button>
+        <button
+          class="st-tab-btn"
+          :class="{ active: activeTab === 'features' }"
+          @click="activeTab = 'features'"
+        >
+          🚩 Phân hệ & Mock Data
+        </button>
       </div>
 
       <!-- Tab 1: Âm thanh & WebRTC -->
@@ -164,6 +171,54 @@
         </div>
       </div>
 
+      <!-- Tab 5: Cấu hình Phân hệ & Dữ liệu Mock -->
+      <div v-show="activeTab === 'features'" class="st-panel">
+        <div class="features-intro">
+          <strong>Cấu hình Bật / Tắt 5 phân hệ màn hình (Feature Flags):</strong>
+          <small>Ẩn/hiện linh hoạt từng màn hình trên Sidebar và Menu để phục vụ báo cáo tiến độ giai đoạn.</small>
+        </div>
+
+        <div class="features-grid">
+          <label class="feature-item">
+            <input type="checkbox" v-model="featureConfig.dashboard" />
+            <span class="feature-name">📊 Tổng quan (/dashboard)</span>
+          </label>
+          <label class="feature-item">
+            <input type="checkbox" v-model="featureConfig.calls" />
+            <span class="feature-name">📞 Gọi điện & Bàn phím (/calls)</span>
+          </label>
+          <label class="feature-item">
+            <input type="checkbox" v-model="featureConfig.contacts" />
+            <span class="feature-name">📇 Danh bạ nội bộ (/contacts)</span>
+          </label>
+          <label class="feature-item">
+            <input type="checkbox" v-model="featureConfig.messages" />
+            <span class="feature-name">💬 Tin nhắn phòng chat (/messages)</span>
+          </label>
+          <label class="feature-item">
+            <input type="checkbox" v-model="featureConfig.history" />
+            <span class="feature-name">🕒 Lịch sử cuộc gọi (/history)</span>
+          </label>
+        </div>
+
+        <div class="mock-data-section">
+          <div class="st-toggle-row">
+            <div class="st-toggle-info">
+              <strong style="color: #2563eb;">⚡ Cho phép dữ liệu thử nghiệm (Mock Data & Offline Mode)</strong>
+              <small>
+                • <strong>KHI BẬT:</strong> Hiển thị nút "Chạy chế độ thử nghiệm Offline" ở trang Login và dùng dữ liệu mẫu khi mất kết nối Wazo.<br>
+                • <strong>KHI TẮT:</strong> Hệ thống chỉ chạy 100% dữ liệu thật từ máy chủ Wazo. Nếu máy chủ trả về rỗng hoặc lỗi, màn hình sẽ để trắng danh sách, tuyệt đối không dùng dữ liệu fake.
+              </small>
+            </div>
+            <input v-model="featureConfig.mockData" type="checkbox" class="toggle-cb" />
+          </div>
+        </div>
+
+        <div class="reset-row">
+          <button class="btn-reset-features" @click="handleResetFeatures">🔄 Khôi phục mặc định toàn bộ cờ</button>
+        </div>
+      </div>
+
       <div class="modal-foot">
         <button class="btn-secondary" @click="$emit('close')">Đóng</button>
         <button class="btn-primary" @click="handleSave">Lưu cài đặt</button>
@@ -173,15 +228,36 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { getFeatures, saveFeatures, resetFeatures } from '@/config/features'
 
-defineProps({
+const props = defineProps({
   isOpen: Boolean,
 })
 
 const emit = defineEmits(['close'])
 
 const activeTab = ref('audio')
+const featureConfig = ref(getFeatures())
+
+watch(
+  () => props.isOpen,
+  (val) => {
+    if (val) {
+      featureConfig.value = getFeatures()
+    }
+  },
+)
+
+const handleResetFeatures = () => {
+  featureConfig.value = resetFeatures()
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: { message: '🔄 Đã khôi phục tất cả cờ tính năng về mặc định!' },
+    }),
+  )
+}
+
 const selectedMic = ref('default')
 const selectedSpeaker = ref('headset')
 const ringtoneVol = ref(80)
@@ -212,10 +288,11 @@ const savePassword = () => {
 }
 
 const handleSave = () => {
+  saveFeatures(featureConfig.value)
   emit('close')
   window.dispatchEvent(
     new CustomEvent('app-toast', {
-      detail: { message: '✅ Đã lưu cấu hình Cài đặt thành công!' },
+      detail: { message: '✅ Đã lưu cấu hình Cài đặt và Cờ phân hệ thành công!' },
     }),
   )
 }
@@ -499,6 +576,95 @@ const handleSave = () => {
   padding: 8px 18px;
   border-radius: 6px;
   cursor: pointer;
+}
+
+/* --- Features Tab Styles --- */
+.features-intro {
+  margin-bottom: 16px;
+  background: #f1f5f9;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border-left: 4px solid #1e88e5;
+}
+
+.features-intro strong {
+  display: block;
+  font-size: 0.9rem;
+  color: #0f172a;
+}
+
+.features-intro small {
+  display: block;
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f8fafc;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.feature-item:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.feature-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.feature-name {
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: #1e293b;
+}
+
+.mock-data-section {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+
+.reset-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.btn-reset-features {
+  background: transparent;
+  color: #64748b;
+  border: 1px dashed #cbd5e1;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-reset-features:hover {
+  color: #ef4444;
+  border-color: #fca5a5;
+  background: #fef2f2;
 }
 </style>
 

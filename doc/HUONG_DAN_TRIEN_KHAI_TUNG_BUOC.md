@@ -928,5 +928,70 @@ GET https://107.126.11.126:9443/api/confd/1.1/users/me net::ERR_FAILED
 | **Chế độ nạp danh bạ (Dird)** | Hỗ trợ 2 cơ chế: Cách 1 liệt kê toàn bộ qua nguồn (`sources`), nếu lỗi tự động fallback sang Cách 2 tra cứu tìm kiếm (`lookup/default?term=1`). | Chỉ hỗ trợ cách 1, nếu lỗi rơi thẳng về Mock data. | Hỗ trợ đầy đủ cả Cách 1 và fallback Cách 2 trước khi dùng dữ liệu dự phòng. |
 | **Gợi ý xác thực SSL CA** | Có dòng hướng dẫn mở `https://107.126.11.126:9443/` để tin cậy chứng chỉ Wazo. | Chỉ có trong modal hướng dẫn header. | Hiển thị trực tiếp dòng hướng dẫn và link 1 click ngay dưới form đăng nhập. |
 
+---
+
+## 10. HỆ THỐNG CỜ TÍNH NĂNG (FEATURE FLAGS), CHẾ ĐỘ MOCK DATA VÀ BẢNG NHẬT KÝ THỜI GIAN THỰC (LIVE DEBUG LOGS)
+
+### 10.1. Quản trị 5 Cờ Phân hệ Màn hình và Cờ Dữ liệu Mẫu (Feature Flags & Mock Mode)
+
+File cấu hình trung tâm đặt tại: `src/config/features.js`:
+- **5 Cờ phân hệ giao diện:**
+  - `dashboard`: Màn hình Tổng quan (`/dashboard`)
+  - `calls`: Màn hình Gọi điện & Bàn phím số (`/calls`)
+  - `contacts`: Màn hình Danh bạ nội bộ (`/contacts`)
+  - `messages`: Màn hình Tin nhắn & Phòng chat (`/messages`)
+  - `history`: Màn hình Lịch sử cuộc gọi (`/history`)
+- **1 Cờ chế độ dữ liệu (`mockData`):**
+  - **Khi bật (`true`):** Hiển thị nút "Chạy chế độ thử nghiệm Offline" ở màn hình Đăng nhập; sử dụng dữ liệu mẫu dự phòng khi chưa kết nối máy chủ Wazo.
+  - **Khi tắt (`false`):** Ẩn hoàn toàn nút chế độ thử nghiệm Offline ở màn hình Login; loại bỏ 100% dữ liệu mock khởi tạo; ứng dụng chỉ truy vấn và hiển thị dữ liệu thật từ máy chủ tổng đài Wazo. Nếu máy chủ trả về rỗng hoặc lỗi, giao diện sẽ để trắng danh sách theo đúng thực tế máy chủ.
+
+> [!TIP]
+> Bạn có thể thay đổi nhanh các cờ này bằng 2 cách:
+> 1. Mở file [src/config/features.js](file:///d:/Project/Smart_Call_Web/src/config/features.js) và sửa giá trị `true` / `false`.
+> 2. Mở trực tiếp trên giao diện: Bấm **⚙️ SETTINGS** trên thanh Header $\rightarrow$ Chuyển sang Tab **🚩 Phân hệ & Mock Data** $\rightarrow$ Tích chọn/bỏ chọn và bấm **Lưu cài đặt**.
+
+---
+
+### 10.2. Cơ chế xử lý triệt để luồng âm thanh chuông chờ "Tút... Tút..."
+
+- **Nguyên nhân phát sinh lỗi trước đây:** Khi cuộc gọi kết thúc do đối phương từ chối hoặc hủy máy, hàm ngắt chuông chỉ được gọi cục bộ trong view quay số mà chưa đồng bộ cấp dịch vụ lõi; các bộ dao động âm thanh (`OscillatorNode`) của Web Audio API vẫn tiếp tục phát hết chu kỳ 1 giây.
+- **Giải pháp xử lý:**
+  1. Trong `src/services/audioService.js`, bổ sung mảng quản lý `activeOscillators`. Khi hàm `stopAllTones()` hoặc `stopRingbackTone()` được gọi, toàn bộ oscillator đang dao động bị ngắt dứt khoát ngay lập tức với `osc.stop(0)` và `osc.disconnect()`.
+  2. Trong `src/services/wazo.js`, tích hợp gọi `audioService.stopAllTones()` trực tiếp tại tất cả các sự kiện kết thúc cuộc gọi từ máy chủ Wazo: `ON_CALL_ENDED`, `ON_CALL_FAILED`, `ON_CALL_REJECTED`, `ON_CALL_CANCELED` và các hàm `hangup()`, `reject()`.
+
+---
+
+### 10.3. Nguyên nhân gây ngắt cuộc gọi liên tục trên máy đồng nghiệp và Hướng khắc phục
+
+Nếu máy đồng nghiệp khi bấm Gọi lập tức bị kết thúc cuộc gọi liên tục, có 4 nguyên nhân kỹ thuật phổ biến sau:
+1. **Trình duyệt đang chặn quyền Microphone (`NotAllowedError`):**
+   - WebRTC bắt buộc phải có luồng Micro. Nếu trình duyệt trên máy đồng nghiệp chưa bấm **Cho phép (Allow)** Microphone, Wazo SDK không thể tạo bản tin SDP Offer và tự động hủy cuộc gọi ngay lập tức.
+   - *Khắc phục:* Bấm vào biểu tượng ổ khóa/cài đặt trang web trên thanh địa chỉ URL của Chrome $\rightarrow$ Chuyển **Microphone** sang **Allow (Cho phép)** $\rightarrow$ Tải lại trang.
+2. **Chưa xác thực tin cậy chứng chỉ SSL máy chủ Wazo:**
+   - Kết nối SIP WebRTC chạy qua WebSocket bảo mật `wss://107.126.11.126:9443/api/asterisk/ws`.
+   - Nếu máy đồng nghiệp lần đầu truy cập và chưa mở đường dẫn `https://107.126.11.126:9443/` để bấm "Nâng cao $\rightarrow$ Tiếp tục truy cập", kết nối WSS bị trình duyệt chặn dẫn tới trạng thái SIP là `Unregistered`. Khi bấm gọi, SDK không thể gửi bản tin SIP `INVITE` và báo lỗi `ON_CALL_FAILED`.
+   - *Khắc phục:* Mở link `https://107.126.11.126:9443/` ở tab mới một lần để trình duyệt ghi nhớ tin cậy SSL.
+3. **Gọi tới máy lẻ đang Offline hoặc không tồn tại:**
+   - Ví dụ: Máy A đăng nhập `1002`, gọi tới `1001` nhưng lúc đó máy `1001` chưa mở hoặc chưa đăng nhập. Tổng đài Asterisk phản hồi SIP `404 Not Found` hoặc `480 Temporarily Unavailable`, khiến cuộc gọi tự động kết thúc trong vòng 0.5 giây.
+4. **Tự gọi chính mình (Self Call Loopback):**
+   - Máy đang đăng nhập số `1001` nhưng lại quay số `1001`. Tổng đài từ chối cuộc gọi loopback và tự cúp máy ngay.
+
+---
+
+### 10.4. Hệ thống Nhật ký thao tác thời gian thực (Live Debug Logging)
+
+Hệ thống ghi log trực quan đã được tích hợp toàn diện:
+- **Xem qua Console F12:** Mọi thao tác bấm nút, gọi số, sự kiện đăng ký SIP và sự kiện tổng đài đều in ra Console với nhãn màu chuyên biệt:
+  - `[CALL]`: Tím (Cuộc gọi, quay số, kết nối, cúp máy)
+  - `[SIP]`: Xanh lá (Trạng thái đăng ký WebRTC SIP)
+  - `[AUTH]`: Xanh dương (Đăng nhập, Token, phân quyền)
+  - `[UI]`: Xám (Thao tác bấm nút của người dùng)
+  - `[AUDIO]`: Cam (Phát/dừng chuông tút tút)
+  - `[API]`: Xanh biển (Gọi REST API Wazo)
+- **Xem trực tiếp trên màn hình giao diện (Không cần mở F12):**
+  - Ở góc dưới bên phải màn hình có nút nổi **`📋 Logs`**.
+  - Nhấp vào nút để mở bảng điều khiển **Live Debug Console**: Có bộ lọc theo danh mục, nút **Sao chép**, nút **Xóa**, tự động cập nhật từng giây khi bạn hoặc đồng nghiệp thao tác.
+
+
 
 

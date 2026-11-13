@@ -1,21 +1,21 @@
 <template>
   <aside class="app-sidebar">
     <ul class="sidebar-menu">
-      <li>
+      <li v-if="features.dashboard">
         <router-link to="/dashboard" class="nav-btn" active-class="active">
           <span class="icon">📊</span>
           <span>Tổng quan</span>
         </router-link>
       </li>
 
-      <li>
+      <li v-if="features.calls">
         <router-link to="/calls" class="nav-btn" active-class="active">
           <span class="icon">📞</span>
           <span>Gọi điện & Bàn phím</span>
         </router-link>
       </li>
 
-      <li>
+      <li v-if="features.contacts">
         <router-link to="/contacts" class="nav-btn" active-class="active">
           <span class="icon">📇</span>
           <span>Danh bạ</span>
@@ -25,7 +25,7 @@
         </router-link>
       </li>
 
-      <li>
+      <li v-if="features.messages">
         <router-link to="/messages" class="nav-btn" active-class="active">
           <span class="icon">💬</span>
           <span>Tin nhắn</span>
@@ -35,7 +35,7 @@
         </router-link>
       </li>
 
-      <li>
+      <li v-if="features.history">
         <router-link to="/history" class="nav-btn" active-class="active">
           <span class="icon">🕒</span>
           <span>Lịch sử cuộc gọi</span>
@@ -60,9 +60,15 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { contactService } from '@/services/contactService'
 import { chatService } from '@/services/chatService'
 import { historyService } from '@/services/historyService'
+import { getFeatures } from '@/config/features'
 
+const features = ref(getFeatures())
 const userExt = ref(localStorage.getItem('smartcall_extension') || '1001')
 const isWebRtcReady = ref(false)
+
+const onFeaturesChanged = (e) => {
+  features.value = e.detail || getFeatures()
+}
 
 const contactsCount = ref(0)
 const unreadMessagesCount = ref(0)
@@ -115,6 +121,7 @@ onMounted(() => {
   window.addEventListener('smartcall-rooms-updated', updateSidebarCounts)
   window.addEventListener('smartcall-contacts-updated', updateSidebarCounts)
   window.addEventListener('smartcall-cdr-updated', updateSidebarCounts)
+  window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 
 onUnmounted(() => {
@@ -123,6 +130,7 @@ onUnmounted(() => {
   window.removeEventListener('smartcall-rooms-updated', updateSidebarCounts)
   window.removeEventListener('smartcall-contacts-updated', updateSidebarCounts)
   window.removeEventListener('smartcall-cdr-updated', updateSidebarCounts)
+  window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 </script>
 

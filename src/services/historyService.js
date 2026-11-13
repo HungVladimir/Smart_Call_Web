@@ -1,4 +1,6 @@
 import { wazoService } from './wazo'
+import { isFeatureEnabled } from '@/config/features'
+import { logger } from './loggerService'
 
 /**
  * MOCK DATA LỊCH SỬ CUỘC GỌI CHUẨN DOANH NGHIỆP SDV
@@ -112,11 +114,18 @@ class HistoryService {
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
+          if (!isFeatureEnabled('mockData')) {
+            // Chỉ giữ lại các bản ghi thật do người dùng tạo (id bắt đầu bằng cdr-Date.now)
+            return parsed.filter((r) => !String(r.id).startsWith('cdr-00'))
+          }
           return parsed
         }
       }
     } catch (e) {
       console.warn('Lỗi đọc cache lịch sử cuộc gọi:', e)
+    }
+    if (!isFeatureEnabled('mockData')) {
+      return []
     }
     const initial = JSON.parse(JSON.stringify(MOCK_HISTORY))
     return initial
@@ -263,6 +272,11 @@ class HistoryService {
       merged.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
       return this._filterList(merged, tab)
     } catch (err) {
+      if (!isFeatureEnabled('mockData')) {
+        logger.warn('API', 'Cờ mockData=false: Lỗi lấy CDR từ Wazo, trả về danh sách rỗng hoặc chỉ cuộc gọi phiên hiện tại', err.message)
+        const realOnly = this.localHistory.filter((r) => !String(r.id).startsWith('cdr-00'))
+        return this._filterList(realOnly, tab)
+      }
       // Offline fallback: Dùng dữ liệu mock nội bộ để UI luôn chạy mượt
       return this._filterLocal(tab)
     }

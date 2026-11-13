@@ -1,4 +1,6 @@
 import { wazoService } from './wazo'
+import { isFeatureEnabled } from '@/config/features'
+import { logger } from './loggerService'
 
 // Dữ liệu danh bạ mẫu chuẩn doanh nghiệp
 const MOCK_CONTACTS = [
@@ -60,7 +62,7 @@ const MOCK_CONTACTS = [
 
 class ContactService {
   constructor() {
-    this.localContacts = [...MOCK_CONTACTS]
+    this.localContacts = isFeatureEnabled('mockData') ? [...MOCK_CONTACTS] : []
   }
 
   // Quản lý danh sách Yêu thích (Favorites)
@@ -152,6 +154,10 @@ class ContactService {
       }
 
       if (!contactsData) {
+        if (!isFeatureEnabled('mockData')) {
+          logger.info('API', 'Cờ mockData=false: Không có dữ liệu danh bạ từ Wazo, trả về mảng rỗng []')
+          return []
+        }
         return this.localContacts.map((c) => ({
           ...c,
           isFavorite: favorites.includes(c.id),
@@ -241,11 +247,18 @@ class ContactService {
         })
       }
 
+      if (!isFeatureEnabled('mockData')) {
+        return []
+      }
       return this.localContacts.map((c) => ({
         ...c,
         isFavorite: favorites.includes(c.id),
       }))
     } catch (err) {
+      if (!isFeatureEnabled('mockData')) {
+        logger.warn('API', 'Cờ mockData=false: Lỗi lấy danh bạ Wazo, trả về mảng rỗng []', err.message)
+        return []
+      }
       return this.localContacts.map((c) => ({
         ...c,
         isFavorite: favorites.includes(c.id),

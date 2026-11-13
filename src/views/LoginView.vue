@@ -112,8 +112,8 @@
             </svg>
           </button>
 
-          <!-- Dải phân cách -->
-          <div class="auth-divider">
+          <!-- Dải phân cách & Chế độ thử nghiệm Offline (Chỉ hiện khi bật cờ mockData) -->
+          <div v-if="features.mockData" class="auth-divider">
             <span class="divider-line"></span>
             <span class="divider-text">HOẶC</span>
             <span class="divider-line"></span>
@@ -121,6 +121,7 @@
 
           <!-- Nút Chạy chế độ thử nghiệm Offline -->
           <button
+            v-if="features.mockData"
             type="button"
             class="btn-offline-mode"
             @click="enterOfflineMode"
@@ -150,11 +151,26 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { wazoService } from '@/services/wazo'
+import { getFeatures } from '@/config/features'
+import { logger } from '@/services/loggerService'
 
 const router = useRouter()
+const features = ref(getFeatures())
+
+const onFeaturesChanged = (e) => {
+  features.value = e.detail || getFeatures()
+}
+
+onMounted(() => {
+  window.addEventListener('smartcall-features-changed', onFeaturesChanged)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
+})
 
 const username = ref(localStorage.getItem('smartcall_remembered_username') || '')
 const password = ref('')

@@ -54,6 +54,9 @@
         {{ toastMessage }}
       </div>
     </transition>
+
+    <!-- 7. Bảng Nhật ký Debug thao tác & Sự kiện WebRTC thời gian thực -->
+    <DebugLogDrawer />
   </div>
 </template>
 
@@ -61,11 +64,13 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { wazoService } from '@/services/wazo'
+import { audioService } from '@/services/audioService'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import SettingsModal from '@/components/common/SettingsModal.vue'
 import CallControlPanel from '@/components/call/CallControlPanel.vue'
 import IncomingCallModal from '@/components/call/IncomingCallModal.vue'
+import DebugLogDrawer from '@/components/common/DebugLogDrawer.vue'
 import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
 
@@ -252,6 +257,7 @@ const onMissedIncomingCall = (callData) => {
 const handleCallEnded = () => {
   currentCall.value = null
   hasActiveCall.value = false
+  audioService.stopAllTones()
 }
 
 const handleAppAction = (event) => {

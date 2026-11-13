@@ -1,4 +1,6 @@
 import { wazoService } from './wazo'
+import { isFeatureEnabled } from '@/config/features'
+import { logger } from './loggerService'
 
 const STORAGE_KEY = 'smartcall_chat_rooms'
 
@@ -129,6 +131,10 @@ class ChatService {
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
+          if (!isFeatureEnabled('mockData')) {
+            // Chỉ giữ các phòng chat thật do người dùng tạo hoặc đồng bộ từ Wazo
+            return parsed.filter((r) => !['room-eng', 'room-sales', 'room-direct-1007'].includes(r.id))
+          }
           // Bổ sung thời gian updatedAt nếu phòng cũ chưa có
           parsed.forEach((r, idx) => {
             if (!r.updatedAt) {
@@ -141,6 +147,9 @@ class ChatService {
       }
     } catch (e) {
       console.warn('Lỗi đọc cache phòng chat:', e)
+    }
+    if (!isFeatureEnabled('mockData')) {
+      return []
     }
     const initial = JSON.parse(JSON.stringify(INITIAL_MOCK_ROOMS))
     initial.forEach((r, idx) => {
@@ -200,6 +209,12 @@ class ChatService {
       }
     } catch (err) {
       /* Fallback sang local rooms */
+    }
+
+    if (!isFeatureEnabled('mockData')) {
+      // Chỉ trả về các phòng thật (hoặc danh sách rỗng nếu chưa có phòng nào)
+      const realRooms = (this.rooms || []).filter((r) => !['room-eng', 'room-sales', 'room-direct-1007'].includes(r.id))
+      return [...realRooms]
     }
 
     if (!this.rooms || this.rooms.length === 0) {

@@ -1,16 +1,19 @@
 /**
  * AudioService - Bộ tạo âm thanh tổng đài WebRTC chuẩn bằng Web Audio API
  * Tự động tạo âm thanh thuần không cần phụ thuộc file .mp3 bên ngoài (hoạt động 100% offline).
+ * Đảm bảo ngắt dứt khoát toàn bộ âm thanh chuông chờ và chuông đến khi cuộc gọi kết thúc/từ chối.
  */
+
+import { logger } from './loggerService'
 
 class AudioService {
   constructor() {
     this.audioCtx = null
-    this.ringOsc1 = null
-    this.ringOsc2 = null
-    this.ringGain = null
     this.ringInterval = null
+    this.ringbackInterval = null
     this.isRinging = false
+    this.isRingbackActive = false
+    this.activeOscillators = []
   }
 
   _getAudioContext() {
@@ -26,6 +29,28 @@ class AudioService {
     return this.audioCtx
   }
 
+  _trackOscillator(osc) {
+    this.activeOscillators.push(osc)
+    osc.onended = () => {
+      const idx = this.activeOscillators.indexOf(osc)
+      if (idx !== -1) {
+        this.activeOscillators.splice(idx, 1)
+      }
+    }
+  }
+
+  _stopAllActiveOscillators() {
+    while (this.activeOscillators.length > 0) {
+      const osc = this.activeOscillators.pop()
+      try {
+        osc.stop(0)
+        osc.disconnect()
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
   /**
    * Phát chuông cuộc gọi đến (Incoming Ringtone)
    * Chu kỳ: Kêu 1.6 giây -> Nghỉ 2.0 giây -> Lặp lại
@@ -37,6 +62,7 @@ class AudioService {
     if (!ctx) return
 
     this.isRinging = true
+    logger.info('AUDIO', '🔔 Bắt đầu phát chuông cuộc gọi đến (Incoming Ringtone)')
 
     const playRingCycle = () => {
       if (!this.isRinging) return
@@ -61,6 +87,9 @@ class AudioService {
         osc2.connect(gainNode)
         gainNode.connect(ctx.destination)
 
+        this._trackOscillator(osc1)
+        this._trackOscillator(osc2)
+
         osc1.start(ctx.currentTime)
         osc2.start(ctx.currentTime)
         osc1.stop(ctx.currentTime + 1.6)
@@ -78,11 +107,15 @@ class AudioService {
    * Dừng chuông cuộc gọi đến
    */
   stopIncomingRingtone() {
-    this.isRinging = false
+    if (this.isRinging) {
+      this.isRinging = false
+      logger.info('AUDIO', '⏹️ Đã dừng chuông cuộc gọi đến')
+    }
     if (this.ringInterval) {
       clearInterval(this.ringInterval)
       this.ringInterval = null
     }
+    this._stopAllActiveOscillators()
   }
 
   /**
@@ -91,6 +124,7 @@ class AudioService {
   startRingbackTone() {
     if (this.isRingbackActive) return
     this.isRingbackActive = true
+    logger.info('AUDIO', '🎵 Bắt đầu phát chuông chờ cuộc gọi đi (Ringback Tone: Tút... Tút...)')
 
     const playTone = () => {
       if (!this.isRingbackActive) return
@@ -101,20 +135,34 @@ class AudioService {
   }
 
   /**
-   * Dừng chuông chờ cuộc gọi đi
+   * Dừng chuông chờ cuộc gọi đi (Cắt dứt khoát toàn bộ âm thanh ngay lập tức)
    */
   stopRingbackTone() {
-    this.isRingbackActive = false
+    if (this.isRingbackActive) {
+      this.isRingbackActive = false
+      logger.info('AUDIO', '⏹️ Đã dừng chuông chờ cuộc gọi đi (Ringback Tone dừng hoàn toàn)')
+    }
     if (this.ringbackInterval) {
       clearInterval(this.ringbackInterval)
       this.ringbackInterval = null
     }
+    this._stopAllActiveOscillators()
+  }
+
+  /**
+   * Ngắt toàn bộ mọi loại âm thanh (Incoming ring, Ringback chờ, Keypad DTMF)
+   */
+  stopAllTones() {
+    this.stopRingbackTone()
+    this.stopIncomingRingtone()
+    this._stopAllActiveOscillators()
   }
 
   /**
    * Phát âm thanh chuông chờ cuộc gọi đi (Ringback Tone: Tút... Tút...)
    */
   playRingbackTone() {
+    if (!this.isRingbackActive) return
     const ctx = this._getAudioContext()
     if (!ctx) return
 
@@ -132,6 +180,8 @@ class AudioService {
 
       osc.connect(gain)
       gain.connect(ctx.destination)
+
+      this._trackOscillator(osc)
 
       osc.start(ctx.currentTime)
       osc.stop(ctx.currentTime + 1.0)
@@ -180,6 +230,9 @@ class AudioService {
       osc2.connect(gain)
       gain.connect(ctx.destination)
 
+      this._trackOscillator(osc1)
+      this._trackOscillator(osc2)
+
       osc1.start(ctx.currentTime)
       osc2.start(ctx.currentTime)
       osc1.stop(ctx.currentTime + 0.12)
@@ -193,6 +246,7 @@ class AudioService {
    * Âm thanh kết thúc cuộc gọi (3 tiếng bíp cúp máy)
    */
   playCallEndedTone() {
+    this.stopAllTones()
     const ctx = this._getAudioContext()
     if (!ctx) return
 
@@ -207,6 +261,8 @@ class AudioService {
 
         osc.connect(gain)
         gain.connect(ctx.destination)
+
+        this._trackOscillator(osc)
         osc.start(now + offset)
         osc.stop(now + offset + 0.12)
       } catch (e) {
@@ -217,4 +273,3 @@ class AudioService {
 }
 
 export const audioService = new AudioService()
-

@@ -146,6 +146,8 @@ import { wazoService } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
 import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
+import { isFeatureEnabled } from '@/config/features'
+import { logger } from '@/services/loggerService'
 
 const route = useRoute()
 const extension = ref('1002')
@@ -241,6 +243,7 @@ const handleDial = async () => {
   const ext = extension.value.trim()
   if (!ext) return
 
+  logger.info('UI', `Người dùng bấm nút Gọi tới máy lẻ: ${ext}`)
   clearTimeout(mockAnswerTimer)
   clearInterval(timer)
   callSeconds.value = 0
@@ -268,12 +271,11 @@ const handleDial = async () => {
       )
     }
   } catch (e) {
-    console.info('Cuộc gọi khởi chạy ở chế độ mô phỏng offline:', e)
+    logger.warn('CALL', `Cuộc gọi Wazo WebRTC tới ${ext} không thành công: ${e.message || e}`)
   }
 
-  // Nếu là chế độ thử nghiệm offline (khi test 1 máy đơn lẻ không có Wazo thật):
-  // Giữ cơ chế test: Tự động giả lập đối phương nhấc máy sau 2.5s đổ chuông để vẫn test được thời lượng
-  if (!isRealWazoCall || localStorage.getItem('smartcall_offline_mode') === 'true') {
+  // Chỉ kích hoạt giả lập đối phương nhấc máy khi cờ mockData = true (Chế độ thử nghiệm offline)
+  if (isFeatureEnabled('mockData') && (!isRealWazoCall || localStorage.getItem('smartcall_offline_mode') === 'true')) {
     mockAnswerTimer = setTimeout(() => {
       if (callState.value === 'ringing') {
         startCallTimer()
@@ -292,7 +294,7 @@ const handleDial = async () => {
 
 const hangupCall = () => {
   clearTimeout(mockAnswerTimer)
-  audioService.stopRingbackTone()
+  audioService.stopAllTones()
   audioService.playCallEndedTone()
 
   try {
@@ -369,6 +371,7 @@ const onRemoteAccepted = () => {
 }
 
 const onRemoteEnded = () => {
+  audioService.stopAllTones()
   hangupCall()
   window.dispatchEvent(
     new CustomEvent('app-toast', {
@@ -378,6 +381,7 @@ const onRemoteEnded = () => {
 }
 
 const onRemoteFailed = () => {
+  audioService.stopAllTones()
   hangupCall()
   window.dispatchEvent(
     new CustomEvent('app-toast', {
@@ -414,7 +418,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearTimeout(mockAnswerTimer)
-  audioService.stopRingbackTone()
+  audioService.stopAllTones()
   window.removeEventListener('wazo-accepted', onRemoteAccepted)
   window.removeEventListener('wazo-ended', onRemoteEnded)
   window.removeEventListener('wazo-failed', onRemoteFailed)

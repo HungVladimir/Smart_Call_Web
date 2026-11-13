@@ -231,6 +231,7 @@ import { useRouter } from 'vue-router'
 import { contactService } from '@/services/contactService'
 import { chatService } from '@/services/chatService'
 import { historyService } from '@/services/historyService'
+import { isFeatureEnabled } from '@/config/features'
 
 const router = useRouter()
 
@@ -258,14 +259,18 @@ const userInitials = computed(() => {
     .toUpperCase()
 })
 
-// Danh bạ gọi nhanh (động theo danh bạ thực tế)
-const quickContacts = ref([
-  { name: 'Nguyễn Văn An', ext: '1002' },
-  { name: 'Trần Văn Bình', ext: '1003' },
-  { name: 'Ngô Tiến Việt', ext: '1005' },
-  { name: 'Lương Đức Anh', ext: '1006' },
-  { name: 'Nguyễn Hữu Hiếu', ext: '1007' },
-])
+// Danh bạ gọi nhanh (chỉ nạp dữ liệu mẫu khi cờ mockData = true)
+const quickContacts = ref(
+  isFeatureEnabled('mockData')
+    ? [
+        { name: 'Nguyễn Văn An', ext: '1002' },
+        { name: 'Trần Văn Bình', ext: '1003' },
+        { name: 'Ngô Tiến Việt', ext: '1005' },
+        { name: 'Lương Đức Anh', ext: '1006' },
+        { name: 'Nguyễn Hữu Hiếu', ext: '1007' },
+      ]
+    : [],
+)
 
 // Cuộc gọi gần đây (động theo lịch sử CDR)
 const recentCalls = ref([])
@@ -292,6 +297,8 @@ const loadDashboardData = async () => {
       }))
       if (mappedQuick.length > 0) {
         quickContacts.value = mappedQuick
+      } else if (!isFeatureEnabled('mockData')) {
+        quickContacts.value = []
       }
     }
   } catch (e) {
