@@ -35,6 +35,12 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
 - Mỗi khi người dùng yêu cầu sửa lỗi, tối ưu hoặc phát triển tính năng mới ở `Smart_Call_Web`, **AI phải chủ động cập nhật tương ứng sang `Smart_Call_Web_Mock`**.
 - Khi đồng bộ, chỉ cập nhật phần logic tính năng, giữ nguyên các khối dữ liệu mock và cơ chế fallback offline sẵn có của `Smart_Call_Web_Mock`.
 
+### Nguyên tắc phân tách trách nhiệm chỉnh sửa (Scope Separation Rule):
+- **Dự án chính `Smart_Call_Web` là dự án chạy dữ liệu thật 100%**: Tuyệt đối **KHÔNG** đưa bất kỳ dữ liệu mock, dữ liệu giả lập, hay logic phục vụ kiểm thử fake data nào vào dự án này.
+- **Chỉ sửa bên `Smart_Call_Web_Mock` đối với các yêu cầu về Mock Data / Chế độ thử nghiệm ngoại tuyến**:
+  - Khi người dùng yêu cầu chỉnh sửa, bổ sung hoặc tối ưu các nội dung liên quan đến Mock Data, dữ liệu giả lập, kịch bản thử nghiệm ngoại tuyến (như danh bạ mẫu, tin nhắn mẫu, lịch sử mẫu, timer tự động nhấc máy giả lập), **AI CHỈ ĐƯỢC THỰC HIỆN TRÊN DỰ ÁN `Smart_Call_Web_Mock`**, tuyệt đối **KHÔNG** sửa đổi mã nguồn của `Smart_Call_Web`.
+  - Luôn ghi nhớ: `Smart_Call_Web` là mã nguồn thật chuẩn production của công ty, phải luôn giữ sạch sẽ, không có bất kỳ rác dữ liệu giả lập nào.
+
 ---
 
 ## 3. CÁC NGUYÊN TẮC NGHIỆP VỤ & TÍNH NĂNG ĐÃ THỐNG NHẤT

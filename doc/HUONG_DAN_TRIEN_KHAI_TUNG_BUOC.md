@@ -1239,6 +1239,11 @@ Dựa trên kết quả rà soát toàn diện trong tài liệu báo cáo kiể
 4. *Checklist tự kiểm tra 4 kịch bản biên (Cross-Scenario Self-Verification):* Happy path, Cancellation, Failure/Network, Collision/Concurrency.
 5. *Sửa lỗi từ gốc rễ (Root-Cause Architecture Fix):* Không dùng `if/else` chữa cháy tạm thời tại View.
 
+### 17.4. Quy định Phân tách Trách nhiệm Chỉnh sửa giữa 2 Dự án (Mục 2 GEMINI.md)
+- **Dự án chính `Smart_Call_Web` (Production):** 100% dữ liệu thật từ máy chủ Wazo, tuyệt đối không chứa dữ liệu mock / fake data / timer giả lập.
+- **Chỉ sửa `Smart_Call_Web_Mock`:** Đối với mọi yêu cầu chỉnh sửa, bổ sung hoặc tối ưu liên quan đến Mock Data, dữ liệu mẫu, kịch bản thử nghiệm ngoại tuyến (danh bạ mẫu, tin nhắn mẫu, lịch sử mẫu, timer tự động nhấc máy giả lập), AI chỉ được thực hiện duy nhất trên dự án `Smart_Call_Web_Mock`, tuyệt đối không tác động hay sửa đổi mã nguồn của `Smart_Call_Web`.
+
+
 
 
 
