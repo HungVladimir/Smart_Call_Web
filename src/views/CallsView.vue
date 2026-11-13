@@ -260,7 +260,7 @@ const handleDial = async () => {
 
   // 2. Chặn cuộc gọi nếu đối phương đang trong cuộc gọi khác (busy)
   let targetContact = contactService.findContactByExtension(ext)
-  if (!targetContact && (!contactService.cachedContacts || contactService.cachedContacts.length === 0)) {
+  if (!targetContact && (!contactService.currentContacts || contactService.currentContacts.length === 0)) {
     try {
       await contactService.getContacts()
       targetContact = contactService.findContactByExtension(ext)
@@ -484,7 +484,7 @@ onMounted(async () => {
   window.addEventListener('wazo-failed', onRemoteFailed)
 
   // Nạp danh bạ trước nếu chưa có dữ liệu để kiểm tra trạng thái máy bận / ngoại tuyến chính xác
-  if (!contactService.cachedContacts || contactService.cachedContacts.length === 0) {
+  if (!contactService.currentContacts || contactService.currentContacts.length === 0) {
     try {
       await contactService.getContacts()
     } catch {

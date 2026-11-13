@@ -244,8 +244,8 @@ const newContact = ref({
 })
 
 const onContactsUpdated = () => {
-  if (contactService.cachedContacts) {
-    contacts.value = [...contactService.cachedContacts]
+  if (contactService.currentContacts) {
+    contacts.value = [...contactService.currentContacts]
   }
 }
 
@@ -258,11 +258,7 @@ onMounted(() => {
 })
 
 onActivated(() => {
-  if (contactService.cachedContacts && contactService.cachedContacts.length > 0) {
-    contacts.value = [...contactService.cachedContacts]
-  } else {
-    loadContacts()
-  }
+  loadContacts()
 })
 
 onUnmounted(() => {
@@ -270,9 +266,11 @@ onUnmounted(() => {
 })
 
 const loadContacts = async () => {
-  loading.value = !contactService.cachedContacts
+  loading.value = true
   try {
     contacts.value = await contactService.getContacts()
+  } catch (err) {
+    console.warn('Lỗi nạp danh bạ Wazo:', err)
   } finally {
     loading.value = false
   }
