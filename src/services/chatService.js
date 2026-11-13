@@ -1,141 +1,21 @@
 import { wazoService } from './wazo'
-import { isFeatureEnabled } from '@/config/features'
 import { logger } from './loggerService'
 
 const STORAGE_KEY = 'smartcall_chat_rooms'
-
-/**
- * Dữ liệu phòng chat và tin nhắn mẫu ban đầu
- */
-const INITIAL_MOCK_ROOMS = [
-  {
-    id: 'room-tech-part',
-    title: 'Nhóm Kỹ thuật LAN',
-    preview: 'ok bạn ơi, để mình kiểm tra thử',
-    time: '15:32',
-    unread: 0,
-    pinned: 'Thông báo kỹ thuật: Kiểm tra định kỳ đường truyền SIP Trunk và line WebRTC phòng điều hành.',
-    avatarBg: '#0284c7',
-    icon: '👥',
-    isDirect: false,
-    memberCount: 4,
-    members: [
-      { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
-      { id: '1006', name: 'Lương Đức Anh', dept: 'Phòng Phát triển Phần mềm', ext: '1006', isAdmin: false },
-      { id: '1007', name: 'Nguyễn Hữu Hiếu', dept: 'Trưởng nhóm Phát triển Hệ thống', ext: '1007', isAdmin: false },
-      { id: '1002', name: 'Nguyễn Văn An', dept: 'Khối Kỹ thuật / Nhóm Ứng dụng', ext: '1002', isAdmin: false },
-      { id: '1003', name: 'Trần Văn Bình', dept: 'Khối Vận hành / Phân xưởng MFQ', ext: '1003', isAdmin: false },
-    ],
-    messages: [
-      {
-        id: 'msg-101',
-        sender: 'theirs',
-        senderName: 'Lương Đức Anh',
-        dept: 'Kỹ sư Phần mềm',
-        text: 'Mọi người kiểm tra giúp em line 1002 có gọi sang được phân xưởng không ạ?',
-        time: '15:28',
-        readStatus: 'Read (12)',
-        readers: ['Quản trị viên', 'Nguyễn Hữu Hiếu', 'Nguyễn Văn An', 'Trần Văn Bình'],
-      },
-      {
-        id: 'msg-102',
-        sender: 'mine',
-        senderName: 'Tôi',
-        dept: 'Khối Kỹ thuật',
-        text: 'Mình vừa thử kiểm tra gọi thoại qua WebRTC, mic và âm thanh đều thông suốt rồi nhé!',
-        time: '15:30',
-        readStatus: 'Read (4)',
-        readers: ['Lương Đức Anh', 'Trần Văn Bình', 'Nguyễn Hữu Hiếu'],
-      },
-      {
-        id: 'msg-103',
-        sender: 'theirs',
-        senderName: 'Lương Đức Anh',
-        dept: 'Kỹ sư Phần mềm',
-        text: 'ok bạn ơi, để mình kiểm tra thử',
-        time: '15:32',
-        readStatus: 'Read (1)',
-        readers: ['Quản trị viên'],
-      },
-    ],
-  },
-  {
-    id: 'room-mfq-mp',
-    title: 'Vận hành Phân xưởng MFQ',
-    preview: 'Báo cáo ca làm việc hôm nay bình thường.',
-    time: '15:58',
-    unread: 0,
-    pinned: 'Thông báo chuyển giao ca trực: Bàn giao hệ thống giám sát và tổng đài cho ca kế tiếp.',
-    avatarBg: '#10b981',
-    icon: '🏭',
-    isDirect: false,
-    memberCount: 3,
-    members: [
-      { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
-      { id: '1005', name: 'Ngô Tiến Việt', dept: 'Phòng Phát triển Phần mềm', ext: '1005', isAdmin: false },
-      { id: '1008', name: 'Trịnh Thế Duyệt', dept: 'Tổ Vận hành Phân xưởng', ext: '1008', isAdmin: false },
-    ],
-    messages: [
-      {
-        id: 'msg-201',
-        sender: 'theirs',
-        senderName: 'Trịnh Thế Duyệt',
-        dept: 'Tổ Vận hành Phân xưởng',
-        text: 'Báo cáo ca làm việc hôm nay bình thường.',
-        time: '15:58',
-        readStatus: 'Read (5)',
-        readers: ['Quản trị viên'],
-      },
-    ],
-  },
-  {
-    id: 'room-direct-1007',
-    title: 'Nguyễn Hữu Hiếu',
-    preview: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
-    time: '14:15',
-    unread: 0,
-    pinned: '',
-    avatarBg: '#f59e0b',
-    icon: 'NH',
-    isDirect: true,
-    ext: '1007',
-    memberCount: 2,
-    members: [
-      { id: '1001', name: 'Quản trị viên', dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
-      { id: '1007', name: 'Nguyễn Hữu Hiếu', dept: 'Trưởng nhóm Phát triển Hệ thống', ext: '1007', isAdmin: false },
-    ],
-    messages: [
-      {
-        id: 'msg-301',
-        sender: 'theirs',
-        senderName: 'Nguyễn Hữu Hiếu',
-        dept: 'Trưởng nhóm Phát triển Hệ thống',
-        text: 'Bạn test thử cuộc gọi trên máy 1002 nhé',
-        time: '14:15',
-        readStatus: 'Read (1)',
-        readers: ['Quản trị viên'],
-      },
-    ],
-  },
-]
 
 class ChatService {
   constructor() {
     this.rooms = this.loadSavedRooms()
   }
 
-  // Tải dữ liệu phòng chat từ localStorage để không bao giờ bị mất khi chuyển tab / F5
+  // Tải dữ liệu phòng chat từ localStorage để duy trì trạng thái khi chuyển tab hoặc tải lại trang
   loadSavedRooms() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
-          if (!isFeatureEnabled('mockData')) {
-            // Chỉ giữ các phòng chat thật do người dùng tạo hoặc đồng bộ từ Wazo
-            return parsed.filter((r) => !['room-eng', 'room-sales', 'room-direct-1007'].includes(r.id))
-          }
-          // Bổ sung thời gian updatedAt nếu phòng cũ chưa có
+          // Bổ sung thời gian updatedAt nếu phòng chưa có
           parsed.forEach((r, idx) => {
             if (!r.updatedAt) {
               r.updatedAt = Date.now() - idx * 60000
@@ -148,17 +28,10 @@ class ChatService {
     } catch (e) {
       console.warn('Lỗi đọc cache phòng chat:', e)
     }
-    if (!isFeatureEnabled('mockData')) {
-      return []
-    }
-    const initial = JSON.parse(JSON.stringify(INITIAL_MOCK_ROOMS))
-    initial.forEach((r, idx) => {
-      r.updatedAt = Date.now() - idx * 60000
-    })
-    return initial
+    return []
   }
 
-  // Sắp xếp các phòng chat theo thứ tự tin nhắn mới nhất lên đầu (Top 1)
+  // Sắp xếp các phòng chat theo thứ tự tin nhắn mới nhất lên đầu
   sortRooms() {
     if (!this.rooms || !Array.isArray(this.rooms)) return
     this.rooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
@@ -176,7 +49,7 @@ class ChatService {
   }
 
   /**
-   * Lấy danh sách các phòng chat của user
+   * Lấy danh sách các phòng chat của người dùng
    */
   async getRooms() {
     try {
@@ -193,7 +66,7 @@ class ChatService {
         if (res.ok) {
           const data = await res.json()
           if (data.items && data.items.length > 0) {
-            // Đồng bộ dữ liệu phòng thật
+            // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
             return data.items.map((room) => ({
               id: room.uuid,
               title: room.name || 'Phòng thảo luận',
@@ -211,22 +84,16 @@ class ChatService {
       /* Fallback sang local rooms */
     }
 
-    if (!isFeatureEnabled('mockData')) {
-      // Chỉ trả về các phòng thật (hoặc danh sách rỗng nếu chưa có phòng nào)
-      const realRooms = (this.rooms || []).filter((r) => !['room-eng', 'room-sales', 'room-direct-1007'].includes(r.id))
-      return [...realRooms]
-    }
-
     if (!this.rooms || this.rooms.length === 0) {
       this.rooms = this.loadSavedRooms()
     }
     this.sortRooms()
-    return [...this.rooms]
+    return [...(this.rooms || [])]
   }
 
   /**
-   * Tải lịch sử tin nhắn từ Wazo Chatd server cho một phòng chat thật
-   * GET /api/chatd/1.0/users/me/rooms/{roomId}/messages?limit=50 (dev_guide.md mục 4.6)
+   * Tải lịch sử tin nhắn từ Wazo Chatd server cho một phòng chat
+   * GET /api/chatd/1.0/users/me/rooms/{roomId}/messages?limit=50
    */
   async getRoomMessages(roomId, limit = 50) {
     if (!roomId) return []
@@ -249,7 +116,7 @@ class ChatService {
         if (res.ok) {
           const data = await res.json()
           if (Array.isArray(data.items) && data.items.length > 0) {
-            const currentUserName = localStorage.getItem('smartcall_username') || 'Quản trị viên'
+            const currentUserName = localStorage.getItem('smartcall_username') || 'Người dùng'
             const mapped = data.items.map((m) => {
               const isMine = m.alias === currentUserName || m.user_uuid === wazoService.session?.uuid
               return {
@@ -271,16 +138,16 @@ class ChatService {
         }
       }
     } catch (e) {
-      console.warn('Lỗi tải tin nhắn từ Wazo server, sử dụng tin nhắn cache:', e)
+      console.warn('Lỗi tải tin nhắn từ máy chủ, sử dụng dữ liệu cục bộ:', e)
     }
 
     return localRoom?.messages || []
   }
 
   /**
-   * Tìm hoặc tạo phòng chat 1-1 với một máy lẻ (Đảm bảo lưu bền vững không bị mất)
+   * Tìm hoặc tạo phòng chat 1-1 với một máy lẻ
    */
-  async getDirectRoom(ext, name, currentUserName = 'Quản trị viên') {
+  async getDirectRoom(ext, name, currentUserName = 'Người dùng') {
     if (!this.rooms || this.rooms.length === 0) {
       this.rooms = this.loadSavedRooms()
     }
@@ -293,7 +160,7 @@ class ChatService {
       found = {
         id: `direct-${ext}-${Date.now()}`,
         title: name,
-        preview: 'Bắt đầu cuộc trò chuyện trực tiếp...',
+        preview: 'Bắt đầu cuộc trò chuyện...',
         time: 'Mới',
         unread: 0,
         avatarBg: '#0284c7',
@@ -304,19 +171,9 @@ class ChatService {
         updatedAt: Date.now(),
         members: [
           { id: '1001', name: currentUserName, dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
-          { id: `emp-${ext}`, name: name, dept: 'Nội bộ công ty', ext: ext, isAdmin: false },
+          { id: `emp-${ext}`, name: name, dept: 'Nội bộ', ext: ext, isAdmin: false },
         ],
-        messages: [
-          {
-            id: `msg-${Date.now()}`,
-            sender: 'theirs',
-            senderName: name,
-            text: `Xin chào! Bạn có thể trao đổi trực tiếp với tôi qua máy lẻ ${ext}.`,
-            time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-            readStatus: 'Read',
-            readers: [currentUserName],
-          },
-        ],
+        messages: [],
       }
       this.rooms.unshift(found)
       this.saveRooms()

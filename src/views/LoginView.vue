@@ -135,7 +135,7 @@
             <span>Chạy chế độ thử nghiệm Offline</span>
           </button>
 
-          <!-- Gợi ý xác nhận chứng chỉ SSL (theo code mẫu) -->
+          <!-- Gợi ý xác nhận chứng chỉ SSL -->
           <div class="ssl-cert-hint">
             <svg class="hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10" />
@@ -197,7 +197,7 @@ const handleLogin = async () => {
     )
     const session = await Promise.race([wazoService.login(u, p), timeoutPromise])
 
-    // 1. Trích xuất thông tin người dùng trực tiếp từ Session SDK (chuẩn theo code mẫu, không phát sinh CORS preflight)
+    // 1. Trích xuất thông tin người dùng trực tiếp từ Session SDK (không phát sinh CORS preflight)
     const profile = session?.profile || wazoService.session?.profile || {}
     const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim()
     realDisplayName = fullName || session?.displayName || u

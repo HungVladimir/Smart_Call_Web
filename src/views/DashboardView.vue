@@ -259,18 +259,8 @@ const userInitials = computed(() => {
     .toUpperCase()
 })
 
-// Danh bạ gọi nhanh (chỉ nạp dữ liệu mẫu khi cờ mockData = true)
-const quickContacts = ref(
-  isFeatureEnabled('mockData')
-    ? [
-        { name: 'Nguyễn Văn An', ext: '1002' },
-        { name: 'Trần Văn Bình', ext: '1003' },
-        { name: 'Ngô Tiến Việt', ext: '1005' },
-        { name: 'Lương Đức Anh', ext: '1006' },
-        { name: 'Nguyễn Hữu Hiếu', ext: '1007' },
-      ]
-    : [],
-)
+// Danh bạ gọi nhanh
+const quickContacts = ref([])
 
 // Cuộc gọi gần đây (động theo lịch sử CDR)
 const recentCalls = ref([])
@@ -295,11 +285,7 @@ const loadDashboardData = async () => {
         name: c.name,
         ext: String(c.number || c.extension || '1000'),
       }))
-      if (mappedQuick.length > 0) {
-        quickContacts.value = mappedQuick
-      } else if (!isFeatureEnabled('mockData')) {
-        quickContacts.value = []
-      }
+      quickContacts.value = mappedQuick
     }
   } catch (e) {
     console.warn('Lỗi tải danh bạ cho Dashboard:', e)

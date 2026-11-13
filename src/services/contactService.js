@@ -2,67 +2,9 @@ import { wazoService } from './wazo'
 import { isFeatureEnabled } from '@/config/features'
 import { logger } from './loggerService'
 
-// Dữ liệu danh bạ mẫu chuẩn doanh nghiệp
-const MOCK_CONTACTS = [
-  {
-    id: 'emp-1002',
-    name: 'Nguyễn Văn An',
-    email: 'an.nguyen@company.local',
-    dept: 'Khối Kỹ thuật / Nhóm Ứng dụng',
-    number: '1002',
-    status: 'online',
-    unreadCount: 2,
-  },
-  {
-    id: 'emp-1003',
-    name: 'Trần Văn Bình',
-    email: 'binh.tran@company.local',
-    dept: 'Khối Vận hành / Phân xưởng MFQ',
-    number: '1003',
-    status: 'online',
-    unreadCount: 0,
-  },
-  {
-    id: 'emp-1004',
-    name: 'Lê Cẩm Tú',
-    email: 'tu.le@company.local',
-    dept: 'Khối Quản trị Chất lượng',
-    number: '1004',
-    status: 'offline',
-    unreadCount: 0,
-  },
-  {
-    id: 'emp-1005',
-    name: 'Ngô Tiến Việt',
-    email: 'viet.ngo@company.local',
-    dept: 'Phòng Phát triển Phần mềm',
-    number: '1005',
-    status: 'online',
-    unreadCount: 1,
-  },
-  {
-    id: 'emp-1006',
-    name: 'Lương Đức Anh',
-    email: 'ducanh.luong@company.local',
-    dept: 'Phòng Phát triển Phần mềm',
-    number: '1006',
-    status: 'online',
-    unreadCount: 3,
-  },
-  {
-    id: 'emp-1007',
-    name: 'Nguyễn Hữu Hiếu',
-    email: 'hieu.nguyen@company.local',
-    dept: 'Trưởng nhóm Phát triển Hệ thống',
-    number: '1007',
-    status: 'online',
-    unreadCount: 0,
-  },
-]
-
 class ContactService {
   constructor() {
-    this.localContacts = isFeatureEnabled('mockData') ? [...MOCK_CONTACTS] : []
+    this.localContacts = []
     this.cachedContacts = null
     this.presencePollTimer = null
 
@@ -168,10 +110,6 @@ class ContactService {
       }
 
       if (!contactsData) {
-        if (!isFeatureEnabled('mockData')) {
-          logger.info('API', 'Cờ mockData=false: Không có dữ liệu danh bạ từ Wazo, trả về mảng rỗng []')
-          return []
-        }
         return this.localContacts.map((c) => ({
           ...c,
           isFavorite: favorites.includes(c.id),
@@ -269,18 +207,12 @@ class ContactService {
         return this._filterAndCache(finalContacts)
       }
 
-      if (!isFeatureEnabled('mockData')) {
-        return []
-      }
       return this.localContacts.map((c) => ({
         ...c,
         isFavorite: favorites.includes(c.id),
       }))
     } catch (err) {
-      if (!isFeatureEnabled('mockData')) {
-        logger.warn('API', 'Cờ mockData=false: Lỗi lấy danh bạ Wazo, trả về mảng rỗng []', err.message)
-        return []
-      }
+      logger.warn('API', 'Không thể nạp danh bạ từ máy chủ Wazo:', err.message)
       return this.localContacts.map((c) => ({
         ...c,
         isFavorite: favorites.includes(c.id),

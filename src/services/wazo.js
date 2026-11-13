@@ -44,7 +44,7 @@ class WazoService {
 
       this.openWebSocketEvents()
 
-      // Tự động kết nối WebRTC Phone sau khi login thành công (theo code mẫu)
+      // Tự động kết nối WebRTC Phone sau khi login thành công
       try {
         await this.connectPhone()
       } catch (phoneErr) {
@@ -305,7 +305,7 @@ class WazoService {
         /* ignore */
       }
 
-      // 2. Dự phòng an toàn theo mã tham chiếu: Kiểm tra sau 600ms xem SDK đã phát audio chưa, nếu chưa thì kích hoạt phát
+      // 2. Dự phòng an toàn: Kiểm tra sau 600ms xem SDK đã phát audio chưa, nếu chưa thì kích hoạt phát
       setTimeout(() => {
         try {
           const sdkAudios = [...document.querySelectorAll('audio')].filter(
@@ -351,7 +351,7 @@ class WazoService {
     }
   }
 
-  // Các hàm điều khiển cuộc gọi (truyền false cho audio-only WebRTC theo code mẫu)
+  // Các hàm điều khiển cuộc gọi (truyền false cho audio-only WebRTC)
   async makeCall(extension) {
     logger.info('CALL', `📞 Bắt đầu gọi tới số máy lẻ: ${extension} (Audio-only WebRTC)...`)
     try {

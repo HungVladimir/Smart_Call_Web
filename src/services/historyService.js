@@ -2,104 +2,6 @@ import { wazoService } from './wazo'
 import { isFeatureEnabled } from '@/config/features'
 import { logger } from './loggerService'
 
-/**
- * MOCK DATA LỊCH SỬ CUỘC GỌI CHUẨN DOANH NGHIỆP SDV
- * Tương đồng với ảnh web1.webp (Date, Duration, Direction, Status) và máy lẻ nội bộ 4 số.
- */
-const MOCK_HISTORY = [
-  {
-    id: 'cdr-001',
-    date: '2026-11-11 15:39:27',
-    name: '조창연 (이윤수)',
-    extension: '1002',
-    dept: 'SDV MES 1 / SDV Application Group',
-    duration: 9, // 00:09
-    direction: 'inbound', // 'inbound' | 'outbound'
-    directionLabel: 'Incoming',
-    status: 'success', // 'success' | 'missed' | 'declined'
-    statusLabel: 'Success',
-    answered: true,
-  },
-  {
-    id: 'cdr-002',
-    date: '2026-11-11 15:00:38',
-    name: 'Nguyễn Hữu Hiếu (Kaito)',
-    extension: '1007',
-    dept: 'SDV MES Application Group Lead',
-    duration: 24, // 00:24
-    direction: 'inbound',
-    directionLabel: 'Incoming',
-    status: 'success',
-    statusLabel: 'Success',
-    answered: true,
-  },
-  {
-    id: 'cdr-003',
-    date: '2026-11-11 14:42:45',
-    name: 'Lương Đức Anh (ducanh)',
-    extension: '1006',
-    dept: 'SDV MES Development Part',
-    duration: 0, // 00:00
-    direction: 'inbound',
-    directionLabel: 'Incoming',
-    status: 'missed',
-    statusLabel: 'Missed',
-    answered: false,
-  },
-  {
-    id: 'cdr-004',
-    date: '2026-11-11 13:28:34',
-    name: 'Bob Trần',
-    extension: '1003',
-    dept: 'SDV MES 2 / Vận hành MFQ/MP',
-    duration: 182, // 03:02
-    direction: 'outbound',
-    directionLabel: 'Outgoing',
-    status: 'success',
-    statusLabel: 'Success',
-    answered: true,
-  },
-  {
-    id: 'cdr-005',
-    date: '2026-11-11 11:10:10',
-    name: 'Ngô Tiến Việt (Storm)',
-    extension: '1005',
-    dept: 'SDV MES Development Part',
-    duration: 7, // 00:07
-    direction: 'inbound',
-    directionLabel: 'Incoming',
-    status: 'success',
-    statusLabel: 'Success',
-    answered: true,
-  },
-  {
-    id: 'cdr-006',
-    date: '2026-11-11 09:09:12',
-    name: 'Carol Lê',
-    extension: '1004',
-    dept: 'MOS Part (SDV)',
-    duration: 0,
-    direction: 'outbound',
-    directionLabel: 'Outgoing',
-    status: 'declined',
-    statusLabel: 'Declined (No answer)',
-    answered: false,
-  },
-  {
-    id: 'cdr-007',
-    date: '2026-11-10 16:20:00',
-    name: 'Alice Nguyễn',
-    extension: '1002',
-    dept: 'SDV MES 1 / SDV Application Group',
-    duration: 65, // 01:05
-    direction: 'outbound',
-    directionLabel: 'Outgoing',
-    status: 'success',
-    statusLabel: 'Success',
-    answered: true,
-  },
-]
-
 const STORAGE_KEY = 'smartcall_call_history'
 
 class HistoryService {
@@ -114,21 +16,13 @@ class HistoryService {
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
-          if (!isFeatureEnabled('mockData')) {
-            // Chỉ giữ lại các bản ghi thật do người dùng tạo (id bắt đầu bằng cdr-Date.now)
-            return parsed.filter((r) => !String(r.id).startsWith('cdr-00'))
-          }
-          return parsed
+          return parsed.filter((r) => !String(r.id).startsWith('cdr-00'))
         }
       }
     } catch (e) {
       console.warn('Lỗi đọc cache lịch sử cuộc gọi:', e)
     }
-    if (!isFeatureEnabled('mockData')) {
-      return []
-    }
-    const initial = JSON.parse(JSON.stringify(MOCK_HISTORY))
-    return initial
+    return []
   }
 
   // Lưu bền vững vào localStorage

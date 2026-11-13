@@ -63,6 +63,7 @@ import IncomingCallModal from '@/components/call/IncomingCallModal.vue'
 import DebugLogDrawer from '@/components/common/DebugLogDrawer.vue'
 import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
+import { isFeatureEnabled } from '@/config/features'
 
 const router = useRouter()
 const route = useRoute()
@@ -324,10 +325,13 @@ const onDial = (extension) => {
       showToast(`Đang gọi: ${extension}`, 'success')
     })
     .catch((err) => {
-      // Mock call demo if offline
-      currentCall.value = { extension, state: 'talking' }
-      hasActiveCall.value = true
-      showToast(`Đang kết nối cuộc gọi thoại tới: ${extension}`, 'info')
+      if (isFeatureEnabled('mockData') && !wazoService.session?.token) {
+        currentCall.value = { extension, state: 'talking' }
+        hasActiveCall.value = true
+        showToast(`Đang kết nối cuộc gọi thử nghiệm tới: ${extension}`, 'info')
+      } else {
+        showToast(`Không thể kết nối cuộc gọi tới: ${extension}`, 'error')
+      }
     })
 }
 
