@@ -30,14 +30,14 @@
         :class="{ active: activeTab === 'all' }"
         @click="activeTab = 'all'"
       >
-        👥 Tất cả nhân viên
+        👥 Tất cả nhân viên ({{ contacts.length }})
       </button>
       <button
         class="tab-btn"
         :class="{ active: activeTab === 'favorites' }"
         @click="activeTab = 'favorites'"
       >
-        ⭐ Mục yêu thích
+        ⭐ Mục yêu thích ({{ favoriteCount }})
       </button>
     </div>
 
