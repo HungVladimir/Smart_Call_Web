@@ -1065,6 +1065,78 @@ Khi thử nghiệm cuộc gọi giữa 2 tài khoản (ví dụ mở 2 tab trìn
 ### 13.6. Dọn dẹp Floating Call Widget trùng lặp
 - Loại bỏ Widget nổi `CallControlPanel.vue` ở góc dưới bên phải màn hình để tránh trùng lặp với màn hình đàm thoại chính `CallsView.vue`, giúp giao diện thông thoáng và không che khuất bảng điều khiển `DebugLogDrawer`.
 
+---
+
+## 14. CHẶN CUỘC GỌI TỚI NGƯỜI ĐANG BẬN VÀ HƯỚNG DẪN ĐỒNG BỘ PRESENCE CHO ỨNG DỤNG ANDROID
+
+### 14.1. Cơ chế chặn cuộc gọi khi đối phương đang bận (Busy State Interception)
+- **Thực tế tổng đài:** Mặc định Asterisk PJSIP trên tổng đài kích hoạt tính năng Chờ cuộc gọi (Call Waiting). Khi máy lẻ B đang đàm thoại, cuộc gọi từ A vẫn được tổng đài đẩy chuông chờ tới B thay vì trả về `486 Busy Here`.
+- **Giải pháp trên Web Client:**
+  - Tại `ContactsView.vue`: Khi bấm nút 📞 gọi cho một liên hệ có trạng thái `busy`, hệ thống lập tức chặn thao tác và thông báo: `🚫 [Tên liên hệ] hiện đang trong cuộc gọi khác (Máy bận). Vui lòng gọi lại sau!`.
+  - Tại `CallsView.vue`: Trước khi gửi lệnh `makeCall()`, hệ thống tra cứu số máy lẻ nhập vào trong danh bạ. Nếu máy lẻ đó đang `busy`, lệnh quay số bị hủy bỏ và hiển thị cảnh báo tương tự.
+
+### 14.2. Tại sao ứng dụng Android gọi được nhưng khi idle lại hiển thị Ngoại tuyến (Offline)?
+Wazo Platform quản lý trạng thái qua 2 tầng độc lập:
+1. **Tầng SIP Line (`lines[].state`):** Quản lý bởi Asterisk qua bản tin `SIP REGISTER`. Khi Android thực hiện cuộc gọi, kết nối SIP kích hoạt $\rightarrow$ Asterisk thấy máy lẻ hoạt động $\rightarrow$ Web thấy `busy`. Nhưng khi cuộc gọi kết thúc, nếu Android không duy trì kết nối SIP REGISTER nền (thường do tiết kiệm pin), Asterisk sẽ đánh dấu line là `unavailable`.
+2. **Tầng Chatd Presence (`p.state`):** Quản lý bởi microservice `wazo-chatd`. Khi người dùng đăng nhập vào app, ứng dụng **PHẢI CHỦ ĐỘNG GỬI REQUEST HTTP PUT** lên Wazo Chatd để khai báo trạng thái `available`. Đội Android trước đây chưa gọi API này, dẫn đến Chatd trả về `state: "unavailable"`.
+
+### 14.3. Hướng dẫn chi tiết cho đội Android gọi API để set Online/Offline chuẩn 100%
+
+#### Bước 1: Khi Đăng nhập thành công $\rightarrow$ Gửi PUT set Online (`available`)
+- **Method:** `PUT`
+- **URL:** `https://<WAZO_HOST>:9443/api/chatd/1.0/users/{user_uuid}/presences`
+  *(Trong đó `{user_uuid}` là UUID tài khoản nhận được từ API đăng nhập `/api/auth/0.1/token`)*
+- **Headers:**
+  ```http
+  X-Auth-Token: <Token_sau_khi_login>
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Body (JSON):**
+  ```json
+  {
+    "state": "available",
+    "status": "Sẵn sàng"
+  }
+  ```
+- **Code mẫu Kotlin (OkHttp):**
+  ```kotlin
+  val client = OkHttpClient()
+  val json = """{"state": "available", "status": "Sẵn sàng"}"""
+  val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
+  val request = Request.Builder()
+      .url("https://107.126.11.126:9443/api/chatd/1.0/users/$userUuid/presences")
+      .addHeader("X-Auth-Token", token)
+      .put(body)
+      .build()
+
+  client.newCall(request).enqueue(object : Callback {
+      override fun onResponse(call: Call, response: Response) {
+          Log.d("WazoPresence", "Set Online thành công: ${response.code}")
+      }
+      override fun onFailure(call: Call, e: IOException) {
+          Log.e("WazoPresence", "Lỗi set Online", e)
+      }
+  })
+  ```
+
+#### Bước 2: Khi Đăng xuất (Logout) hoặc Thoát App $\rightarrow$ Gửi PUT set Offline (`unavailable`)
+- **Method:** `PUT`
+- **URL:** `https://<WAZO_HOST>:9443/api/chatd/1.0/users/{user_uuid}/presences`
+- **Headers:**
+  ```http
+  X-Auth-Token: <Token>
+  Content-Type: application/json
+  ```
+- **Body (JSON):**
+  ```json
+  {
+    "state": "unavailable",
+    "status": "Ngoại tuyến"
+  }
+  ```
+
+
 
 
 

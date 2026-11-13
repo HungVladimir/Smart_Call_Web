@@ -260,7 +260,22 @@ const handleDial = async () => {
     return
   }
 
-  // 2. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
+  // 2. Chặn cuộc gọi nếu đối phương đang trong cuộc gọi khác (busy)
+  const targetContact = contactService.findContactByExtension(ext)
+  if (targetContact && targetContact.status === 'busy') {
+    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang bận trong cuộc gọi khác.`)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🚫 Máy lẻ [${targetContact.name || ext}] hiện đang trong cuộc gọi khác (Máy bận). Vui lòng gọi lại sau!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // 3. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
   try {
     if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       const devices = await navigator.mediaDevices.enumerateDevices()

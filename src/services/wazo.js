@@ -51,6 +51,13 @@ class WazoService {
         logger.warn('SIP', 'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)', phoneErr.message)
       }
 
+      // Tự động đồng bộ trạng thái Trực tuyến (Available) lên Wazo Chatd
+      try {
+        await this.setPresence('available', 'Sẵn sàng')
+      } catch (presErr) {
+        /* ignore */
+      }
+
       return this.session
     } catch (error) {
       logger.error('AUTH', `Đăng nhập thất bại: ${error.message || error}`, error)
@@ -85,6 +92,11 @@ class WazoService {
           } catch (phoneErr) {
             logger.warn('SIP', 'Khôi phục WebRTC phone cảnh báo', phoneErr.message)
           }
+          try {
+            await this.setPresence('available', 'Sẵn sàng')
+          } catch (presErr) {
+            /* ignore */
+          }
           return true
         }
       } catch (e) {
@@ -96,6 +108,11 @@ class WazoService {
 
   logout() {
     logger.info('AUTH', 'Thực hiện đăng xuất khỏi hệ thống Wazo...')
+    try {
+      this.setPresence('unavailable', 'Ngoại tuyến')
+    } catch (e) {
+      /* ignore */
+    }
     audioService.stopAllTones()
     this.closeWebSocketEvents()
     if (this.session) {

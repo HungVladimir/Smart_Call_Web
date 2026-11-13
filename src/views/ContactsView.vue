@@ -307,13 +307,39 @@ const filteredContacts = computed(() => {
   )
 })
 
-// 1. Gọi thoại (Kiểm tra Offline cảnh báo Voicemail, chuyển sang CallsView)
+// 1. Gọi thoại (Kiểm tra Máy bận / Offline, chuyển sang CallsView)
 const handleCall = (contact) => {
   if (!contact || !contact.number) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
           message: `⚠️ Liên hệ [${contact?.name || 'này'}] chưa có số máy lẻ để thực hiện cuộc gọi thoại!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // Nếu đối phương đang trong cuộc gọi khác (busy) -> Chặn gọi và cảnh báo
+  if (contact.status === 'busy') {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🚫 [${contact.name}] hiện đang trong cuộc gọi khác (Máy bận). Vui lòng gọi lại sau!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // Nếu đối phương đang bật chế độ Không làm phiền (dnd) -> Cảnh báo
+  if (contact.status === 'dnd') {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🔕 [${contact.name}] đang bật chế độ Không làm phiền (DND). Vui lòng liên hệ sau!`,
           type: 'warning',
         },
       }),

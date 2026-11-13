@@ -346,7 +346,9 @@ class ContactService {
           } else if (p.state === 'away') {
             c.status = 'away'
           } else {
-            const online = lines.length ? lines.some((s) => s !== 'unavailable') : p.connected === true
+            const isLineOnline = lines.length ? lines.some((s) => s !== 'unavailable') : false
+            const isUserOnline = p.state === 'available' || p.connected === true
+            const online = isLineOnline || isUserOnline
             c.status = online ? 'online' : 'offline'
           }
         }
@@ -377,7 +379,9 @@ class ContactService {
         } else if (presenceRecord.state === 'away') {
           newStatus = 'away'
         } else {
-          const online = lines.length ? lines.some((s) => s !== 'unavailable') : presenceRecord.connected === true
+          const isLineOnline = lines.length ? lines.some((s) => s !== 'unavailable') : false
+          const isUserOnline = presenceRecord.state === 'available' || presenceRecord.connected === true
+          const online = isLineOnline || isUserOnline
           newStatus = online ? 'online' : 'offline'
         }
         if (c.status !== newStatus) {
