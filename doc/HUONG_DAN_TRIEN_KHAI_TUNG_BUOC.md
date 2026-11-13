@@ -1136,6 +1136,49 @@ Wazo Platform quản lý trạng thái qua 2 tầng độc lập:
   }
   ```
 
+---
+
+## 15. CHUẨN HÓA MÃ NGUỒN PUSH GIT CÔNG TY, PHÂN ĐỊNH 2 BẢN MAIN - MOCK VÀ QUY TRÌNH KIỂM DUYỆT (REVIEW-FIRST WORKFLOW)
+
+### 15.1. Dọn sạch Mock Data và Chuẩn bị bản Production đẩy Git Công ty
+- **Mục tiêu:** Đảm bảo dự án chính `Smart_Call_Web` hoàn toàn trong sạch, không tồn tại bất kỳ dữ liệu fake/mock nào, 100% dữ liệu danh bạ, lịch sử cuộc gọi và phòng chat được truy vấn trực tiếp từ API/WebSocket của máy chủ Wazo.
+- **Các file đã được chuẩn hóa:**
+  1. `src/services/contactService.js`: Loại bỏ toàn bộ `MOCK_CONTACTS`. Khi máy chủ Wazo chưa trả về hoặc lỗi, trả về danh sách rỗng kèm trạng thái loading thay vì fallback dữ liệu giả lập.
+  2. `src/services/historyService.js`: Loại bỏ mảng `MOCK_HISTORY` (7 bản ghi CDR mẫu). Chỉ lưu và tải các cuộc gọi thật từ `call-logd` và phiên gọi hiện tại.
+  3. `src/services/chatService.js`: Loại bỏ mảng `INITIAL_MOCK_ROOMS`. Khi chưa có tin nhắn, khung chat để trắng đúng thực tế.
+  4. `src/views/DashboardView.vue`: Danh bạ gọi nhanh `quickContacts` lấy động 100% từ danh bạ Wazo Dird thật.
+  5. `src/components/common/SettingsModal.vue`: Dọn dẹp cờ dữ liệu thử nghiệm trong tab Cài đặt, chuẩn hóa thành tab **"🚩 Phân hệ tính năng"**.
+  6. `src/components/layout/AppSidebar.vue`: Bỏ hoàn toàn số đếm đỏ trên tab Danh bạ và tab Lịch sử cuộc gọi, chỉ giữ huy hiệu tin nhắn chưa đọc để giao diện trực quan và chuyên nghiệp.
+
+### 15.2. Chặn cuộc gọi máy lẻ Offline, gợi ý chuyển sang tin nhắn và loại bỏ Timer giả lập
+- **Chặn gọi máy lẻ ngoại tuyến:**
+  - Tại `CallsView.vue`: Khi quay số hoặc bấm gọi tới một số đang offline trong danh bạ, hệ thống chặn kích hoạt WebRTC và hiển thị thông báo: `📴 Người này hiện đang ngoại tuyến, xin vui lòng gọi lại lúc khác!`.
+  - Tại `ContactsView.vue`: Khi bấm nút gọi 📞 cho nhân sự đang offline, hệ thống hiển thị hộp thoại xác nhận: `Máy lẻ [Tên - Ext] hiện đang ngoại tuyến. Bạn có muốn chuyển sang gửi tin nhắn không?`. Nếu người dùng đồng ý, tự động chuyển sang `/messages` và mở hội thoại 1-1.
+- **Loại bỏ bộ đếm giả lập nhấc máy (Timer 1.5s / 2.5s):**
+  - Loại bỏ hoàn toàn bộ đếm tự động nhấc máy giả lập; trạng thái cuộc gọi đàm thoại WebRTC phụ thuộc 100% vào tín hiệu thật từ tổng đài Wazo.
+
+### 15.3. Đồng bộ thuật toán `statusOf(uuid)` chuẩn Wazo và Loại bỏ Cache tĩnh
+- **Thuật toán `statusOf(uuid)` chuẩn theo mã nguồn tham chiếu:**
+  1. Nếu `lines.state` có `talking` hoặc `holding` $\rightarrow$ `busy` ("Đang gọi").
+  2. Nếu `lines.state` có `ringing` hoặc `progressing` $\rightarrow$ `ringing` ("Đang đổ chuông").
+  3. Nếu `do_not_disturb = true` $\rightarrow$ `dnd` ("Không làm phiền").
+  4. Nếu các đường dây khả dụng (`lines` khác `unavailable`) hoặc `p.connected = true`: nếu `state = away` $\rightarrow$ `away` ("Vắng mặt"), ngược lại $\rightarrow$ `online` ("Trực tuyến").
+  5. Tất cả trường hợp còn lại $\rightarrow$ `offline` ("Ngoại tuyến").
+- **Loại bỏ cache trạng thái danh bạ:** Không lưu trữ trạng thái presence trong cache tĩnh cục bộ. Luôn hiển thị trạng thái loading khi đang tải và cập nhật trực tiếp từ Chatd WebSocket.
+
+### 15.4. Thiết lập phiên bản thử nghiệm Offline (`Smart_Call_Web_Mock`)
+- Để phục vụ việc chạy demo độc lập khi không kết nối máy chủ tổng đài Wazo, đã tạo bản clone độc lập tại thư mục: `D:\Project\Smart_Call_Web_Mock`.
+- Bản Mock được khôi phục đầy đủ các mảng mock data (`MOCK_CONTACTS`, `MOCK_HISTORY`, `INITIAL_MOCK_ROOMS`), nút "Chạy chế độ thử nghiệm Offline" tại trang Login và tab cài đặt Mock Data.
+- Bản Mock được sao chép sẵn `node_modules`, có thể khởi chạy ngay bằng `npm run dev` mà không cần cài đặt lại thư viện.
+
+### 15.5. Quy trình làm việc bắt buộc (Review-First Workflow & Rule File GEMINI.md)
+Đã thiết lập file quy tắc bắt buộc `GEMINI.md` tại thư mục gốc với các nguyên tắc:
+1. **Quy trình tương tác**: Khi người dùng đưa ra câu hỏi hoặc yêu cầu mới, AI **chỉ được giải thích chi tiết phương án kỹ thuật để người dùng review trước**. Tuyệt đối không tự ý sửa code hay push khi chưa có xác nhận "OK".
+2. **Cập nhật và Push Git**: Chỉ sau khi người dùng phê duyệt phương án, AI mới tiến hành sửa code, kiểm tra `npm run build`, cập nhật tài liệu `HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md` và push lên Git công ty.
+3. **Tuân thủ tài liệu tham chiếu**: Luôn đối chiếu 5 tài liệu/mã nguồn mẫu trong thư mục `FileQuest/` trước khi thao tác API Wazo.
+4. **Bảo mật và chuẩn mực giao tiếp**: Tuyệt đối không nhắc đến ngữ cảnh làm việc từ xa / ở nhà và không sử dụng tên riêng cá nhân.
+
+
 
 
 

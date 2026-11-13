@@ -102,4 +102,18 @@ Trước khi thực hiện hoặc chỉnh sửa bất kỳ logic gọi API, xác
 
 > ⚠️ **Quy tắc bất biến**: Mọi xử lý liên quan đến API Wazo phải bám sát tuyệt đối 5 tài liệu/mã nguồn tham chiếu trên, tránh tự ý thêm tham số hay thay đổi định dạng gây lỗi kết nối hoặc vi phạm preflight CORS.
 
+---
+
+## 6. QUY TRÌNH TƯƠNG TÁC VÀ PHÊ DUYỆT TRƯỚC KHI CODE (REVIEW-FIRST WORKFLOW)
+
+1. **Giải thích chi tiết trước khi code (Review First)**:
+   - Đối với mọi câu hỏi, yêu cầu tính năng hoặc yêu cầu sửa lỗi từ người dùng, AI **CHỈ ĐƯỢC GIẢI THÍCH CHI TIẾT** phương án kỹ thuật, phân tích luồng logic sẽ sửa đổi và danh sách các file liên quan để người dùng review trước.
+   - **TUYỆT ĐỐI KHÔNG** tự ý sửa file, viết code hay commit/push mã nguồn khi người dùng chưa xác nhận đồng ý.
+2. **Chỉ code khi người dùng xác nhận "OK"**:
+   - Chỉ khi người dùng phản hồi xác nhận đồng ý (ví dụ: *"OK"*, *"Đồng ý"*, *"Triển khai đi"*, v.v.), AI mới bắt đầu tiến hành chỉnh sửa mã nguồn trên các file tương ứng.
+3. **Cập nhật tài liệu triển khai và push Git**:
+   - Sau khi hoàn thành việc chỉnh sửa code và chạy kiểm tra `npm run build` thành công, AI phải cập nhật đầy đủ nội dung kỹ thuật vào tài liệu `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`.
+   - Tiến hành commit và push lên Git công ty (`origin/main`) để người dùng kiểm tra và theo dõi tiến độ.
+
+
 
