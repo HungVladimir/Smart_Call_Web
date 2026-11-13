@@ -82,3 +82,24 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
      npm run build
      ```
    - Đảm bảo bản build không phát sinh lỗi cú pháp hay thiếu import.
+
+---
+
+## 5. CÁC TÀI LIỆU VÀ MÃ NGUỒN THAM CHIẾU BẮT BUỘC (REFERENCE KNOWLEDGE BASE)
+
+Trước khi thực hiện hoặc chỉnh sửa bất kỳ logic gọi API, xác thực, WebSocket, Presence hoặc WebRTC nào, AI **phải luôn đối chiếu thật kỹ các tài liệu và mã nguồn tham chiếu sau** để đảm bảo gọi đúng phương thức, đúng endpoint, đúng header và không thêm thắt các tham số thừa làm sai lệch hoạt động của API:
+
+1. **`FileQuest/codeAnhHai.txt`**:
+   - Mã nguồn tham chiếu chuẩn về khởi tạo kết nối WebSocket, xử lý sự kiện Presence thời gian thực, lắng nghe cuộc gọi WebRTC và cập nhật trạng thái đường dây.
+2. **`FileQuest/fileLoginAnhHai.txt`**:
+   - Mã nguồn tham chiếu chuẩn về quy trình Đăng nhập (Authentication), cấp phát và quản lý Session Token, trích xuất hồ sơ User Profile từ Wazo SDK.
+3. **`FileQuest/wazo_reference.js`**:
+   - Tổng hợp mã nguồn tham chiếu toàn diện về tích hợp Wazo SDK, WebRTC phone, khởi tạo cuộc gọi thoại audio-only, xử lý media stream.
+4. **`FileQuest/dev_guide.md`**:
+   - Hướng dẫn phát triển hệ thống SmartCall, cấu trúc API, đặc tả các phân hệ và luồng nghiệp vụ tổng đài.
+5. **`FileQuest/wazo_api_reference.md`** (và `doc/WAZO_API_REFERENCE.md`):
+   - Đặc tả chi tiết toàn bộ các API REST của máy chủ tổng đài Wazo (Auth, Dird, Chatd, Call-logd, Calld) cùng định dạng request/response chuẩn.
+
+> ⚠️ **Quy tắc bất biến**: Mọi xử lý liên quan đến API Wazo phải bám sát tuyệt đối 5 tài liệu/mã nguồn tham chiếu trên, tránh tự ý thêm tham số hay thay đổi định dạng gây lỗi kết nối hoặc vi phạm preflight CORS.
+
+
