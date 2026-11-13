@@ -140,7 +140,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
 import { useRoute } from 'vue-router'
 import { wazoService } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
@@ -149,7 +149,7 @@ import { contactService } from '@/services/contactService'
 import { logger } from '@/services/loggerService'
 
 const route = useRoute()
-const extension = ref('1002')
+const extension = ref('')
 
 // Quản lý trạng thái cuộc gọi: 'idle' (sẵn sàng), 'ringing' (đang đổ chuông), 'connected' (đang đàm thoại)
 const callState = ref('idle')
@@ -282,7 +282,35 @@ const handleDial = async () => {
     return
   }
 
-  // 3. Chặn cuộc gọi nếu đối phương đang ngoại tuyến (offline)
+  // 3. Chặn cuộc gọi nếu đối phương đang bật chế độ Không làm phiền (dnd)
+  if (targetContact && targetContact.status === 'dnd') {
+    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang bật chế độ Không làm phiền (DND).`)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🔕 [${targetContact.name || ext}] đang bật chế độ Không làm phiền (DND). Vui lòng liên hệ sau!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // 4. Chặn cuộc gọi nếu đối phương đang nhận cuộc gọi khác (ringing)
+  if (targetContact && targetContact.status === 'ringing') {
+    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang đổ chuông nhận cuộc gọi khác.`)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🔔 [${targetContact.name || ext}] hiện đang nhận một cuộc gọi khác. Vui lòng gọi lại sau!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // 5. Chặn cuộc gọi nếu đối phương đang ngoại tuyến (offline)
   if (targetContact && (targetContact.status === 'offline' || targetContact.status === 'unavailable')) {
     logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} hiện đang ngoại tuyến.`)
     window.dispatchEvent(
@@ -296,7 +324,7 @@ const handleDial = async () => {
     return
   }
 
-  // 4. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
+  // 6. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
   try {
     if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       const devices = await navigator.mediaDevices.enumerateDevices()
@@ -490,6 +518,15 @@ onMounted(async () => {
     } catch {
       /* ignore */
     }
+  }
+})
+
+onActivated(() => {
+  // Đồng bộ lại trạng thái cuộc gọi khi quay lại tab nếu cuộc gọi đã ngắt từ nơi khác
+  if (callState.value !== 'idle' && !wazoService.currentSession && localStorage.getItem('smartcall_offline_mode') !== 'true') {
+    callState.value = 'idle'
+    clearInterval(timer)
+    audioService.stopAllTones()
   }
 })
 

@@ -1179,6 +1179,35 @@ Wazo Platform quản lý trạng thái qua 2 tầng độc lập:
 3. **Tuân thủ tài liệu tham chiếu**: Luôn đối chiếu 5 tài liệu/mã nguồn mẫu trong thư mục `FileQuest/` trước khi thao tác API Wazo.
 4. **Bảo mật và chuẩn mực giao tiếp**: Tuyệt đối không nhắc đến ngữ cảnh làm việc từ xa / ở nhà và không sử dụng tên riêng cá nhân.
 
+---
+
+## 16. KHẮC PHỤC 10 ĐIỂM NGHẼN KỸ THUẬT THEO BÁO CÁO KIỂM TRA CHUYÊN GIA (EXPERT AUDIT)
+
+Dựa trên kết quả rà soát toàn diện trong tài liệu báo cáo kiểm tra chuyên gia, hệ thống đã được tối ưu hóa đồng bộ trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`):
+
+1. **Bảo vệ cuộc gọi thứ 2 (Anti-collision Call) trong `App.vue`:**
+   - Khi đang trong cuộc gọi (`hasActiveCall = true`), nếu có cuộc gọi mới đến, hệ thống tự động từ chối máy bận (`wazoService.reject(session)`), ghi nhận bản ghi cuộc gọi nhỡ vào Lịch sử và phát thông báo Toast `📞 Cuộc gọi nhỡ từ [Tên] (Máy bận)`, bảo vệ tuyệt đối phiên đàm thoại hiện tại không bị ghi đè.
+2. **Dọn dẹp triệt để Dead Code trong `App.vue`:**
+   - Loại bỏ các hàm `onHangup`, `onAccept`, `onReject`, `onToggleMute`, `onToggleHold` cũ (tàn dư từ widget nổi cũ), xóa bỏ logic hardcode `duration: 15`.
+3. **Đồng bộ gợi ý nhắn tin khi gọi nhanh trên `AppHeader.vue`:**
+   - Thay thế hộp thoại cũ về Voicemail bằng thông báo chuẩn: `Máy lẻ [Tên - Ext] hiện đang ngoại tuyến. Bạn có muốn chuyển sang gửi tin nhắn không?` và tự động điều hướng sang `/messages` mở cuộc trò chuyện 1-1.
+4. **Bổ sung kiểm tra trạng thái DND và Đang đổ chuông (`CallsView.vue`):**
+   - Trước khi thực hiện cuộc gọi, kiểm tra và hiển thị cảnh báo nếu đối phương đang bật Không làm phiền (`dnd`) hoặc đang nhận cuộc gọi khác (`ringing`).
+5. **Đồng bộ trạng thái khi chuyển tab KeepAlive (`CallsView.vue`):**
+   - Bổ sung hook `onActivated()` để tự động đưa trạng thái về `idle` nếu phiên gọi đã kết thúc từ trước.
+   - Khởi tạo số máy lẻ rỗng `extension = ref('')` trên bàn phím thay vì điền sẵn 1002.
+6. **Loại bỏ lệnh gọi `DELETE` không hợp lệ trên API CDR (`historyService.js`):**
+   - Wazo call-logd là log viễn thông chỉ đọc (read-only); loại bỏ `fetch DELETE /users/me/cdr` tránh lỗi 405 Method Not Allowed.
+7. **Chuẩn hóa bộ lọc cuộc gọi nhỡ (`HistoryView.vue` & `historyService.js`):**
+   - Điều kiện cuộc gọi nhỡ (`missed`) được chuẩn hóa thành: `c.direction === 'inbound' && !c.answered` (loại bỏ cuộc gọi đi không bắt máy).
+8. **Chống trùng lặp kết nối WebSocket Chat (`websocketService.js`):**
+   - Thêm guard kiểm tra `readyState === WebSocket.OPEN || WebSocket.CONNECTING` trước khi khởi tạo kết nối mới trong `connect()`.
+9. **Tự động kết nối lại WebSocket Presence khi mất mạng (`wazo.js`):**
+   - Trong `eventWs.onclose`, tự động đặt lịch kết nối lại sau 5 giây nếu người dùng đang đăng nhập.
+10. **Dọn dẹp rò rỉ sự kiện và kiểm tra ngoại tuyến trên `DashboardView.vue`:**
+    - Gỡ bỏ listener `wazo-registered` trong `onUnmounted`, xóa hàm dead code `openSettings`, kiểm tra trạng thái ngoại tuyến trước khi gọi nhanh.
+
+
 
 
 

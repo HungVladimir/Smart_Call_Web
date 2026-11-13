@@ -188,6 +188,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { historyService } from '@/services/historyService'
+import { contactService } from '@/services/contactService'
 
 const router = useRouter()
 
@@ -225,7 +226,9 @@ const counts = computed(() => {
   const all = calls.value.length
   const incomings = calls.value.filter((c) => c.direction === 'inbound').length
   const outgoings = calls.value.filter((c) => c.direction === 'outbound').length
-  const missed = calls.value.filter((c) => c.status === 'missed' || !c.answered).length
+  const missed = calls.value.filter(
+    (c) => c.status === 'missed' || (c.direction === 'inbound' && !c.answered),
+  ).length
   return { all, incomings, outgoings, missed }
 })
 
@@ -280,6 +283,17 @@ const handleCallback = (call) => {
     alert('Không tìm thấy số máy lẻ để gọi lại!')
     return
   }
+  const target = contactService.findContactByExtension(call.extension)
+  if (target && (target.status === 'offline' || target.status === 'unavailable')) {
+    const confirmMessage = confirm(
+      `Máy lẻ [${target.name || call.extension}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
+    )
+    if (confirmMessage) {
+      router.push({ path: '/messages', query: { ext: call.extension, name: target.name } })
+    }
+    return
+  }
+
   router.push({
     path: '/calls',
     query: {

@@ -185,6 +185,14 @@ class WazoService {
 
       this.eventWs.onclose = () => {
         this.eventWs = null
+        // Tự động kết nối lại sau 5s nếu người dùng vẫn đang đăng nhập
+        if (this.isLogged()) {
+          setTimeout(() => {
+            if (this.isLogged() && !this.eventWs) {
+              this.openWebSocketEvents()
+            }
+          }, 5000)
+        }
       }
     } catch (e) {
       logger.warn('API', 'Không thể mở kết nối wazo-websocketd:', e.message)

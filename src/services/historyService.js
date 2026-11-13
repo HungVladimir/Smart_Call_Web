@@ -191,32 +191,19 @@ class HistoryService {
       return list.filter((item) => item.direction === 'outbound')
     }
     if (tab === 'missed') {
-      return list.filter((item) => item.status === 'missed' || !item.answered)
+      return list.filter(
+        (item) => item.status === 'missed' || (item.direction === 'inbound' && !item.answered),
+      )
     }
     return list // 'all'
   }
 
   /**
-   * Xóa toàn bộ lịch sử cuộc gọi (tương ứng nút DELETE HISTORY trên web1.webp)
+   * Xóa toàn bộ lịch sử cuộc gọi lưu trên client (tương ứng nút DELETE HISTORY trên web1.webp)
    */
   async clearAllHistory() {
     this.localHistory = []
     this.saveHistory()
-    try {
-      const token = wazoService.getToken()
-      if (token) {
-        // Nếu backend tổng đài hỗ trợ DELETE CDR
-        const host = wazoService.host.startsWith('http')
-          ? wazoService.host
-          : `https://${wazoService.host}`
-        await fetch(`${host}/api/call-logd/1.0/users/me/cdr`, {
-          method: 'DELETE',
-          headers: { 'X-Auth-Token': token },
-        })
-      }
-    } catch (e) {
-      // Ignored in offline/mock mode
-    }
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
     return true
   }

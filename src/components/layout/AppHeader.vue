@@ -281,11 +281,14 @@ const handleSearch = () => {
 // Gọi nhanh từ dropdown
 const quickCall = (contact) => {
   showDropdown.value = false
-  if (contact.status === 'offline') {
-    const confirmVoicemail = confirm(
-      `Máy lẻ [${contact.name} - ${contact.number}] hiện đang Offline (Không kết nối mạng tổng đài).\nBạn có muốn chuyển vào Hộp thư thoại (Voicemail) không?`,
+  if (contact.status === 'offline' || contact.status === 'unavailable') {
+    const confirmMessage = confirm(
+      `Máy lẻ [${contact.name} - ${contact.number}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
     )
-    if (!confirmVoicemail) return
+    if (confirmMessage) {
+      quickChat(contact)
+    }
+    return
   }
 
   router.push({

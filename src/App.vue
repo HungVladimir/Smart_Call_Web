@@ -157,6 +157,27 @@ const handleIncomingCall = (event) => {
   const session = event.detail
   const ext = session?.number || session?.callerNumber || ''
   const name = session?.displayName || session?.realDisplayName || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
+
+  // Nếu đang có cuộc gọi hoạt động (Đang đàm thoại hoặc đổ chuông) -> Tự động từ chối máy bận và ghi nhận cuộc gọi nhỡ
+  if (hasActiveCall.value) {
+    try {
+      if (session) wazoService.reject(session)
+    } catch (e) {
+      /* ignore */
+    }
+    historyService.addRecord({
+      name,
+      extension: ext,
+      dept: 'Nội bộ công ty',
+      duration: 0,
+      direction: 'inbound',
+      status: 'missed',
+      answered: false,
+    })
+    showToast(`📞 Cuộc gọi nhỡ từ ${name} (Máy bận)`, 'warning')
+    return
+  }
+
   incomingCallData.value = {
     rawSession: session,
     name,
@@ -274,45 +295,6 @@ const handleLogout = () => {
   currentCall.value = null
   hasActiveCall.value = false
   router.push('/login')
-}
-
-const onHangup = () => {
-  if (currentCall.value) {
-    wazoService.hangup(currentCall.value)
-    const ext = currentCall.value.extension || currentCall.value.number || '1002'
-    const contact = contactService.findContactByExtension(ext)
-    const name = currentCall.value.remote_name || currentCall.value.name || contact?.name || `Máy lẻ ${ext}`
-    const dept = currentCall.value.dept || contact?.dept || 'Khối Kỹ thuật'
-    historyService.addRecord({
-      name,
-      extension: ext,
-      dept,
-      duration: 15,
-      direction: currentCall.value.call_direction || 'outbound',
-      status: 'success',
-      answered: true,
-    })
-  }
-  currentCall.value = null
-  hasActiveCall.value = false
-}
-
-const onAccept = () => {
-  if (currentCall.value) wazoService.accept(currentCall.value)
-}
-
-const onReject = () => {
-  if (currentCall.value) wazoService.reject(currentCall.value)
-  currentCall.value = null
-  hasActiveCall.value = false
-}
-
-const onToggleMute = () => {
-  if (currentCall.value) wazoService.mute(currentCall.value)
-}
-
-const onToggleHold = () => {
-  if (currentCall.value) wazoService.hold(currentCall.value)
 }
 
 const onDial = (extension) => {

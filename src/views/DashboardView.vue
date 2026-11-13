@@ -345,10 +345,6 @@ const navigateTo = (path) => {
   router.push(path)
 }
 
-const openSettings = () => {
-  window.dispatchEvent(new CustomEvent('open-app-settings'))
-}
-
 const handleQuickDial = () => {
   const num = quickDialNumber.value.trim()
   if (!num) return
@@ -356,6 +352,17 @@ const handleQuickDial = () => {
 }
 
 const callQuickContact = (ext) => {
+  const target = contactService.findContactByExtension(ext)
+  if (target && (target.status === 'offline' || target.status === 'unavailable')) {
+    const confirmMessage = confirm(
+      `Máy lẻ [${target.name || ext}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
+    )
+    if (confirmMessage) {
+      router.push({ path: '/messages', query: { ext, name: target.name } })
+    }
+    return
+  }
+
   router.push({
     path: '/calls',
     query: {
@@ -380,20 +387,23 @@ const simulateCall = () => {
   )
 }
 
+const onPhoneRegistered = () => {
+  isPhoneConnected.value = true
+}
+
 onMounted(() => {
   loadDashboardData()
   window.addEventListener('smartcall-cdr-updated', loadDashboardData)
   window.addEventListener('smartcall-rooms-updated', loadDashboardData)
   window.addEventListener('smartcall-contacts-updated', loadDashboardData)
-  window.addEventListener('wazo-registered', () => {
-    isPhoneConnected.value = true
-  })
+  window.addEventListener('wazo-registered', onPhoneRegistered)
 })
 
 onUnmounted(() => {
   window.removeEventListener('smartcall-cdr-updated', loadDashboardData)
   window.removeEventListener('smartcall-rooms-updated', loadDashboardData)
   window.removeEventListener('smartcall-contacts-updated', loadDashboardData)
+  window.removeEventListener('wazo-registered', onPhoneRegistered)
 })
 </script>
 

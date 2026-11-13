@@ -13,6 +13,9 @@ class WebSocketService {
    * URL: wss://<HOST>/api/websocketd/?token=<token>&version=2
    */
   connect() {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return
+    }
     const token = wazoService.getToken()
     if (!token) {
       console.warn('[WebSocket] Chưa có token xác thực, hoạt động ở chế độ mô phỏng offline.')
