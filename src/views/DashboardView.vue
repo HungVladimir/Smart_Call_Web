@@ -446,27 +446,6 @@ onUnmounted(() => {
   color: #38bdf8;
 }
 
-.btn-test-call-banner {
-  background: #0284c7;
-  color: #ffffff;
-  border: 1px solid #38bdf8;
-  padding: 10px 18px;
-  border-radius: 8px;
-  font-size: 0.88rem;
-  font-weight: 700;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: all 0.2s;
-  box-shadow: 0 2px 10px rgba(2, 132, 199, 0.35);
-}
-
-.btn-test-call-banner:hover {
-  background: #0369a1;
-  transform: translateY(-1px);
-}
-
 /* 2. Top KPI Cards Grid */
 .stat-grid {
   display: grid;

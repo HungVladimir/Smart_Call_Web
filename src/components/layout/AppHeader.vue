@@ -116,11 +116,6 @@
         ⚙️ SETTINGS
       </button>
 
-      <!-- Nút Mô phỏng cuộc gọi đến -->
-      <button class="btn-test-call" title="Mô phỏng cuộc gọi đến" @click="triggerSimulatedIncomingCall">
-        🔔 Test Gọi Đến
-      </button>
-
       <button class="btn-logout-header" title="Đăng xuất khỏi hệ thống" @click="$emit('logout')">
         🚪 Thoát
       </button>
@@ -311,20 +306,6 @@ const updatePresence = async () => {
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: { message: `Đã cập nhật trạng thái: ${presenceState.value.toUpperCase()}` },
-    }),
-  )
-}
-
-const triggerSimulatedIncomingCall = () => {
-  window.dispatchEvent(
-    new CustomEvent('wazo-incoming', {
-      detail: {
-        id: `call-${Date.now()}`,
-        name: 'Trần Văn Bình',
-        extension: '1003',
-        sipUri: 'sip:1003@107.126.11.126',
-        dept: 'Khối Vận hành / Phân xưởng MFQ',
-      },
     }),
   )
 }
@@ -708,27 +689,6 @@ const triggerSimulatedIncomingCall = () => {
   background: #384252;
   color: white;
   border-color: #64b5f6;
-}
-
-.btn-test-call {
-  background: #0284c7;
-  border: 1px solid #38bdf8;
-  color: #ffffff;
-  padding: 5px 12px;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  cursor: pointer;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 0.2s;
-  box-shadow: 0 0 10px rgba(2, 132, 199, 0.4);
-}
-
-.btn-test-call:hover {
-  background: #0369a1;
-  transform: translateY(-1px);
 }
 
 .btn-logout-header {

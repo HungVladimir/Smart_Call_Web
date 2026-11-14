@@ -1319,8 +1319,10 @@ Dựa trên kết quả rà soát chi tiết toàn bộ luồng nghiệp vụ v�
    - Tự động bóc tách bản tin JSON và phát sự kiện `wazo-presence-updated` toàn cục, đảm bảo các component UI nhận sự kiện đồng bộ và không bị phân tán socket.
 4. **Chuẩn hóa Bộ chuyển đổi (Normalizer) Tin nhắn Realtime (`MessagesView.vue` & `server.js`):**
    - Hàm `handleRealtimeMessage` hỗ trợ xử lý mềm cả 2 cấu trúc payload (cấu trúc phẳng Wazo v2 `room_uuid`, `content`, `alias` lẫn cấu trúc lồng `data.message`), đảm bảo tin nhắn gửi đến hiển thị tức thì 0 giây và cuộn xuống cuối khung chat mượt mà.
-5. **Loại bỏ Hoàn toàn Nút Test Mock & Dữ liệu Tên riêng trên Nhánh chính (`DashboardView.vue`):**
-   - Xóa bỏ nút `🔔 Thử cuộc gọi đến` và hàm `simulateCall` chứa tên cá nhân trên `DashboardView.vue`. Dự án chính `Smart_Call_Web` luôn giữ nguyên tắc 100% dữ liệu thật, không có code giả lập.
+5. **Loại bỏ Hoàn toàn Nút Test Mock & Dữ liệu Tên riêng trên Nhánh chính (`DashboardView.vue` & `AppHeader.vue`):**
+   - Xóa bỏ nút `🔔 Thử cuộc gọi đến` và hàm `simulateCall` trên `DashboardView.vue`.
+   - Xóa bỏ hoàn toàn nút `🔔 Test Gọi Đến` (`.btn-test-call`), hàm `triggerSimulatedIncomingCall` chứa dữ liệu mẫu và các đoạn CSS liên quan trên thanh Top Header (`AppHeader.vue`).
+   - Đảm bảo nhánh chính `Smart_Call_Web` giữ vững nguyên tắc 100% dữ liệu thật, sạch sẽ không còn bất kỳ nút test hay dữ liệu giả lập nào trên toàn bộ giao diện người dùng.
 6. **Mở rộng Thời gian Chờ Timeout Đăng nhập (`LoginView.vue`):**
    - Nâng giới hạn `timeoutPromise` từ 4.5s lên 15s để xử lý trơn tru các lượt bắt tay xác thực đa tầng của Wazo SDK (Auth Token $\rightarrow$ Status Head $\rightarrow$ Confd Profile $\rightarrow$ Confd Infos $\rightarrow$ SIP Line $\rightarrow$ Browser Mic Permission).
    - Xóa bỏ câu chữ chứa tên cá nhân và mật khẩu fix cứng trong thông báo lỗi.
