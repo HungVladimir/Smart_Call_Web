@@ -165,6 +165,7 @@ class WazoService {
     callStore.myUserName = ''
     callStore.activeCall = null
     callStore.incomingCall = null
+    contactService.reset()
     logger.info('AUTH', 'Đã xóa toàn bộ token và phiên làm việc cục bộ.')
   }
 

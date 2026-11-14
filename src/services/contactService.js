@@ -1,10 +1,8 @@
-import { wazoService } from './wazo'
-import { isFeatureEnabled } from '@/config/features'
+import { wazoService, callStore } from './wazo'
 import { logger } from './loggerService'
 
 class ContactService {
   constructor() {
-    this.localContacts = []
     this.currentContacts = []
     this.presences = {}
     this.presencePollTimer = null
@@ -16,16 +14,15 @@ class ContactService {
         }
       })
     }
-    this.startPresencePolling()
   }
 
-  // Quản lý danh sách Yêu thích (Favorites)
+  // Quản lý danh sách Yêu thích (Favorites) - Mặc định là mảng rỗng [] chuẩn production
   getFavoriteIds() {
     try {
       const raw = localStorage.getItem('smartcall_favorites')
-      return raw ? JSON.parse(raw) : ['emp-1002', 'emp-1007']
+      return raw ? JSON.parse(raw) : []
     } catch (e) {
-      return ['emp-1002']
+      return []
     }
   }
 
@@ -60,14 +57,32 @@ class ContactService {
     if (p.do_not_disturb) return { key: 'dnd', label: 'Không làm phiền' }
     const online = lines.length
       ? lines.some((s) => s !== 'unavailable')
-      : p.connected === true
-    if (!online) return { key: 'offline', label: 'Ngoại tuyến' }
+      : p.connected === true || p.state === 'available' || p.state === 'online' || p.line_state === 'available'
+    if (!online || p.state === 'unavailable' || p.state === 'offline') return { key: 'offline', label: 'Ngoại tuyến' }
     if (p.state === 'away') return { key: 'away', label: 'Vắng mặt' }
     return { key: 'online', label: 'Trực tuyến' }
   }
 
   /**
-   * Lấy danh bạ toàn bộ nhân viên trực tiếp từ Wazo (Bỏ hoàn toàn cache)
+   * Khớp nối chuỗi tìm kiếm hỗ trợ tiếng Việt không dấu
+   */
+  matchesSearch(contact, query) {
+    if (!query || !query.trim()) return true
+    const normalize = (str) =>
+      String(str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+    const q = normalize(query)
+    const name = normalize(contact.name)
+    const dept = normalize(contact.dept)
+    const num = normalize(contact.number)
+    return name.includes(q) || dept.includes(q) || num.includes(q)
+  }
+
+  /**
+   * Lấy danh bạ toàn bộ nhân viên trực tiếp từ Wazo (100% dữ liệu thật, không mock data)
    */
   async getContacts() {
     const favorites = this.getFavoriteIds()
@@ -111,7 +126,7 @@ class ContactService {
         console.warn('Lỗi lấy nguồn danh bạ wazo dird:', srcErr)
       }
 
-      // 2. Cách 2: Dự phòng tra cứu lookup/default
+      // 2. Cách 2: Dự phòng tra cứu lookup/default nếu Cách 1 không mở nguồn
       if (!contactsData) {
         try {
           const lookupRes = await fetch(
@@ -130,10 +145,8 @@ class ContactService {
       }
 
       if (!contactsData) {
-        return this.localContacts.map((c) => ({
-          ...c,
-          isFavorite: favorites.includes(c.id),
-        }))
+        this.currentContacts = []
+        return []
       }
 
       // Xử lý dữ liệu trả về từ Wazo Dird:
@@ -174,6 +187,7 @@ class ContactService {
           }
         })
         const finalContacts = await this.loadPresencesForContacts(mappedList)
+        this.startPresencePolling()
         return this._filterContacts(finalContacts)
       }
 
@@ -209,25 +223,37 @@ class ContactService {
           }
         })
         const finalContacts = await this.loadPresencesForContacts(mappedList)
+        this.startPresencePolling()
         return this._filterContacts(finalContacts)
       }
 
-      return this.localContacts.map((c) => ({
-        ...c,
-        isFavorite: favorites.includes(c.id),
-      }))
+      this.currentContacts = []
+      return []
     } catch (err) {
       logger.warn('API', 'Không thể nạp danh bạ từ máy chủ Wazo:', err.message)
-      return this.localContacts.map((c) => ({
-        ...c,
-        isFavorite: favorites.includes(c.id),
-      }))
+      this.currentContacts = []
+      return []
     }
   }
 
   _filterContacts(list) {
     const meUuid = wazoService.session?.uuid || localStorage.getItem('smartcall_user_uuid')
-    const meExten = wazoService.getMyExtension()
+    let meExten = wazoService.getMyExtension()
+
+    // Tự động nhận diện số máy lẻ của chính mình nếu session chưa kịp điền (giống mã nguồn tham chiếu mẫu)
+    const mine = list.find((c) => c.uuid && c.uuid === meUuid)
+    if (mine && !meExten && mine.number) {
+      meExten = mine.number
+      callStore.myExtension = mine.number
+      if (wazoService.session) {
+        wazoService.session.profile = wazoService.session.profile || {}
+        wazoService.session.profile.lines = [{ extensions: [{ exten: mine.number }] }]
+      }
+      localStorage.setItem('smartcall_user_exten', mine.number)
+      localStorage.setItem('smartcall_extension', mine.number)
+      logger.info('AUTH', `Đã tự động nhận diện số máy lẻ của bạn từ danh bạ: ${mine.number}`)
+    }
+
     let filtered = list
     if (meUuid || meExten) {
       filtered = list.filter((c) => {
@@ -266,7 +292,13 @@ class ContactService {
 
       const data = await res.json()
       this.presences = this.presences || {}
-      for (const it of data.items || []) {
+      const items = Array.isArray(data.items)
+        ? data.items
+        : data.items && typeof data.items === 'object'
+          ? Object.entries(data.items).map(([uuid, val]) => ({ uuid, ...val }))
+          : []
+
+      for (const it of items) {
         const u = it.uuid || it.user_uuid
         if (u) {
           this.presences[u] = it
@@ -278,7 +310,6 @@ class ContactService {
         c.status = st.key
         c.statusLabel = st.label
       })
-      logger.info('API', `Đã cập nhật trạng thái Presence thật cho ${data.items?.length || 0} nhân sự từ Wazo Chatd`)
     } catch (e) {
       logger.warn('API', 'Không thể nạp trạng thái presence từ chatd:', e.message)
     }
@@ -296,7 +327,7 @@ class ContactService {
         this.currentContacts.forEach((c) => {
           if (c.uuid === uuid) {
             const st = this.statusOf(c.uuid)
-            if (c.status !== st.key) {
+            if (c.status !== st.key || c.statusLabel !== st.label) {
               c.status = st.key
               c.statusLabel = st.label
               changed = true
@@ -326,17 +357,21 @@ class ContactService {
     }, 10000)
   }
 
-  /**
-   * Xóa một liên hệ khỏi danh bạ
-   */
-  async deleteContact(id) {
-    const idx = this.localContacts.findIndex((c) => c.id === id)
-    if (idx !== -1) {
-      this.localContacts.splice(idx, 1)
-      window.dispatchEvent(new CustomEvent('smartcall-contacts-updated'))
-      return true
+  stopPresencePolling() {
+    if (this.presencePollTimer) {
+      clearInterval(this.presencePollTimer)
+      this.presencePollTimer = null
     }
-    return false
+  }
+
+  /**
+   * Dọn dẹp sạch sẽ toàn bộ trạng thái khi người dùng đăng xuất
+   */
+  reset() {
+    this.stopPresencePolling()
+    this.currentContacts = []
+    this.presences = {}
+    logger.info('API', 'Đã dọn dẹp sạch toàn bộ cache danh bạ và hiện diện.')
   }
 
   /**
@@ -345,30 +380,12 @@ class ContactService {
   findContactByExtension(ext) {
     if (!ext) return null
     const str = String(ext).trim()
-    const pool = [
-      ...(Array.isArray(this.currentContacts) ? this.currentContacts : []),
-      ...(Array.isArray(this.localContacts) ? this.localContacts : []),
-    ]
+    const pool = Array.isArray(this.currentContacts) ? this.currentContacts : []
     return (
       pool.find(
         (c) => String(c.number).trim() === str || String(c.id).includes(str),
       ) || null
     )
-  }
-
-  /**
-   * Thêm liên hệ mới
-   */
-  async addContact(contact) {
-    this.localContacts.unshift({
-      id: `custom-${Date.now()}`,
-      status: 'offline',
-      statusLabel: 'Ngoại tuyến',
-      unreadCount: 0,
-      isFavorite: false,
-      ...contact,
-    })
-    return true
   }
 }
 

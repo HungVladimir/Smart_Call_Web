@@ -16,7 +16,7 @@
       <main class="app-content">
         <router-view v-slot="{ Component }">
           <keep-alive>
-            <component :is="Component" :key="$route.name" />
+            <component :is="Component" :key="`${callStore.myUserUuid || 'guest'}-${$route.name}`" />
           </keep-alive>
         </router-view>
       </main>

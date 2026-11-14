@@ -19,7 +19,15 @@
           <button v-if="searchTerm" class="btn-clear-search" @click="searchTerm = ''">✖</button>
         </div>
 
-        <button class="btn-add-contact" @click="showAddModal = true">+ Thêm liên hệ</button>
+        <!-- Nút Làm Mới Danh Bạ Chuẩn Theo Mã Tham Chiếu -->
+        <button
+          class="btn-refresh"
+          :disabled="loading"
+          title="Làm mới danh bạ từ máy chủ tổng đài"
+          @click="refreshContacts"
+        >
+          <span :class="{ 'spin-icon': loading }">↻</span> Làm mới
+        </button>
       </div>
     </div>
 
@@ -42,9 +50,9 @@
     </div>
 
     <!-- Loading State -->
-    <div v-if="loading" class="state-message">
+    <div v-if="loading && contacts.length === 0" class="state-message">
       <div class="spinner"></div>
-      <p>Đang tải danh bạ nhân viên...</p>
+      <p>Đang tải danh bạ nhân viên từ máy chủ Wazo...</p>
     </div>
 
     <!-- Empty State -->
@@ -56,7 +64,7 @@
         Không tìm thấy nhân viên nào phù hợp với từ khóa "{{ searchTerm }}".
       </p>
       <p v-else>
-        Chưa có liên hệ nào trong danh bạ hệ thống.
+        Chưa có liên hệ nào trong danh bạ hệ thống tổng đài.
       </p>
     </div>
 
@@ -70,7 +78,7 @@
             <th>Bộ phận / Phòng ban</th>
             <th>Số máy lẻ</th>
             <th>Trạng thái</th>
-            <th style="text-align: right; width: 180px;">Thao tác nhanh</th>
+            <th style="text-align: right; width: 140px;">Thao tác nhanh</th>
           </tr>
         </thead>
         <tbody>
@@ -118,27 +126,15 @@
                   :class="`status-${contact.status || 'offline'}`"
                 ></span>
                 <span class="status-label" :class="`label-${contact.status || 'offline'}`">
-                  {{
-                    contact.status === 'online'
-                      ? 'Trực tuyến'
-                      : contact.status === 'busy'
-                        ? 'Đang gọi'
-                        : contact.status === 'dnd'
-                          ? 'Bận (DND)'
-                          : contact.status === 'away'
-                            ? 'Vắng mặt'
-                            : contact.status === 'ringing'
-                              ? 'Chuông reo'
-                              : 'Ngoại tuyến'
-                  }}
+                  {{ contact.statusLabel || 'Ngoại tuyến' }}
                 </span>
               </div>
             </td>
 
-            <!-- 5. Bốn Nút Chức Năng Thao Tác -->
+            <!-- 5. Các Nút Chức Năng Thao Tác -->
             <td style="text-align: right;">
               <div class="action-buttons-group">
-                <!-- Nút 1: Gọi thoại -->
+                <!-- Nút 1: Gọi thoại qua WebRTC -->
                 <button
                   class="btn-icon btn-call"
                   title="Gọi thoại qua WebRTC"
@@ -159,7 +155,7 @@
                   </span>
                 </button>
 
-                <!-- Nút 3: Gọi Video -->
+                <!-- Nút 3: Gọi Video (Thông báo tính năng) -->
                 <button
                   class="btn-icon btn-video"
                   title="Gọi Video"
@@ -167,57 +163,11 @@
                 >
                   🎥
                 </button>
-
-                <!-- Nút 4: Xóa liên hệ -->
-                <button
-                  class="btn-icon btn-delete"
-                  title="Xóa khỏi danh bạ"
-                  @click="handleDelete(contact)"
-                >
-                  ❌
-                </button>
               </div>
             </td>
           </tr>
         </tbody>
       </table>
-    </div>
-
-    <!-- Modal Thêm Liên Hệ Mới -->
-    <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
-      <div class="modal-card">
-        <div class="modal-head">
-          <span>THÊM LIÊN HỆ MỚI VÀO DANH BẠ</span>
-          <button class="btn-close" @click="showAddModal = false">✖</button>
-        </div>
-
-        <form @submit.prevent="saveNewContact" class="modal-body">
-          <div class="form-group">
-            <label>Họ và tên nhân viên *</label>
-            <input v-model="newContact.name" placeholder="VD: Nguyễn Văn A" required class="form-input" />
-          </div>
-
-          <div class="form-group">
-            <label>Số máy lẻ (Extension) *</label>
-            <input v-model="newContact.number" placeholder="VD: 1008" required maxlength="6" class="form-input" />
-          </div>
-
-          <div class="form-group">
-            <label>Bộ phận / Phòng ban</label>
-            <input v-model="newContact.dept" placeholder="VD: Khối Kỹ thuật / Nhóm Ứng dụng" class="form-input" />
-          </div>
-
-          <div class="form-group">
-            <label>Email liên hệ</label>
-            <input v-model="newContact.email" type="email" placeholder="VD: a.nguyen@company.local" class="form-input" />
-          </div>
-
-          <div class="modal-foot">
-            <button type="button" class="btn-cancel" @click="showAddModal = false">Hủy</button>
-            <button type="submit" class="btn-submit">Lưu liên hệ</button>
-          </div>
-        </form>
-      </div>
     </div>
   </div>
 </template>
@@ -226,6 +176,7 @@
 import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { contactService } from '@/services/contactService'
+import { wazoService } from '@/services/wazo'
 
 const router = useRouter()
 const route = useRoute()
@@ -233,15 +184,7 @@ const route = useRoute()
 const searchTerm = ref('')
 const contacts = ref([])
 const loading = ref(false)
-const showAddModal = ref(false)
 const activeTab = ref('all') // 'all' | 'favorites'
-
-const newContact = ref({
-  name: '',
-  number: '',
-  dept: '',
-  email: '',
-})
 
 const onContactsUpdated = () => {
   if (contactService.currentContacts) {
@@ -253,24 +196,54 @@ onMounted(() => {
   if (route.query.q) {
     searchTerm.value = String(route.query.q)
   }
-  loadContacts()
+  loadContacts(false)
   window.addEventListener('smartcall-contacts-updated', onContactsUpdated)
 })
 
+// Tối ưu KeepAlive mượt mà: Nếu đã có dữ liệu, hiển thị ngay lập tức (0ms) và chỉ refresh ngầm
 onActivated(() => {
-  loadContacts()
+  if (contactService.currentContacts && contactService.currentContacts.length > 0) {
+    contacts.value = [...contactService.currentContacts]
+    loadContacts(true)
+  } else {
+    loadContacts(false)
+  }
 })
 
 onUnmounted(() => {
   window.removeEventListener('smartcall-contacts-updated', onContactsUpdated)
 })
 
-const loadContacts = async () => {
-  loading.value = true
+const loadContacts = async (silent = false) => {
+  if (!silent && contacts.value.length === 0) {
+    loading.value = true
+  }
   try {
-    contacts.value = await contactService.getContacts()
+    const fresh = await contactService.getContacts()
+    contacts.value = [...fresh]
   } catch (err) {
     console.warn('Lỗi nạp danh bạ Wazo:', err)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Làm mới danh bạ thủ công
+const refreshContacts = async () => {
+  loading.value = true
+  try {
+    const fresh = await contactService.getContacts()
+    contacts.value = [...fresh]
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `✅ Đã làm mới danh bạ (${fresh.length} liên hệ)!`,
+          type: 'success',
+        },
+      }),
+    )
+  } catch (err) {
+    console.warn('Lỗi làm mới danh bạ:', err)
   } finally {
     loading.value = false
   }
@@ -295,7 +268,7 @@ const toggleFavorite = (contact) => {
   )
 }
 
-// Lọc danh bạ theo tab và từ khóa tìm kiếm
+// Lọc danh bạ theo tab và từ khóa tìm kiếm (hỗ trợ tiếng Việt không dấu)
 const filteredContacts = computed(() => {
   let list = contacts.value
 
@@ -304,13 +277,7 @@ const filteredContacts = computed(() => {
   }
 
   if (!searchTerm.value.trim()) return list
-  const q = searchTerm.value.toLowerCase().trim()
-  return list.filter(
-    (c) =>
-      c.name.toLowerCase().includes(q) ||
-      (c.dept && c.dept.toLowerCase().includes(q)) ||
-      (c.number && c.number.includes(q)),
-  )
+  return list.filter((c) => contactService.matchesSearch(c, searchTerm.value))
 })
 
 // 1. Gọi thoại (Kiểm tra Máy bận / Offline, chuyển sang CallsView)
@@ -353,6 +320,19 @@ const handleCall = (contact) => {
     return
   }
 
+  // Nếu đối phương đang nhận cuộc gọi khác (ringing) -> Chặn gọi và cảnh báo
+  if (contact.status === 'ringing') {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🔔 [${contact.name}] hiện đang nhận một cuộc gọi khác. Vui lòng gọi lại sau!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
   // Nếu đối phương đang bật chế độ Không làm phiền (dnd) -> Cảnh báo
   if (contact.status === 'dnd') {
     window.dispatchEvent(
@@ -366,7 +346,7 @@ const handleCall = (contact) => {
     return
   }
 
-  // Nếu đối phương đang offline -> Hiển thị hộp thoại hỏi chuyển sang nhắn tin
+  // Nếu đối phương đang offline -> Hiển thị hộp thoại hỏi chuyển sang nhắn tin (Rule 3.2 GEMINI.md)
   if (contact.status === 'offline' || contact.status === 'unavailable') {
     const confirmMessage = confirm(
       `Máy lẻ [${contact.name} - ${contact.number}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
@@ -377,11 +357,13 @@ const handleCall = (contact) => {
     return
   }
 
-  // Chuyển sang màn hình bàn phím gọi điện và tự động kích hoạt cuộc gọi
+  // Chuyển sang màn hình bàn phím gọi điện và tự động kích hoạt cuộc gọi với đầy đủ thông tin
   router.push({
     path: '/calls',
     query: {
       number: contact.number,
+      name: contact.name,
+      dept: contact.dept,
       autocall: 'true',
     },
   })
@@ -400,44 +382,16 @@ const handleMessage = (contact) => {
   })
 }
 
-// 3. Gọi Video
+// 3. Thông báo tính năng Gọi Video
 const handleVideoCall = (contact) => {
   window.dispatchEvent(
     new CustomEvent('app-toast', {
-      detail: { message: `🎥 Đang khởi tạo cuộc gọi Video WebRTC tới ${contact.name} (${contact.number})...` },
+      detail: {
+        message: `ℹ️ Tính năng Gọi Video hiện chưa được kích hoạt trên tổng đài. Hệ thống đang hỗ trợ đàm thoại thoại WebRTC độ nét cao tới [${contact.name}]!`,
+        type: 'info',
+      },
     }),
   )
-}
-
-// 4. Xóa liên hệ
-const handleDelete = async (contact) => {
-  const isConfirmed = confirm(`Hỏi xóa liên hệ: Bạn có chắc chắn muốn xóa [${contact.name}] khỏi danh bạ không?`)
-  if (isConfirmed) {
-    await contactService.deleteContact(contact.id)
-    contacts.value = contacts.value.filter((c) => c.id !== contact.id)
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: { message: `Đã xóa liên hệ [${contact.name}] khỏi danh bạ!` },
-      }),
-    )
-  }
-}
-
-// Thêm liên hệ mới
-const saveNewContact = async () => {
-  if (!newContact.value.name || !newContact.value.number) return
-
-  await contactService.addContact({ ...newContact.value })
-  contacts.value = await contactService.getContacts()
-  showAddModal.value = false
-
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: `Đã thêm liên hệ [${newContact.value.name}] thành công!`, type: 'success' },
-    }),
-  )
-
-  newContact.value = { name: '', number: '', dept: '', email: '' }
 }
 
 // Helper Avatar
@@ -525,21 +479,35 @@ const getAvatarColor = (name) => {
   font-size: 0.8rem;
 }
 
-.btn-add-contact {
-  background: #1e88e5;
-  color: white;
-  border: none;
+.btn-refresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: white;
+  color: #1e88e5;
+  border: 1px solid #90caf9;
   padding: 8px 16px;
   border-radius: 20px;
   font-weight: 600;
+  font-size: 0.88rem;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(30, 136, 229, 0.3);
   transition: all 0.2s;
   white-space: nowrap;
 }
 
-.btn-add-contact:hover {
-  background: #1565c0;
+.btn-refresh:hover:not(:disabled) {
+  background: #e3f2fd;
+  border-color: #1e88e5;
+}
+
+.btn-refresh:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spin-icon {
+  display: inline-block;
+  animation: spin 1s linear infinite;
 }
 
 /* Filter Tabs Bar */
@@ -599,16 +567,16 @@ const getAvatarColor = (name) => {
 }
 
 .contact-table td {
-  padding: 14px 18px;
+  padding: 12px 18px;
   border-bottom: 1px solid #f1f5f9;
   vertical-align: middle;
 }
 
-.contact-table tr:hover {
+.contact-table tr:hover td {
   background: #f8fafc;
 }
 
-/* Star Button */
+/* Star Toggle */
 .btn-star {
   background: none;
   border: none;
@@ -616,12 +584,12 @@ const getAvatarColor = (name) => {
   cursor: pointer;
   color: #cbd5e1;
   transition: transform 0.15s, color 0.15s;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 2px;
+  line-height: 1;
 }
 
 .btn-star:hover {
-  transform: scale(1.2);
+  transform: scale(1.25);
   color: #f59e0b;
 }
 
@@ -629,7 +597,7 @@ const getAvatarColor = (name) => {
   color: #f59e0b;
 }
 
-/* User Meta Cell */
+/* User Cell */
 .contact-user-cell {
   display: flex;
   align-items: center;
@@ -641,12 +609,13 @@ const getAvatarColor = (name) => {
   height: 38px;
   border-radius: 50%;
   color: white;
-  font-weight: bold;
-  font-size: 0.9rem;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
   flex-shrink: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .user-meta {
@@ -655,37 +624,38 @@ const getAvatarColor = (name) => {
 }
 
 .user-hname {
-  color: #1e293b;
   font-size: 0.92rem;
+  color: #1e293b;
 }
 
 .user-email {
-  color: #94a3b8;
-  font-size: 0.75rem;
+  font-size: 0.78rem;
+  color: #64748b;
 }
 
 /* Dept Badge */
 .dept-badge {
   background: #f1f5f9;
   color: #475569;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: inline-block;
+}
+
+/* Ext Tag */
+.ext-tag {
+  background: #e0f2fe;
+  color: #0284c7;
   font-size: 0.82rem;
+  font-weight: 600;
   padding: 4px 10px;
   border-radius: 6px;
-  border: 1px solid #e2e8f0;
+  display: inline-block;
 }
 
-/* Extension Tag */
-.ext-tag {
-  font-family: monospace;
-  font-size: 0.88rem;
-  color: #1e88e5;
-  font-weight: 600;
-  background: #e0f2fe;
-  padding: 3px 8px;
-  border-radius: 4px;
-}
-
-/* Status Dot */
+/* Status Cell */
 .status-cell {
   display: flex;
   align-items: center;
@@ -693,112 +663,112 @@ const getAvatarColor = (name) => {
 }
 
 .status-dot {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .status-online {
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
 }
 
 .status-busy {
   background: #ef4444;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
 }
 
 .status-dnd {
-  background: #f59e0b;
+  background: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2);
 }
 
 .status-away {
-  background: #f97316;
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
 }
 
 .status-ringing {
   background: #3b82f6;
-  animation: pulse 1s infinite alternate;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  animation: pulse-ring 1s infinite;
 }
 
 .status-offline {
   background: #94a3b8;
 }
 
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
 .status-label {
   font-size: 0.82rem;
-  color: #64748b;
+  font-weight: 500;
 }
 
-.label-online {
-  color: #16a34a;
-  font-weight: 600;
-}
+.label-online { color: #059669; }
+.label-busy { color: #dc2626; font-weight: 600; }
+.label-dnd { color: #ea580c; }
+.label-away { color: #d97706; }
+.label-ringing { color: #2563eb; font-weight: 600; }
+.label-offline { color: #64748b; }
 
-.label-busy {
-  color: #dc2626;
-  font-weight: 600;
-}
-
-.label-dnd {
-  color: #d97706;
-  font-weight: 600;
-}
-
-.label-ringing {
-  color: #2563eb;
-  font-weight: 600;
-}
-
-/* Action Buttons Group */
+/* Action Buttons */
 .action-buttons-group {
-  display: flex;
-  gap: 8px;
+  display: inline-flex;
+  gap: 6px;
   justify-content: flex-end;
 }
 
 .btn-icon {
   width: 34px;
   height: 34px;
-  border-radius: 6px;
-  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
   background: white;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 0.95rem;
+  transition: all 0.15s;
   position: relative;
-  transition: all 0.2s;
 }
 
 .btn-icon:hover {
   transform: translateY(-2px);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.08);
+}
+
+.btn-call {
+  color: #10b981;
 }
 
 .btn-call:hover {
-  background: #dcfce7;
-  border-color: #22c55e;
-  color: #15803d;
+  background: #ecfdf5;
+  border-color: #10b981;
+}
+
+.btn-msg {
+  color: #3b82f6;
 }
 
 .btn-msg:hover {
-  background: #e0f2fe;
-  border-color: #0284c7;
-  color: #0369a1;
+  background: #eff6ff;
+  border-color: #3b82f6;
+}
+
+.btn-video {
+  color: #8b5cf6;
 }
 
 .btn-video:hover {
-  background: #f3e8ff;
-  border-color: #9333ea;
-  color: #7e22ce;
-}
-
-.btn-delete:hover {
-  background: #fee2e2;
-  border-color: #ef4444;
-  color: #b91c1c;
+  background: #f5f3ff;
+  border-color: #8b5cf6;
 }
 
 .badge-unread {
@@ -812,103 +782,6 @@ const getAvatarColor = (name) => {
   padding: 1px 5px;
   border-radius: 10px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-/* Modal Form */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-card {
-  background: white;
-  border-radius: 10px;
-  width: 440px;
-  overflow: hidden;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-}
-
-.modal-head {
-  padding: 16px 20px;
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 700;
-  color: #1e293b;
-  font-size: 0.95rem;
-}
-
-.btn-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1.1rem;
-}
-
-.modal-body {
-  padding: 20px;
-}
-
-.form-group {
-  margin-bottom: 14px;
-}
-
-.form-group label {
-  display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #475569;
-  margin-bottom: 5px;
-}
-
-.form-input {
-  width: 100%;
-  padding: 9px 12px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  outline: none;
-}
-
-.form-input:focus {
-  border-color: #1e88e5;
-}
-
-.modal-foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.btn-cancel {
-  background: #e2e8f0;
-  color: #475569;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btn-submit {
-  background: #1e88e5;
-  color: white;
-  border: none;
-  padding: 8px 18px;
-  border-radius: 6px;
-  font-weight: 600;
-  cursor: pointer;
 }
 
 /* State Message */

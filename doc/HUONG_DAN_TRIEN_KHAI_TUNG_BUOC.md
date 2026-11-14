@@ -35,6 +35,7 @@
 | **19** | Thiết lập Wazo Local Server Emulator Độc lập (Port 9443) Phục vụ Kiểm thử 2 Tài khoản | Yêu cầu kiểm thử ngoài mạng văn phòng | **HOÀN THÀNH** ✅ | Xây dựng Wazo Server Emulator độc lập ngoài thư mục dự án (`wazo-emulator`), hỗ trợ REST API (Auth, Confd, Dird, Chatd, CDR), WebSocket Events (`websocketd`) và SIP WebRTC Signaling (`asterisk/ws`). Chạy 2 tài khoản thật Alice (1001) - Bob (1002) mà không cần fake data trong frontend. |
 | **20** | Khắc phục Triệt để 8 Điểm Kiểm toán VoIP, WebRTC, WebSocket & Vòng đời Trạng thái | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Sửa lỗi mất đàm thoại khi chuyển tab KeepAlive (`CallsView`), dọn dẹp rò rỉ query URL cúp máy, hợp nhất sự kiện WebSocket v2 (`websocketService`), chuẩn hóa dữ liệu tin nhắn realtime, gỡ bỏ nút test fake và tên riêng trên Dashboard, nâng timeout login 15s, động hóa SIP URI. |
 | **21** | Tái cấu trúc Toàn diện Kiến trúc Cuộc gọi theo mô hình Single Source of Truth (SSOT) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Khởi tạo reactive `callStore` tập trung; Rút gọn `CallsView.vue` hơn 60% code; Hợp nhất xác thực cuộc gọi & ghi nhận CDR tập trung tại `wazoService`; Hợp nhất kết nối duy nhất tới `wazo-websocketd`; Đồng bộ song song sang `Smart_Call_Web_Mock`. |
+| **22** | Chuẩn hóa Toàn diện Phân hệ Danh bạ (Contacts), Tối ưu KeepAlive & Loại bỏ Mock Data | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Mã tham chiếu chuẩn | **HOÀN THÀNH** ✅ | Tối ưu KeepAlive 0ms không chớp tắt spinner; Phân tách phiên đăng nhập bằng User-bound KeepAlive key; Tự động nhận diện số máy lẻ của chính mình; Dọn sạch dữ liệu khi Logout; Bổ sung nút ↻ Làm mới danh bạ; Loại bỏ nút Thêm/Xóa liên hệ mock và nút Video giả lập; Hỗ trợ tìm kiếm tiếng Việt không dấu. |
 
 ---
 
@@ -1394,6 +1395,44 @@ Dựa trên kế hoạch tái cấu trúc đã được phê duyệt, toàn bộ
    - Đồng bộ toàn bộ kiến trúc SSOT sang dự án thử nghiệm ngoại tuyến, đồng thời tích hợp cơ chế tự động nhấc máy giả lập sau 2s khi chạy ở chế độ offline.
 
 8. **Kiểm tra biên dịch:** `npm run build` thành công 100% với 0 lỗi trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
+
+---
+
+## 22. CHUẨN HÓA TOÀN DIỆN PHÂN HỆ DANH BẠ (CONTACTS), TỐI ƯU KEEPALIVE & LOẠI BỎ MOCK DATA
+
+Dựa trên quá trình kiểm toán toàn diện, đối chiếu với mã nguồn tham chiếu mẫu và các quy tắc hệ thống, phân hệ Danh bạ nhân viên nội bộ đã được nâng cấp đồng bộ:
+
+1. **Khắc phục Triệt để Hiện tượng Chớp tắt Giao diện khi Chuyển Tab KeepAlive (`ContactsView.vue`):**
+   - Trong hook `onActivated()`, hệ thống ưu tiên đọc danh bạ đã nạp sẵn trong RAM (`contactService.currentContacts`), hiển thị tức thì (0ms) cho người dùng mà không bật cờ `loading.value = true`.
+   - Tiến hành nạp ngầm danh bạ mới (silent refresh) từ máy chủ để làm mới trạng thái mà không gây gián đoạn trải nghiệm người dùng.
+
+2. **Phân tách Phiên Đăng nhập bằng User-bound KeepAlive Key (`src/App.vue`):**
+   - Thay đổi thuộc tính `:key` của component trong `<keep-alive>` thành:
+     ```html
+     <component :is="Component" :key="`${callStore.myUserUuid || 'guest'}-${$route.name}`" />
+     ```
+   - Khi người dùng đăng xuất và đăng nhập tài khoản khác (ví dụ từ A sang B), Vue lập tức tiêu hủy toàn bộ cache trong RAM của tài khoản A, triệt tiêu hoàn toàn lỗi rò rỉ dữ liệu giữa các phiên đăng nhập.
+
+3. **Cơ chế Tự động Nhận diện Máy lẻ của Chính mình (Self-Extension Discovery - `contactService.js`):**
+   - Chuẩn hóa theo mã nguồn tham chiếu mẫu: Khi nạp danh bạ từ máy chủ Wazo Dird, hệ thống tự động tìm bản ghi của chính người dùng (`c.uuid === meUuid`).
+   - Nếu `callStore.myExtension` chưa có số máy lẻ từ profile, hệ thống tự động điền `mine.number` vào `callStore` và `localStorage`, giúp kích hoạt gọi điện mà không cần cấu hình thủ công.
+
+4. **Dọn dẹp Toàn bộ State khi Đăng xuất (`contactService.js` & `wazo.js`):**
+   - Bổ sung hàm `reset()` trong `contactService` để dọn sạch `this.currentContacts = []`, `this.presences = {}` và hủy bộ đếm `presencePollTimer`.
+   - Kết nối trực tiếp vào hàm `logout()` của `wazoService`.
+
+5. **Làm sạch & Chuẩn hóa Nghiệp vụ Danh bạ Doanh nghiệp 100% Dữ liệu Thật:**
+   - **Bỏ ID Mock:** Hàm `getFavoriteIds()` trả về mảng rỗng `[]` mặc định, loại bỏ hoàn toàn các ID fix cứng (`emp-1002`).
+   - **Bỏ Nút Thêm / Xóa Liên hệ:** Do danh bạ nội bộ công ty trên Wazo Dird được quản trị tập trung bởi PBX Admin (chỉ có API đọc `GET`, không có `POST`/`DELETE`), các nút mock cục bộ đã được loại bỏ.
+   - **Bổ sung Nút "↻ Làm mới":** Thêm nút làm mới danh bạ trên thanh công cụ chuẩn theo mã tham chiếu mẫu, cho phép đồng bộ ngay lập tức với máy chủ tổng đài.
+   - **Nút Gọi Video 🎥:** Bấm nút hiển thị thông báo Toast lịch sự hướng dẫn người dùng hệ thống đang tập trung tối ưu thoại WebRTC độ nét cao.
+   - **Tìm kiếm Tiếng Việt Không Dấu:** Bổ sung hàm `matchesSearch()` chuẩn hóa chuỗi `normalize("NFD")`, giúp tìm kiếm theo tên hoặc phòng ban bằng tiếng Việt không dấu dễ dàng.
+   - **Nghiệp vụ Gọi & Nhắn tin:** Bổ sung kiểm tra máy bận đổ chuông (`ringing`), hộp thoại chuyển sang nhắn tin khi máy ngoại tuyến (Rule 3.2), truyền đầy đủ `name` và `dept` khi điều hướng sang màn hình Gọi thoại (`CallsView`).
+
+6. **Đồng bộ Song song sang `Smart_Call_Web_Mock`:**
+   - Cập nhật toàn bộ các logic tối ưu trên sang dự án thử nghiệm ngoại tuyến, đồng thời duy trì mảng `MOCK_FALLBACK_CONTACTS` để hỗ trợ kiểm thử khi không kết nối mạng.
+
+7. **Kiểm tra Biên dịch:** `npm run build` thành công 100% với 0 lỗi trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
 
 
 
