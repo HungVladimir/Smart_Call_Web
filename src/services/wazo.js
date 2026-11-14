@@ -4,6 +4,7 @@ import { logger } from './loggerService'
 import { audioService } from './audioService'
 import { historyService } from './historyService'
 import { contactService } from './contactService'
+import { chatService } from './chatService'
 import { websocketService } from './websocketService'
 
 /**
@@ -166,6 +167,7 @@ class WazoService {
     callStore.activeCall = null
     callStore.incomingCall = null
     contactService.reset()
+    chatService.reset()
     logger.info('AUTH', 'Đã xóa toàn bộ token và phiên làm việc cục bộ.')
   }
 

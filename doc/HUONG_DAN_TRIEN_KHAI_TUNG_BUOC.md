@@ -36,6 +36,7 @@
 | **20** | Khắc phục Triệt để 8 Điểm Kiểm toán VoIP, WebRTC, WebSocket & Vòng đời Trạng thái | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Sửa lỗi mất đàm thoại khi chuyển tab KeepAlive (`CallsView`), dọn dẹp rò rỉ query URL cúp máy, hợp nhất sự kiện WebSocket v2 (`websocketService`), chuẩn hóa dữ liệu tin nhắn realtime, gỡ bỏ nút test fake và tên riêng trên Dashboard, nâng timeout login 15s, động hóa SIP URI. |
 | **21** | Tái cấu trúc Toàn diện Kiến trúc Cuộc gọi theo mô hình Single Source of Truth (SSOT) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Khởi tạo reactive `callStore` tập trung; Rút gọn `CallsView.vue` hơn 60% code; Hợp nhất xác thực cuộc gọi & ghi nhận CDR tập trung tại `wazoService`; Hợp nhất kết nối duy nhất tới `wazo-websocketd`; Đồng bộ song song sang `Smart_Call_Web_Mock`. |
 | **22** | Chuẩn hóa Toàn diện Phân hệ Danh bạ (Contacts), Tối ưu KeepAlive & Loại bỏ Mock Data | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Mã tham chiếu chuẩn | **HOÀN THÀNH** ✅ | Tối ưu KeepAlive 0ms không chớp tắt spinner; Phân tách phiên đăng nhập bằng User-bound KeepAlive key; Tự động nhận diện số máy lẻ của chính mình; Dọn sạch dữ liệu khi Logout; Bổ sung nút ↻ Làm mới danh bạ; Loại bỏ nút Thêm/Xóa liên hệ mock và nút Video giả lập; Hỗ trợ tìm kiếm tiếng Việt không dấu. |
+| **23** | Chuẩn hóa Toàn diện Phân hệ Tin nhắn (Messages), SSOT WebSocket & Tích hợp Wazo Chatd API | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Mã tham chiếu chuẩn | **HOÀN THÀNH** ✅ | Phân tách kho lưu trữ tin nhắn theo từng User UUID tránh rò rỉ chéo; Hợp nhất xử lý WebSocket tin nhắn tập trung tại `chatService.js` (SSOT); Dọn sạch cache tin nhắn khi Logout; Tích hợp tạo phòng 1-1 qua Wazo Chatd API (`/users/me/rooms`). |
 
 ---
 
@@ -1434,17 +1435,30 @@ Dựa trên quá trình kiểm toán toàn diện, đối chiếu với mã ngu�
 
 7. **Kiểm tra Biên dịch:** `npm run build` thành công 100% với 0 lỗi trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
 
+---
 
+## 23. CHUẨN HÓA TOÀN DIỆN PHÂN HỆ TIN NHẮN (MESSAGES), SSOT WEBSOCKET & TÍCH HỢP WAZO CHATD API
 
+Dựa trên quá trình kiểm toán toàn diện kiến trúc phân hệ Tin nhắn và tất cả các luồng chuyển tiếp (từ Danh bạ, Lịch sử cuộc gọi, Header, Sidebar), phân hệ Tin nhắn đã được chuẩn hóa triệt để theo các nguyên tắc cốt lõi:
 
+1. **Phân tách Dữ liệu Tin nhắn theo Phiên Người dùng Đăng nhập (User-scoped Storage Key):**
+   - Trước đây: Sử dụng khóa chung `smartcall_chat_rooms` lưu trong `localStorage`. Khi chuyển đổi qua lại giữa các tài khoản khác nhau trên cùng máy tính, toàn bộ lịch sử tin nhắn của người trước bị rò rỉ sang phiên người sau.
+   - Giải pháp: Khởi tạo hàm `getStorageKey()` động: `smartcall_chat_rooms_${userUuid}`. Dữ liệu tin nhắn của mỗi tài khoản được cô lập hoàn toàn.
+   - Bổ sung hàm `chatService.reset()` tự động dọn dẹp biến bộ nhớ `this.rooms = []` và xóa cờ `smartcall_active_room_id` khi người dùng bấm Đăng xuất (`logout()` trong `wazoService`).
 
+2. **Chuyển Lắng nghe Tin nhắn WebSocket Thời gian thực về Tầng Dịch vụ Tập trung (SSOT WebSocket):**
+   - Trước đây: Logic lắng nghe sự kiện `chatd_user_room_message_created` và `chatd_user_message_created` nằm cục bộ bên trong `MessagesView.vue`. Khi người dùng đang ở các màn hình khác (`CallsView`, `ContactsView`, `HistoryView`), component `MessagesView` chưa được mount hoặc bị deactivate dẫn đến tin nhắn bị bỏ lỡ, huy hiệu số tin nhắn chưa đọc trên Sidebar (`AppSidebar.vue`) không cập nhật.
+   - Giải pháp: Chuyển toàn bộ việc lắng nghe và xử lý chuẩn hóa tin nhắn WebSocket về phương thức `handleIncomingMessage(data)` trong `chatService.js`.
+   - Cơ chế phát hiện phòng đang mở: Sử dụng cờ `smartcall_active_room_id` để biết người dùng có đang trực tiếp xem đúng phòng chat đó không. Nếu không ở trong phòng, tự động tăng biến đếm `unread` và phát sự kiện toàn cục `smartcall-message-received` + `smartcall-rooms-updated`.
+   - `MessagesView.vue` và `AppSidebar.vue` chỉ cần đăng ký lắng nghe sự kiện của hệ thống, loại bỏ code trùng lặp và đảm bảo huy hiệu unread luôn nhảy số thời gian thực ở mọi màn hình.
 
+3. **Tích hợp API Tạo Phòng Chat 1-1 Chuẩn Wazo Chatd Server (`getDirectRoom`):**
+   - Bám sát tài liệu kỹ thuật tổng đài Wazo Chatd (`dev_guide.md` & `WAZO_API_REFERENCE.md`): Khi người dùng bấm nút Nhắn tin từ Danh bạ sang một máy lẻ, hệ thống truy xuất UUID của đối phương thông qua `contactService.findContactByExtension(targetExt)`.
+   - Nếu có Token xác thực và UUID đối phương, tự động gửi yêu cầu `POST /api/chatd/1.0/users/me/rooms` với payload `{"users": [{"uuid": "<me>"}, {"uuid": "<other>"}]}` để máy chủ Wazo cấp phát UUID phòng thật.
+   - Tự động fallback linh hoạt sang phòng 1-1 cục bộ (`direct-${cleanExt}`) nếu máy chủ bận hoặc chạy ở chế độ ngoại tuyến, đảm bảo giao diện luôn mở phòng chat tức thì mà không bị gián đoạn.
 
+4. **Đồng bộ Song song sang `Smart_Call_Web_Mock`:**
+   - Cập nhật toàn bộ các cải tiến trên sang dự án thử nghiệm ngoại tuyến `Smart_Call_Web_Mock`.
 
-
-
-
-
-
-
+5. **Kiểm tra Biên dịch:** `npm run build` thành công 100% với 0 lỗi trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
 

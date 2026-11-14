@@ -387,7 +387,7 @@ const handleVideoCall = (contact) => {
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: {
-        message: `ℹ️ Tính năng Gọi Video hiện chưa được kích hoạt trên tổng đài. Hệ thống đang hỗ trợ đàm thoại thoại WebRTC độ nét cao tới [${contact.name}]!`,
+        message: `ℹ️ Tính năng Gọi Video hiện chưa được kích hoạt!`,
         type: 'info',
       },
     }),

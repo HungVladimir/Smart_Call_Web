@@ -1,21 +1,33 @@
 import { wazoService } from './wazo'
+import { contactService } from './contactService'
+import { websocketService } from './websocketService'
 import { logger } from './loggerService'
-
-const STORAGE_KEY = 'smartcall_chat_rooms'
 
 class ChatService {
   constructor() {
-    this.rooms = this.loadSavedRooms()
+    this.rooms = []
+    if (typeof window !== 'undefined') {
+      this.rooms = this.loadSavedRooms()
+      // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
+      websocketService.on('chatd_user_room_message_created', (data) => this.handleIncomingMessage(data))
+      websocketService.on('chatd_user_message_created', (data) => this.handleIncomingMessage(data))
+    }
   }
 
-  // Tải dữ liệu phòng chat từ localStorage để duy trì trạng thái khi chuyển tab hoặc tải lại trang
+  // Khóa lưu trữ cục bộ phân tách riêng biệt theo từng User UUID đăng nhập
+  getStorageKey() {
+    const userUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'default'
+    return `smartcall_chat_rooms_${userUuid}`
+  }
+
+  // Tải dữ liệu phòng chat từ localStorage của phiên người dùng hiện tại
   loadSavedRooms() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
+      const key = this.getStorageKey()
+      const raw = localStorage.getItem(key)
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Bổ sung thời gian updatedAt nếu phòng chưa có
           parsed.forEach((r, idx) => {
             if (!r.updatedAt) {
               r.updatedAt = Date.now() - idx * 60000
@@ -37,14 +49,81 @@ class ChatService {
     this.rooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   }
 
-  // Lưu bền vững vào localStorage
+  // Lưu bền vững vào localStorage của user hiện tại
   saveRooms() {
     try {
       this.sortRooms()
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.rooms))
+      const key = this.getStorageKey()
+      localStorage.setItem(key, JSON.stringify(this.rooms))
       window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
     } catch (e) {
       console.warn('Lỗi lưu cache phòng chat:', e)
+    }
+  }
+
+  // Xử lý tin nhắn đến thời gian thực qua WebSocket (Tập trung toàn hệ thống - SSOT)
+  handleIncomingMessage(data) {
+    if (!data) return
+    const roomUuid = data.room_uuid || data.room?.uuid || data.message?.room_uuid
+    const content = data.content || data.message?.content || data.msg || ''
+    const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
+    const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}-${Math.random()}`
+    const timeStr = data.created_at
+      ? data.created_at.substring(11, 16)
+      : new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+
+    if (!roomUuid || !content) return
+
+    if (!this.rooms || this.rooms.length === 0) {
+      this.rooms = this.loadSavedRooms()
+    }
+
+    let targetRoom = this.rooms.find((r) => r.id === roomUuid)
+    if (!targetRoom) {
+      targetRoom = {
+        id: roomUuid,
+        title: alias || 'Cuộc trò chuyện',
+        preview: content,
+        time: timeStr,
+        unread: 0,
+        avatarBg: '#3b82f6',
+        icon: (alias || 'CH').slice(0, 2).toUpperCase(),
+        messages: [],
+        members: [],
+        updatedAt: Date.now(),
+      }
+      this.rooms.unshift(targetRoom)
+    }
+
+    if (!targetRoom.messages) targetRoom.messages = []
+    const alreadyExists = targetRoom.messages.some((m) => m.id === msgId)
+    if (!alreadyExists) {
+      const currentUserName = localStorage.getItem('smartcall_username') || 'Người dùng'
+      const isMine = alias === currentUserName
+      const newMsg = {
+        id: msgId,
+        sender: isMine ? 'mine' : 'theirs',
+        senderName: alias,
+        text: content,
+        time: timeStr,
+        readStatus: 'Read',
+        readers: [],
+      }
+      targetRoom.messages.push(newMsg)
+      targetRoom.preview = content
+      targetRoom.time = timeStr
+      targetRoom.updatedAt = Date.now()
+
+      const activeRoomId = localStorage.getItem('smartcall_active_room_id')
+      if (activeRoomId !== roomUuid && !isMine) {
+        targetRoom.unread = (targetRoom.unread || 0) + 1
+      }
+
+      this.saveRooms()
+      logger.info('CHAT', `Nhận tin nhắn mới từ [${alias}] trong phòng [${targetRoom.title}]: ${content}`)
+      window.dispatchEvent(
+        new CustomEvent('smartcall-message-received', { detail: { roomId: roomUuid, message: newMsg } }),
+      )
     }
   }
 
@@ -161,14 +240,14 @@ class ChatService {
         }
       }
     } catch (e) {
-      console.warn('Lỗi tải tin nhắn từ máy chủ, sử dụng dữ liệu cục bộ:', e)
+      /* ignore */
     }
 
     return localRoom?.messages || []
   }
 
   /**
-   * Tìm hoặc tạo phòng chat 1-1 với một máy lẻ
+   * Tìm hoặc tạo phòng chat 1-1 với một máy lẻ (Hỗ trợ Wazo Chatd API chuẩn)
    */
   async getDirectRoom(ext, name, currentUserName = 'Người dùng') {
     if (!this.rooms || this.rooms.length === 0) {
@@ -187,32 +266,71 @@ class ChatService {
         (r.title && (r.title === name || r.title.includes(cleanExt))),
     )
 
-    if (!found) {
-      found = {
-        id: `direct-${cleanExt}-${Date.now()}`,
-        title: name || `Máy lẻ ${cleanExt}`,
-        preview: 'Bắt đầu cuộc trò chuyện...',
-        time: 'Mới',
-        unread: 0,
-        avatarBg: '#0284c7',
-        icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
-        isDirect: true,
-        ext: cleanExt,
-        memberCount: 2,
-        updatedAt: Date.now(),
-        members: [
-          { id: myUuid, name: currentUserName, dept: 'Khối Kỹ thuật', ext: myExt, isAdmin: true },
-          { id: `emp-${cleanExt}`, name: name, dept: 'Nội bộ', ext: cleanExt, isAdmin: false },
-        ],
-        messages: [],
-      }
-      this.rooms.unshift(found)
-      this.saveRooms()
-    } else {
+    if (found) {
       found.updatedAt = Date.now()
       this.saveRooms()
+      return found
     }
 
+    // Nếu chưa có phòng, thử gọi API Wazo Chatd thật để tạo phòng 1-1 trên server tổng đài
+    let realRoomUuid = null
+    const targetContact = contactService.findContactByExtension(cleanExt)
+    const targetUuid = targetContact?.uuid
+
+    const token = wazoService.getToken()
+    if (token && targetUuid && myUuid && myUuid !== 'me') {
+      try {
+        const host = wazoService.host.startsWith('http')
+          ? wazoService.host
+          : `https://${wazoService.host}`
+
+        // Chuẩn Wazo Chatd: POST /api/chatd/1.0/users/me/rooms
+        const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms`, {
+          method: 'POST',
+          headers: {
+            'X-Auth-Token': token,
+            'Content-Type': 'application/json',
+          },
+          signal: AbortSignal.timeout(3000),
+          body: JSON.stringify({
+            name: name || `Máy lẻ ${cleanExt}`,
+            users: [{ uuid: myUuid }, { uuid: targetUuid }],
+          }),
+        })
+
+        if (res.ok) {
+          const roomData = await res.json()
+          if (roomData && (roomData.uuid || roomData.id)) {
+            realRoomUuid = roomData.uuid || roomData.id
+            logger.info('CHAT', `Đã tạo phòng 1-1 thật trên máy chủ Wazo Chatd: ${realRoomUuid}`)
+          }
+        }
+      } catch (err) {
+        logger.warn('CHAT', 'Không thể tạo phòng trên Wazo Chatd server, chuyển sang chế độ dự phòng:', err.message)
+      }
+    }
+
+    const roomId = realRoomUuid || `direct-${cleanExt}-${Date.now()}`
+    found = {
+      id: roomId,
+      title: name || `Máy lẻ ${cleanExt}`,
+      preview: 'Bắt đầu cuộc trò chuyện...',
+      time: 'Mới',
+      unread: 0,
+      avatarBg: '#0284c7',
+      icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
+      isDirect: true,
+      ext: cleanExt,
+      memberCount: 2,
+      updatedAt: Date.now(),
+      members: [
+        { id: myUuid, name: currentUserName, dept: 'Khối Kỹ thuật', ext: myExt, isAdmin: true },
+        { id: targetUuid || `emp-${cleanExt}`, name: name, dept: 'Nội bộ', ext: cleanExt, isAdmin: false },
+      ],
+      messages: [],
+    }
+    this.rooms.unshift(found)
+    this.saveRooms()
     return found
   }
 
@@ -237,7 +355,7 @@ class ChatService {
 
     try {
       const token = wazoService.getToken()
-      if (token) {
+      if (token && roomId) {
         const host = wazoService.host.startsWith('http')
           ? wazoService.host
           : `https://${wazoService.host}`
@@ -350,6 +468,20 @@ class ChatService {
       return true
     }
     return false
+  }
+
+  /**
+   * Dọn dẹp sạch sẽ toàn bộ trạng thái khi đăng xuất
+   */
+  reset() {
+    this.rooms = []
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('smartcall_active_room_id')
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
+    }
+    logger.info('CHAT', 'Đã dọn dẹp sạch toàn bộ cache tin nhắn và phòng chat.')
   }
 }
 

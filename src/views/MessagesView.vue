@@ -241,10 +241,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { chatService } from '@/services/chatService'
-import { websocketService } from '@/services/websocketService'
 
 const route = useRoute()
 const router = useRouter()
@@ -291,6 +290,9 @@ const loadRooms = async () => {
 const selectRoom = async (room) => {
   currentRoom.value = room
   room.unread = 0
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('smartcall_active_room_id', room.id)
+  }
   chatService.saveRooms()
   if (route.query && route.query.ext) {
     router.replace({ path: '/messages', query: {} }).catch(() => {})
@@ -378,61 +380,61 @@ watch(
   { immediate: true },
 )
 
-onActivated(async () => {
-  if (route.query && route.query.ext) {
-    await checkDirectChatRoute()
+// Lắng nghe sự kiện tin nhắn thời gian thực và cập nhật danh sách phòng từ chatService (SSOT)
+const onMessageReceived = (ev) => {
+  const { roomId } = ev.detail || {}
+  rooms.value = [...chatService.rooms]
+  if (currentRoom.value && currentRoom.value.id === roomId) {
+    const updated = rooms.value.find((r) => r.id === roomId)
+    if (updated) currentRoom.value = updated
+    scrollToBottom()
   }
-})
+}
 
-// Lắng nghe tin nhắn mới từ WebSocket
-const handleRealtimeMessage = (data) => {
-  if (!data) return
-  // Chuẩn hóa dữ liệu tin nhắn (hỗ trợ cả cấu trúc phẳng lẫn cấu trúc lồng data.message)
-  const roomUuid = data.room_uuid || data.room?.uuid || data.message?.room_uuid
-  const content = data.content || data.message?.content || data.msg || ''
-  const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
-  const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}`
-
-  if (!roomUuid || !content) return
-
-  const targetRoom = rooms.value.find((r) => r.id === roomUuid)
-  if (targetRoom) {
-    if (!targetRoom.messages) targetRoom.messages = []
-    const alreadyExists = targetRoom.messages.some((m) => m.id === msgId)
-    if (!alreadyExists) {
-      targetRoom.messages.push({
-        id: msgId,
-        sender: 'theirs',
-        senderName: alias,
-        text: content,
-        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-        readStatus: 'Read',
-        readers: [],
-      })
-      targetRoom.preview = content
-      targetRoom.updatedAt = Date.now()
-      rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-      chatService.saveRooms()
-      if (currentRoom.value && currentRoom.value.id === targetRoom.id) {
-        scrollToBottom()
-      } else {
-        targetRoom.unread = (targetRoom.unread || 0) + 1
-      }
-    }
+const onRoomsUpdated = () => {
+  rooms.value = [...chatService.rooms]
+  if (currentRoom.value) {
+    const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
+    if (updated) currentRoom.value = updated
   }
 }
 
 onMounted(async () => {
   await loadRooms()
   await checkDirectChatRoute()
-  websocketService.connect()
-  websocketService.on('chatd_user_room_message_created', handleRealtimeMessage)
-  websocketService.on('chatd_user_message_created', handleRealtimeMessage)
+  if (currentRoom.value && typeof localStorage !== 'undefined') {
+    localStorage.setItem('smartcall_active_room_id', currentRoom.value.id)
+  }
+  window.addEventListener('smartcall-message-received', onMessageReceived)
+  window.addEventListener('smartcall-rooms-updated', onRoomsUpdated)
+})
+
+onActivated(async () => {
+  await loadRooms()
+  if (route.query && route.query.ext) {
+    await checkDirectChatRoute()
+  }
+  if (currentRoom.value) {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('smartcall_active_room_id', currentRoom.value.id)
+    }
+    currentRoom.value.unread = 0
+    chatService.saveRooms()
+  }
+})
+
+onDeactivated(() => {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('smartcall_active_room_id')
+  }
 })
 
 onUnmounted(() => {
-  websocketService.off('chatd_user_room_message_created', handleRealtimeMessage)
-  websocketService.off('chatd_user_message_created', handleRealtimeMessage)
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('smartcall_active_room_id')
+  }
+  window.removeEventListener('smartcall-message-received', onMessageReceived)
+  window.removeEventListener('smartcall-rooms-updated', onRoomsUpdated)
 })
 
 // Modal Quản lý thành viên
