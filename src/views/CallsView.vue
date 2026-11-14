@@ -115,7 +115,7 @@
             :class="{ active: isSpeaker }"
             :disabled="!isCalling"
             :title="isSpeaker ? 'Tắt loa ngoài' : 'Bật loa ngoài'"
-            @click="isSpeaker = !isSpeaker"
+            @click="toggleSpeaker"
           >
             <svg class="ctrl-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
@@ -141,28 +141,25 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { wazoService } from '@/services/wazo'
+import { wazoService, callStore } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
-import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
 import { logger } from '@/services/loggerService'
 
 const route = useRoute()
 const router = useRouter()
 const extension = ref('')
+const dtmfLog = ref('')
 
-// Quản lý trạng thái cuộc gọi: 'idle' (sẵn sàng), 'ringing' (đang đổ chuông), 'connected' (đang đàm thoại)
-const callState = ref('idle')
-const isCalling = computed(() => callState.value !== 'idle')
-const isDialing = ref(false)
-
-const isMuted = ref(false)
-const isHeld = ref(false)
-const isSpeaker = ref(false)
-const callSeconds = ref(0)
-let timer = null
+// Single Source of Truth (SSOT) binding trực tiếp từ callStore
+const isCalling = computed(() => Boolean(callStore.activeCall))
+const callState = computed(() => (callStore.activeCall ? callStore.activeCall.status : 'idle'))
+const isHeld = computed(() => Boolean(callStore.activeCall?.isHeld))
+const isMuted = computed(() => Boolean(callStore.activeCall?.isMuted))
+const isSpeaker = computed(() => Boolean(callStore.activeCall?.isSpeaker))
+const isDialing = computed(() => Boolean(wazoService._isDialing))
 
 const keys = [
   { num: '1', sub: '' },
@@ -180,389 +177,90 @@ const keys = [
 ]
 
 const callerName = computed(() => {
-  if (callState.value === 'ringing') {
-    return `Đang đổ chuông tới máy lẻ ${extension.value}...`
+  if (!callStore.activeCall) return 'Sẵn sàng kết nối cuộc gọi'
+  const ext = callStore.activeCall.number || extension.value
+  if (callStore.activeCall.status === 'ringing') {
+    return `Đang đổ chuông tới máy lẻ ${ext}...`
   }
-  if (callState.value === 'connected') {
-    if (isHeld.value) return `Máy lẻ ${extension.value} (Tạm giữ - Hold)`
-    return `Đang đàm thoại: Máy lẻ ${extension.value}`
+  if (callStore.activeCall.isHeld) {
+    return `Máy lẻ ${ext} (Tạm giữ - Hold)`
   }
-  return 'Sẵn sàng kết nối cuộc gọi'
+  return `Đang đàm thoại: ${callStore.activeCall.name || `Máy lẻ ${ext}`}`
 })
 
 const callerSip = computed(() => {
   const domain = (wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').split(':')[0]
-  if (isCalling.value) return `sip:${extension.value}@${domain}`
-  const myExt = wazoService.getMyExtension() || '1001'
+  if (callStore.activeCall) return `sip:${callStore.activeCall.number}@${domain}`
+  const myExt = callStore.myExtension || wazoService.getMyExtension() || '1001'
   return `WebRTC SIP Line ${myExt}`
 })
 
 const callAvatarInitials = computed(() => {
-  if (isCalling.value) return extension.value.slice(-2)
+  if (callStore.activeCall?.number) return callStore.activeCall.number.slice(-2)
+  if (extension.value) return extension.value.slice(-2)
   return '📞'
 })
 
 const formattedDuration = computed(() => {
-  const m = Math.floor(callSeconds.value / 60)
-  const s = callSeconds.value % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  const s = callStore.activeCall?.duration || 0
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
 })
 
 const durationText = computed(() => {
-  if (callState.value === 'ringing') {
-    return '📞 Đang đổ chuông...'
-  }
-  if (callState.value === 'connected') {
-    return formattedDuration.value
-  }
-  return '00:00'
+  if (!callStore.activeCall) return '00:00'
+  if (callStore.activeCall.status === 'ringing') return '📞 Đang đổ chuông...'
+  return formattedDuration.value
 })
-
-const dtmfLog = ref('')
-let callStartTime = null
 
 const pressKey = (key) => {
   audioService.playDtmfTone(key)
-  if (callState.value === 'idle') {
-    // Khi đang rảnh: Nhập số máy lẻ để chuẩn bị quay số
+  if (!callStore.activeCall) {
     if (extension.value.length < 8) {
       extension.value += key
       logger.info('UI', `Bấm phím [${key}] trên bàn phím số (Số hiện tại: ${extension.value})`)
     }
   } else {
-    // Khi đang trong cuộc gọi (Ringing hoặc Talking): Gửi tín hiệu DTMF tới máy chủ tổng đài
     dtmfLog.value += key
     wazoService.sendDTMF(key)
-    logger.info('CALL', `Phát tín hiệu DTMF [${key}] trong cuộc gọi tới máy lẻ: ${extension.value}`)
+    logger.info('CALL', `Phát tín hiệu DTMF [${key}] trong cuộc gọi tới máy lẻ: ${callStore.activeCall.number}`)
   }
 }
 
 const clearDigit = () => {
-  if (callState.value === 'idle') {
+  if (!callStore.activeCall) {
     extension.value = extension.value.slice(0, -1)
   }
 }
 
-// Bắt đầu đếm giây đàm thoại khi đối phương đã nhấc máy (tính mốc thời gian chuẩn tránh lag khi ẩn tab)
-const startCallTimer = () => {
-  callState.value = 'connected'
-  audioService.stopRingbackTone()
-  callStartTime = Date.now()
-  callSeconds.value = 0
-  clearInterval(timer)
-  timer = setInterval(() => {
-    if (callStartTime && !isHeld.value) {
-      callSeconds.value = Math.max(0, Math.floor((Date.now() - callStartTime) / 1000))
-    }
-  }, 1000)
-}
-
 const handleDial = async () => {
-  // 1. Khóa chống bấm liên tục ngay tại cửa vào (Immediate Anti-Collision Lock)
-  if (isDialing.value) {
-    logger.warn('UI', 'Thao tác quay số quá nhanh, vui lòng chờ trong giây lát!')
-    return
-  }
-
-  // Chặn thực hiện cuộc gọi mới nếu đang trong cuộc gọi khác
-  if (callState.value !== 'idle' || wazoService.hasActiveCall()) {
-    logger.warn('CALL', 'Chặn quay số: Người dùng đang trong một cuộc gọi khác.')
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: '⚠️ Bạn đang có một cuộc gọi khác đang hoạt động. Vui lòng cúp máy trước khi gọi số mới!',
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-
   const ext = extension.value.trim()
   if (!ext) return
-
-  // Kích hoạt ngay cờ isDialing để ngăn double-click/spam nút gọi
-  isDialing.value = true
-  setTimeout(() => {
-    isDialing.value = false
-  }, 1200)
-
-  // 2. Chặn người dùng tự gọi cho chính mình
-  const myExt = wazoService.getMyExtension()
-  const cleanExt = ext.split('@')[0].trim()
-  const cleanMyExt = myExt.split('@')[0].trim()
-  if (cleanMyExt && cleanExt === cleanMyExt) {
-    logger.warn('CALL', `Chặn thao tác: Người dùng cố gắng gọi tới chính máy lẻ của mình (${cleanExt})`)
-    isDialing.value = false
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `⚠️ Không thể thực hiện cuộc gọi tới chính máy lẻ của bạn (${cleanExt})!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-
-  // 3. Kiểm tra trạng thái máy lẻ từ bộ nhớ đệm thời gian thực (Non-blocking In-memory Check)
-  // Tuyệt đối không await fetch danh bạ REST API làm đơ luồng gọi
-  const targetContact = contactService.findContactByExtension(ext)
-
-  if (targetContact && targetContact.status === 'busy') {
-    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang bận trong cuộc gọi khác.`)
-    isDialing.value = false
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `🚫 Máy lẻ [${targetContact.name || ext}] hiện đang trong cuộc gọi khác (Máy bận). Vui lòng gọi lại sau!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-
-  if (targetContact && targetContact.status === 'dnd') {
-    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang bật chế độ Không làm phiền (DND).`)
-    isDialing.value = false
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `🔕 [${targetContact.name || ext}] đang bật chế độ Không làm phiền (DND). Vui lòng liên hệ sau!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-
-  if (targetContact && targetContact.status === 'ringing') {
-    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang đổ chuông nhận cuộc gọi khác.`)
-    isDialing.value = false
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `🔔 [${targetContact.name || ext}] hiện đang nhận một cuộc gọi khác. Vui lòng gọi lại sau!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-
-  if (targetContact && (targetContact.status === 'offline' || targetContact.status === 'unavailable')) {
-    logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} hiện đang ngoại tuyến.`)
-    isDialing.value = false
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `📴 Người này hiện đang ngoại tuyến, xin vui lòng gọi lại lúc khác!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-
-  // 4. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
-  try {
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const hasMic = devices.some((d) => d.kind === 'audioinput')
-      if (devices.length > 0 && !hasMic) {
-        logger.error('CALL', 'Không tìm thấy thiết bị Microphone trên máy tính để thực hiện cuộc gọi WebRTC!')
-        isDialing.value = false
-        window.dispatchEvent(
-          new CustomEvent('app-toast', {
-            detail: {
-              message: '❌ Không tìm thấy thiết bị Microphone! Vui lòng cắm Mic/Tai nghe vào máy tính để gọi.',
-              type: 'error',
-            },
-          }),
-        )
-        return
-      }
-    }
-  } catch (micErr) {
-    /* ignore */
-  }
-
-  // 5. Kiểm tra kết nối WebRTC SIP Phone tới máy chủ
-  if (!wazoService.isPhoneRegistered()) {
-    logger.warn('SIP', 'WebRTC Phone chưa ở trạng thái Registered với máy chủ.')
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: '⚠️ WebRTC SIP Phone chưa kết nối tới máy chủ tổng đài. Đang thử gửi tín hiệu gọi...',
-          type: 'warning',
-        },
-      }),
-    )
-  }
-
-  logger.info('UI', `Người dùng bấm nút Gọi tới máy lẻ: ${ext}`)
-  clearInterval(timer)
-  callSeconds.value = 0
-  isHeld.value = false
-  isMuted.value = false
-
-  // Bước 1: Chuyển ngay sang trạng thái Đang đổ chuông (Phản hồi tức thì 0 giây)
-  callState.value = 'ringing'
-  audioService.startRingbackTone()
-
-  // Bước 2: Thử gọi thật qua Wazo WebRTC
-  try {
-    const session = await wazoService.makeCall(ext)
-    if (session) {
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: {
-            message: `📞 Đang gửi tín hiệu cuộc gọi WebRTC tới máy lẻ ${ext}...`,
-            type: 'info',
-          },
-        }),
-      )
-    }
-  } catch (e) {
-    logger.warn('CALL', `Cuộc gọi Wazo WebRTC tới ${ext} không thành công: ${e.message || e}`)
-    audioService.stopAllTones()
-    callState.value = 'idle'
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `❌ Cuộc gọi tới ${ext} không thành công: ${e.message || 'Lỗi kết nối máy chủ'}`,
-          type: 'error',
-        },
-      }),
-    )
-  }
+  await wazoService.validateAndMakeCall(ext, {
+    name: route.query?.name,
+    dept: route.query?.dept,
+  })
 }
 
-const hangupCall = (dispatchEnded = true) => {
-  audioService.stopAllTones()
-  audioService.playCallEndedTone()
-
-  try {
-    wazoService.hangup()
-  } catch (e) {
-    /* ignore */
-  }
-
-  // Tự động ghi nhận bản ghi vào Lịch sử cuộc gọi (CDR)
-  if (callState.value !== 'idle') {
-    const ext = extension.value.trim()
-    const contact = contactService.findContactByExtension(ext)
-    const callName =
-      (route.query && route.query.name) || contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
-    const callDept = (route.query && route.query.dept) || contact?.dept || 'Khối Kỹ thuật'
-    const direction = route.query && route.query.direction === 'inbound' ? 'inbound' : 'outbound'
-
-    const wasConnected = callState.value === 'connected'
-
-    historyService.addRecord({
-      name: callName,
-      extension: ext,
-      dept: callDept,
-      duration: wasConnected ? callSeconds.value : 0,
-      direction: direction,
-      status: wasConnected ? 'success' : 'declined',
-      answered: wasConnected,
-    })
-  }
-
-  callState.value = 'idle'
-  isHeld.value = false
-  isMuted.value = false
-  callStartTime = null
+const hangupCall = () => {
+  wazoService.hangup()
   dtmfLog.value = ''
-  clearInterval(timer)
-
-  // Dọn dẹp query parameter trên URL để ngăn rò rỉ trạng thái active khi quay lại tab
   if (route.query && (route.query.active || route.query.autocall || route.query.direction)) {
     router.replace({ path: '/calls', query: {} }).catch(() => {})
-  }
-
-  // Đồng bộ phát sự kiện wazo-ended để App.vue và toàn hệ thống cập nhật trạng thái đã kết thúc
-  if (dispatchEnded) {
-    window.dispatchEvent(new CustomEvent('wazo-ended'))
   }
 }
 
 const toggleMute = () => {
-  isMuted.value = !isMuted.value
-  try {
-    wazoService.setMute(isMuted.value)
-  } catch (e) {
-    /* ignore */
-  }
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: {
-        message: isMuted.value
-          ? '🔇 Đã tắt Microphone (Mute).'
-          : '🎙️ Đã bật lại Microphone (Unmute).',
-        type: 'info',
-      },
-    }),
-  )
+  wazoService.toggleMute()
 }
 
 const toggleHold = () => {
-  isHeld.value = !isHeld.value
-  try {
-    wazoService.setHold(isHeld.value)
-  } catch (e) {
-    /* ignore */
-  }
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: {
-        message: isHeld.value
-          ? '⏸️ Đang giữ máy (Hold). Luồng âm thanh tạm dừng.'
-          : '▶️ Đã tiếp tục đàm thoại (Resume).',
-        type: 'info',
-      },
-    }),
-  )
+  wazoService.toggleHold()
 }
 
-// Xử lý các sự kiện cuộc gọi thật từ máy chủ Wazo
-const onRemoteAccepted = () => {
-  startCallTimer()
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: `🎉 Cuộc gọi đã được kết nối thành công! Đang đàm thoại...`, type: 'success' },
-    }),
-  )
-}
-
-const onRemoteProgress = () => {
-  if (callState.value === 'ringing') {
-    audioService.startRingbackTone()
-  }
-}
-
-const onRemoteEnded = () => {
-  if (callState.value === 'idle') return
-  audioService.stopAllTones()
-  hangupCall(false)
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: `Cuộc gọi đã kết thúc.`, type: 'info' },
-    }),
-  )
-}
-
-const onRemoteFailed = () => {
-  if (callState.value === 'idle') return
-  audioService.stopAllTones()
-  hangupCall(false)
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: `Cuộc gọi không thành công (Máy bận hoặc đối phương chưa đăng nhập).`, type: 'warning' },
-    }),
-  )
+const toggleSpeaker = () => {
+  wazoService.toggleSpeaker()
 }
 
 // Lắng nghe thay đổi query param từ danh bạ hoặc thanh tìm kiếm
@@ -571,14 +269,10 @@ watch(
   (newQuery) => {
     if (newQuery && newQuery.number) {
       extension.value = String(newQuery.number)
-      if (newQuery.autocall === 'true') {
+      if (newQuery.autocall === 'true' && !callStore.activeCall) {
         setTimeout(() => {
           handleDial()
         }, 150)
-      } else if (newQuery.active === 'true') {
-        // Cuộc gọi đến vừa được nghe máy -> Đang đàm thoại trực tiếp
-        audioService.stopRingbackTone()
-        startCallTimer()
       }
     }
   },
@@ -586,11 +280,6 @@ watch(
 )
 
 onMounted(async () => {
-  window.addEventListener('wazo-accepted', onRemoteAccepted)
-  window.addEventListener('wazo-progress', onRemoteProgress)
-  window.addEventListener('wazo-ended', onRemoteEnded)
-  window.addEventListener('wazo-failed', onRemoteFailed)
-
   // Nạp danh bạ trước nếu chưa có dữ liệu để kiểm tra trạng thái máy bận / ngoại tuyến chính xác
   if (!contactService.currentContacts || contactService.currentContacts.length === 0) {
     try {
@@ -601,30 +290,8 @@ onMounted(async () => {
   }
 })
 
-onActivated(() => {
-  // Đồng bộ lại trạng thái cuộc gọi khi quay lại tab nếu cuộc gọi đã ngắt từ nơi khác
-  if (
-    callState.value !== 'idle' &&
-    !wazoService.hasActiveCall() &&
-    !wazoService.currentCallSession &&
-    localStorage.getItem('smartcall_offline_mode') !== 'true'
-  ) {
-    callState.value = 'idle'
-    clearInterval(timer)
-    audioService.stopAllTones()
-  }
-})
-
 onUnmounted(() => {
-  if (callState.value !== 'idle') {
-    hangupCall(true)
-  }
-  audioService.stopAllTones()
-  window.removeEventListener('wazo-accepted', onRemoteAccepted)
-  window.removeEventListener('wazo-progress', onRemoteProgress)
-  window.removeEventListener('wazo-ended', onRemoteEnded)
-  window.removeEventListener('wazo-failed', onRemoteFailed)
-  clearInterval(timer)
+  dtmfLog.value = ''
 })
 </script>
 
@@ -985,4 +652,3 @@ onUnmounted(() => {
   }
 }
 </style>
-

@@ -30,7 +30,7 @@
     <!-- 3. Modal Cài đặt hệ thống (Settings Modal) -->
     <SettingsModal :is-open="showSettings" @close="showSettings = false" />
 
-    <!-- 4. Modal Cuộc gọi đến WebRTC -->
+    <!-- 4. Modal Cuộc gọi đến WebRTC (Single Source of Truth) -->
     <IncomingCallModal
       :is-open="showIncomingModal"
       :call-data="incomingCallData"
@@ -46,7 +46,7 @@
       </div>
     </transition>
 
-    <!-- 7. Bảng Nhật ký Debug thao tác & Sự kiện WebRTC thời gian thực -->
+    <!-- 6. Bảng Nhật ký Debug thao tác & Sự kiện WebRTC thời gian thực -->
     <DebugLogDrawer />
   </div>
 </template>
@@ -54,16 +54,12 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { wazoService } from '@/services/wazo'
-import { audioService } from '@/services/audioService'
+import { wazoService, callStore } from '@/services/wazo'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import SettingsModal from '@/components/common/SettingsModal.vue'
 import IncomingCallModal from '@/components/call/IncomingCallModal.vue'
 import DebugLogDrawer from '@/components/common/DebugLogDrawer.vue'
-import { historyService } from '@/services/historyService'
-import { contactService } from '@/services/contactService'
-import { isFeatureEnabled } from '@/config/features'
 
 const router = useRouter()
 const route = useRoute()
@@ -71,12 +67,10 @@ const route = useRoute()
 // --- State Management ---
 const isLoggedIn = ref(false)
 const showSettings = ref(false)
-const showIncomingModal = ref(false)
-const incomingCallData = ref(null)
-const isPhoneConnected = ref(false)
-const phoneStatus = ref('disconnected')
-const currentCall = ref(null)
-const hasActiveCall = ref(false)
+
+// Trạng thái cuộc gọi đến reactive từ callStore (SSOT)
+const showIncomingModal = computed(() => Boolean(callStore.incomingCall))
+const incomingCallData = computed(() => callStore.incomingCall)
 
 const isLoginPage = computed(() => route.path === '/login')
 
@@ -103,13 +97,10 @@ onMounted(async () => {
     }
   }
 
-  // 2. Lắng nghe các sự kiện toàn cục
+  // 2. Lắng nghe các sự kiện ứng dụng
   window.addEventListener('app-action', handleAppAction)
   window.addEventListener('app-toast', handleToastEvent)
   window.addEventListener('app-login-success', handleLoginSuccess)
-  window.addEventListener('wazo-incoming', handleIncomingCall)
-  window.addEventListener('wazo-ended', handleCallEnded)
-  window.addEventListener('wazo-registered', handleWazoRegistered)
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
@@ -117,26 +108,17 @@ onUnmounted(() => {
   window.removeEventListener('app-action', handleAppAction)
   window.removeEventListener('app-toast', handleToastEvent)
   window.removeEventListener('app-login-success', handleLoginSuccess)
-  window.removeEventListener('wazo-incoming', handleIncomingCall)
-  window.removeEventListener('wazo-ended', handleCallEnded)
-  window.removeEventListener('wazo-registered', handleWazoRegistered)
   window.removeEventListener('beforeunload', handleBeforeUnload)
   wazoService.disconnectPhone()
 })
 
 const handleBeforeUnload = () => {
-  if (wazoService.currentCallSession) {
+  if (wazoService.hasActiveCall()) {
     wazoService.hangup()
   }
 }
 
-const handleWazoRegistered = () => {
-  isPhoneConnected.value = true
-  phoneStatus.value = 'connected'
-  showToast('Tổng đài: Đã kích hoạt máy lẻ WebRTC!', 'success')
-}
-
-// --- Logic xử lý sự kiện ---
+// --- Logic kết nối & Đăng nhập ---
 const handleLoginSuccess = () => {
   isLoggedIn.value = true
   tryConnectPhone()
@@ -144,101 +126,27 @@ const handleLoginSuccess = () => {
 
 const tryConnectPhone = async () => {
   if (localStorage.getItem('smartcall_offline_mode') === 'true') {
-    phoneStatus.value = 'disconnected'
-    isPhoneConnected.value = false
     return
   }
-  phoneStatus.value = 'connecting'
   try {
     await wazoService.connectPhone()
-    isPhoneConnected.value = true
-    phoneStatus.value = 'connected'
     showToast('Tổng đài: Kết nối thoại sẵn sàng!', 'success')
   } catch (err) {
-    phoneStatus.value = 'disconnected'
-    isPhoneConnected.value = false
     console.info('Hệ thống khởi chạy ở chế độ ngoại tuyến dự phòng:', err.message)
   }
 }
 
-const handleIncomingCall = (event) => {
-  const session = event.detail
-  const ext = session?.number || session?.callerNumber || session?.extension || ''
-  const contact = contactService.findContactByExtension(ext)
-  const name =
-    session?.displayName ||
-    session?.realDisplayName ||
-    session?.name ||
-    contact?.name ||
-    (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
-  const dept = session?.dept || contact?.dept || 'Nội bộ công ty'
-
-  // Kiểm tra nếu thực sự đang có cuộc gọi hoạt động:
-  // - Modal cuộc gọi đến đang mở (showIncomingModal = true)
-  // - HOẶC wazoService đang có một phiên gọi khác đang hoạt động
-  const isActuallyInCall =
-    showIncomingModal.value ||
-    (wazoService.currentCallSession && wazoService.currentCallSession !== session)
-
-  // Nếu cờ hasActiveCall bị kẹt mà không có phiên gọi thực tế nào -> tự động giải phóng cờ
-  if (hasActiveCall.value && !isActuallyInCall) {
-    hasActiveCall.value = false
-    currentCall.value = null
-  }
-
-  // Nếu thực sự đang có cuộc gọi hoạt động -> Tự động từ chối máy bận và ghi nhận cuộc gọi nhỡ
-  if (isActuallyInCall) {
-    try {
-      if (session && typeof session.reject === 'function') {
-        session.reject()
-      } else if (session) {
-        wazoService.reject(session)
-      }
-    } catch (e) {
-      /* ignore */
-    }
-    historyService.addRecord({
-      name,
-      extension: ext,
-      dept,
-      duration: 0,
-      direction: 'inbound',
-      status: 'missed',
-      answered: false,
-    })
-    showToast(`📞 Cuộc gọi nhỡ từ ${name} (Máy bận)`, 'warning')
-    return
-  }
-
-  const sipHost = (wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').split(':')[0]
-  incomingCallData.value = {
-    rawSession: session,
-    name,
-    extension: ext,
-    dept,
-    sipUri: session?.sipUri || (ext ? `sip:${ext}@${sipHost}` : ''),
-  }
-  showIncomingModal.value = true
-  currentCall.value = session
-  hasActiveCall.value = true
-}
-
+// --- Xử lý sự kiện Modal cuộc gọi đến (Điều hướng qua wazoService) ---
 const onAcceptIncomingCall = (callData) => {
-  showIncomingModal.value = false
-  if (callData?.rawSession || currentCall.value) {
-    try {
-      wazoService.accept(callData?.rawSession || currentCall.value)
-    } catch (e) {
-      console.log('Error accepting call:', e)
-    }
-  }
-  showToast(`Đã nhận cuộc gọi từ ${callData?.name || callData?.extension || 'Đồng nghiệp'}!`, 'success')
+  const ext = callData?.extension || callData?.number || '1002'
+  wazoService.acceptIncomingCall(callData)
+  showToast(`Đã nhận cuộc gọi từ ${callData?.name || ext}!`, 'success')
 
-  // Chuyển sang màn hình CallsView với cờ active=true (Đang đàm thoại, không quay số lại)
+  // Chuyển sang màn hình CallsView đang đàm thoại
   router.push({
     path: '/calls',
     query: {
-      number: callData?.extension || '1002',
+      number: ext,
       name: callData?.name || '',
       dept: callData?.dept || '',
       active: 'true',
@@ -248,63 +156,14 @@ const onAcceptIncomingCall = (callData) => {
 }
 
 const onRejectIncomingCall = (callData) => {
-  showIncomingModal.value = false
-  if (wazoService.session && callData?.rawSession) {
-    try {
-      wazoService.reject(callData.rawSession)
-    } catch (e) {
-      /* ignore */
-    }
-  }
-  currentCall.value = null
-  hasActiveCall.value = false
-
-  const ext = callData?.extension || '1003'
-  const contact = contactService.findContactByExtension(ext)
-  const name = callData?.name || contact?.name || `Máy lẻ ${ext}`
-  const dept = callData?.dept || contact?.dept || 'Khối Vận hành / Phân xưởng MFQ'
-
-  historyService.addRecord({
-    name,
-    extension: ext,
-    dept,
-    duration: 0,
-    direction: 'inbound',
-    status: 'declined',
-    answered: false,
-  })
-
+  wazoService.rejectIncomingCall(callData)
   showToast('Đã từ chối cuộc gọi.', 'info')
 }
 
 const onMissedIncomingCall = (callData) => {
-  showIncomingModal.value = false
-  currentCall.value = null
-  hasActiveCall.value = false
-
-  const ext = callData?.extension || '1003'
-  const contact = contactService.findContactByExtension(ext)
-  const name = callData?.name || contact?.name || `Máy lẻ ${ext}`
-  const dept = callData?.dept || contact?.dept || 'Khối Vận hành / Phân xưởng MFQ'
-
-  historyService.addRecord({
-    name,
-    extension: ext,
-    dept,
-    duration: 0,
-    direction: 'inbound',
-    status: 'missed',
-    answered: false,
-  })
-
+  const name = callData?.name || callStore.incomingCall?.name || 'Đồng nghiệp'
+  wazoService.missIncomingCall(callData)
   showToast(`Cuộc gọi nhỡ từ ${name}`, 'warning')
-}
-
-const handleCallEnded = () => {
-  currentCall.value = null
-  hasActiveCall.value = false
-  showIncomingModal.value = false
-  audioService.stopAllTones()
 }
 
 const handleAppAction = (event) => {
@@ -326,37 +185,12 @@ const handleLogout = () => {
   localStorage.setItem('smartcall_logged_in', 'false')
   localStorage.removeItem('smartcall_offline_mode')
   isLoggedIn.value = false
-  isPhoneConnected.value = false
-  currentCall.value = null
-  hasActiveCall.value = false
-  showIncomingModal.value = false
   router.push('/login')
 }
 
 const onDial = (extension) => {
   if (!extension) return
-  if (wazoService.hasActiveCall()) {
-    showToast('Bạn đang có một cuộc gọi khác. Vui lòng cúp máy trước khi gọi số mới!', 'warning')
-    return
-  }
-  wazoService
-    .makeCall(extension)
-    .then((call) => {
-      currentCall.value = call
-      hasActiveCall.value = true
-      showToast(`Đang gọi: ${extension}`, 'success')
-    })
-    .catch((err) => {
-      if (isFeatureEnabled('mockData') && !wazoService.session?.token) {
-        currentCall.value = { extension, state: 'talking' }
-        hasActiveCall.value = true
-        showToast(`Đang kết nối cuộc gọi thử nghiệm tới: ${extension}`, 'info')
-      } else {
-        currentCall.value = null
-        hasActiveCall.value = false
-        showToast(`Không thể kết nối cuộc gọi tới: ${extension}`, 'error')
-      }
-    })
+  wazoService.validateAndMakeCall(extension)
 }
 
 // --- Helper Toast ---

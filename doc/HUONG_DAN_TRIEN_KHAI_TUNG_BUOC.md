@@ -34,6 +34,7 @@
 | **18** | Kiểm toán Chuyên sâu & Khắc phục Triệt để 8 Lỗ hổng Nghiệp vụ VoIP / WebRTC | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Khắc phục treo modal cuộc gọi đến, tách DTMF khỏi số máy lẻ, sửa 2 chiều Mute/Hold, chặn xung đột gọi đè, đồng bộ thời lượng chuẩn xác, auto-reconnect SIP, auto-hangup tab close. |
 | **19** | Thiết lập Wazo Local Server Emulator Độc lập (Port 9443) Phục vụ Kiểm thử 2 Tài khoản | Yêu cầu kiểm thử ngoài mạng văn phòng | **HOÀN THÀNH** ✅ | Xây dựng Wazo Server Emulator độc lập ngoài thư mục dự án (`wazo-emulator`), hỗ trợ REST API (Auth, Confd, Dird, Chatd, CDR), WebSocket Events (`websocketd`) và SIP WebRTC Signaling (`asterisk/ws`). Chạy 2 tài khoản thật Alice (1001) - Bob (1002) mà không cần fake data trong frontend. |
 | **20** | Khắc phục Triệt để 8 Điểm Kiểm toán VoIP, WebRTC, WebSocket & Vòng đời Trạng thái | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Sửa lỗi mất đàm thoại khi chuyển tab KeepAlive (`CallsView`), dọn dẹp rò rỉ query URL cúp máy, hợp nhất sự kiện WebSocket v2 (`websocketService`), chuẩn hóa dữ liệu tin nhắn realtime, gỡ bỏ nút test fake và tên riêng trên Dashboard, nâng timeout login 15s, động hóa SIP URI. |
+| **21** | Tái cấu trúc Toàn diện Kiến trúc Cuộc gọi theo mô hình Single Source of Truth (SSOT) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Khởi tạo reactive `callStore` tập trung; Rút gọn `CallsView.vue` hơn 60% code; Hợp nhất xác thực cuộc gọi & ghi nhận CDR tập trung tại `wazoService`; Hợp nhất kết nối duy nhất tới `wazo-websocketd`; Đồng bộ song song sang `Smart_Call_Web_Mock`. |
 
 ---
 
@@ -1349,6 +1350,50 @@ Dựa trên kết quả rà soát chi tiết toàn bộ luồng nghiệp vụ v�
      - Loại bỏ `@domain` và khoảng trắng trước khi so sánh (`cleanExt === cleanMyExt`).
      - Bổ sung log phản hồi khi bấm phím số trên keypad và cảnh báo rõ ràng khi người dùng click gọi quá nhanh thay vì kết thúc âm thầm.
   6. **Kiểm tra biên dịch:** `npm run build` thành công 100% trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
+
+---
+
+## 21. TÁI CẤU TRÚC TOÀN DIỆN KIẾN TRÚC CUỘC GỌI THEO MÔ HÌNH SINGLE SOURCE OF TRUTH (SSOT)
+
+Dựa trên kế hoạch tái cấu trúc đã được phê duyệt, toàn bộ hệ thống xử lý cuộc gọi đã được tinh gọn, chuẩn hóa theo mô hình Single Source of Truth, bám sát các phương thức của mã nguồn tham chiếu Wazo SDK:
+
+1. **Khởi tạo Reactive `callStore` tập trung (`src/services/wazo.js`):**
+   - Đưa toàn bộ trạng thái cuộc gọi (`isRegistered`, `myExtension`, `myUserUuid`, `myUserName`, `activeCall`, `incomingCall`, `callNotice`) về một nguồn chân lý duy nhất (Single Source of Truth).
+   - Quản lý bộ đếm thời gian đàm thoại `startCallDurationTimer()` và `stopCallDurationTimer()` tập trung tại tầng dịch vụ, loại bỏ hoàn toàn các biến interval timer cục bộ nằm rải rác ở các view component.
+
+2. **Tập trung hóa Điểm gọi duy nhất `wazoService.validateAndMakeCall()` (`src/services/wazo.js`):**
+   - Đưa toàn bộ chuỗi 7 bước xác thực vào một hàm duy nhất:
+     1. Khóa chống bấm đúp / spam quay số (Throttle 1200ms).
+     2. Kiểm tra cuộc gọi đang hoạt động để ngăn gọi chồng chéo.
+     3. Kiểm tra chuỗi rỗng và chuẩn hóa máy lẻ.
+     4. Chặn người dùng tự gọi cho chính máy lẻ của mình (`cleanExt === cleanMyExt`).
+     5. Kiểm tra trạng thái máy lẻ trong danh bạ thời gian thực (`busy`, `dnd`, `ringing`, `offline`) hoàn toàn non-blocking không làm đơ giao diện.
+     6. Kiểm tra phần cứng Microphone trước khi kích hoạt WebRTC.
+     7. Khởi tạo phiên gọi trên `callStore.activeCall`, phát âm báo ringback tone và gửi lệnh gọi âm thanh tới Wazo SDK (`Wazo.Phone.call(extension, false)`).
+
+3. **Tập trung hóa Vòng đời Cuộc gọi & Ghi nhận Lịch sử (CDR) (`src/services/wazo.js`):**
+   - Hàm `_finalizeCallTermination(reason, session)` tập trung xử lý toàn bộ các kịch bản kết thúc cuộc gọi (`ended`, `failed`, `rejected`, `canceled`, `hangup`).
+   - Tự động ghi nhận CDR chính xác vào `historyService.addRecord()` với đầy đủ chiều cuộc gọi (`inbound`/`outbound`), thời lượng thực tế và trạng thái (`success`/`declined`/`missed`), dọn dẹp luồng âm thanh WebRTC và âm báo.
+   - Triệt tiêu hoàn toàn tình trạng ghi trùng lặp CDR hoặc mất bản ghi cuộc gọi giữa `CallsView.vue`, `App.vue` và `wazo.js`.
+
+4. **Tinh gọn Giao diện Bàn phím & Cuộc gọi (`src/views/CallsView.vue`):**
+   - Rút ngắn từ gần 1000 dòng xuống ~390 dòng (giảm hơn 60% code).
+   - Toàn bộ trạng thái đàm thoại (`isCalling`, `callState`, `isHeld`, `isMuted`, `isSpeaker`, `durationText`, `callerName`, `callerSip`, `callAvatarInitials`) phản ánh trực tiếp (computed) từ `callStore.activeCall`.
+   - Hàm `handleDial()` rút gọn còn 8 dòng, ủy quyền hoàn toàn cho `wazoService.validateAndMakeCall()`.
+   - Các nút Mute, Hold, Loa ngoài, Cúp máy ủy quyền trực tiếp cho `wazoService`.
+
+5. **Đồng bộ Header, Sidebar & Modal Cuộc gọi đến (`src/App.vue`, `AppHeader.vue`, `AppSidebar.vue`):**
+   - Modal cuộc gọi đến trong `App.vue` liên kết trực tiếp với `callStore.incomingCall`. Các thao tác nhận/từ chối/nhỡ ủy quyền qua `wazoService.acceptIncomingCall()`, `rejectIncomingCall()`, `missIncomingCall()`.
+   - Huy hiệu SIP Online trên `AppHeader.vue` và `AppSidebar.vue` tự động phản ánh trạng thái `callStore.isRegistered` mà không cần các hàm lắng nghe sự kiện thủ công.
+
+6. **Hợp nhất WebSocket Sự kiện duy nhất (`src/services/websocketService.js`):**
+   - Loại bỏ việc mở song song 2 kết nối WebSocket tới cùng máy chủ `/api/websocketd`.
+   - `websocketService` ủy quyền cho kết nối duy nhất của `wazoService.eventWs`, phát sự kiện realtime cho tin nhắn chat và cập nhật presence mượt mà.
+
+7. **Đồng bộ song song sang `Smart_Call_Web_Mock`:**
+   - Đồng bộ toàn bộ kiến trúc SSOT sang dự án thử nghiệm ngoại tuyến, đồng thời tích hợp cơ chế tự động nhấc máy giả lập sau 2s khi chạy ở chế độ offline.
+
+8. **Kiểm tra biên dịch:** `npm run build` thành công 100% với 0 lỗi trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
 
 
 

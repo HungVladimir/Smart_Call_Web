@@ -167,7 +167,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { contactService } from '@/services/contactService'
-import { wazoService } from '@/services/wazo'
+import { wazoService, callStore } from '@/services/wazo'
 
 const router = useRouter()
 defineEmits(['logout', 'open-settings'])
@@ -178,53 +178,31 @@ const showDropdown = ref(false)
 const searchContainerRef = ref(null)
 const contactsList = ref([])
 
-// Lấy thông tin tài khoản đang đăng nhập
-const userName = ref(localStorage.getItem('smartcall_username') || 'Quản trị viên')
-const userExtension = ref(localStorage.getItem('smartcall_extension') || '1001')
-const isSipOnline = ref(
-  wazoService.isPhoneRegistered() ||
-    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true')
+// Lấy thông tin tài khoản đang đăng nhập đồng bộ từ callStore (SSOT)
+const userName = computed(() => callStore.myUserName || localStorage.getItem('smartcall_username') || 'Quản trị viên')
+const userExtension = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '1001')
+const isSipOnline = computed(
+  () =>
+    callStore.isRegistered ||
+    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true'),
 )
 const showSipInfoModal = ref(false)
-
-const handleRegistered = () => {
-  isSipOnline.value = true
-}
-
-const handleUnregistered = () => {
-  isSipOnline.value = false
-}
-
-const syncStatus = () => {
-  userName.value = localStorage.getItem('smartcall_username') || 'Quản trị viên'
-  userExtension.value = localStorage.getItem('smartcall_extension') || '1001'
-  const isOffline = localStorage.getItem('smartcall_offline_mode') === 'true'
-  const hasToken = Boolean(localStorage.getItem('smartcall_wazo_token'))
-  isSipOnline.value = wazoService.isPhoneRegistered() || (hasToken && !isOffline)
-}
 
 const showSipHelp = () => {
   showSipInfoModal.value = true
 }
 
 onMounted(async () => {
-  syncStatus()
   try {
     contactsList.value = await contactService.getContacts()
   } catch (e) {
     /* ignore */
   }
   document.addEventListener('click', handleClickOutside)
-  window.addEventListener('wazo-registered', handleRegistered)
-  window.addEventListener('wazo-unregistered', handleUnregistered)
-  window.addEventListener('app-login-success', syncStatus)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
-  window.removeEventListener('wazo-registered', handleRegistered)
-  window.removeEventListener('wazo-unregistered', handleUnregistered)
-  window.removeEventListener('app-login-success', syncStatus)
 })
 
 const handleClickOutside = (e) => {

@@ -2,109 +2,18 @@ import { wazoService } from './wazo'
 
 class WebSocketService {
   constructor() {
-    this.ws = null
-    this.isConnected = false
     this.listeners = new Map()
-    this.reconnectTimer = null
+  }
+
+  get isConnected() {
+    return Boolean(wazoService.eventWs && wazoService.eventWs.readyState === WebSocket.OPEN)
   }
 
   /**
-   * Kết nối tới wazo-websocketd theo mục 6 trong dev_guide.md
-   * URL: wss://<HOST>/api/websocketd/?token=<token>&version=2
+   * Kết nối tới wazo-websocketd thông qua socket duy nhất của wazoService
    */
   connect() {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-      return
-    }
-    const token = wazoService.getToken()
-    if (!token) {
-      console.warn('[WebSocket] Chưa có token xác thực, hoạt động ở chế độ mô phỏng offline.')
-      return
-    }
-
-    const host = wazoService.host.replace(/^https?:\/\//, '')
-    const url = `wss://${host}/api/websocketd/?token=${token}&version=2`
-
-    try {
-      this.ws = new WebSocket(url)
-
-      this.ws.onopen = () => {
-        console.log('[WebSocket] Đã kết nối thành công tới Wazo websocketd')
-        this.isConnected = true
-        this._subscribeDefaultEvents()
-      }
-
-      this.ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data)
-          this._handleMessage(msg)
-        } catch (e) {
-          console.error('[WebSocket] Lỗi parse JSON message:', e)
-        }
-      }
-
-      this.ws.onclose = () => {
-        this.isConnected = false
-        console.log('[WebSocket] Kết nối đóng. Tự động kết nối lại sau 5s...')
-        this._scheduleReconnect()
-      }
-
-      this.ws.onerror = (err) => {
-        console.warn('[WebSocket] Lỗi kết nối (bình thường khi dev offline):', err)
-      }
-    } catch (e) {
-      console.warn('[WebSocket] Trình duyệt không thể mở kết nối WebSocket:', e)
-    }
-  }
-
-  /**
-   * Đăng ký các sự kiện mặc định cần lắng nghe theo giao thức v2
-   */
-  _subscribeDefaultEvents() {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
-
-    const events = [
-      'call_created',
-      'call_answered',
-      'call_ended',
-      'chatd_user_room_message_created',
-      'chatd_user_message_created',
-      'chatd_presence_updated',
-      'chatd_user_presence_updated',
-    ]
-
-    events.forEach((eventName) => {
-      this.ws.send(
-        JSON.stringify({
-          op: 'subscribe',
-          data: { event_name: eventName },
-        }),
-      )
-    })
-
-    // Gửi lệnh "start" để bắt đầu nhận sự kiện từ Wazo server
-    this.ws.send(JSON.stringify({ op: 'start' }))
-  }
-
-  _handleMessage(msg) {
-    const ev = msg.op === 'event' ? msg.data : msg
-    if (ev && ev.name) {
-      const eventName = ev.name
-      const eventPayload = ev.data || {}
-      this.emit(eventName, eventPayload)
-
-      // Chuẩn hóa và phát sự kiện presence cho toàn hệ thống
-      if (eventName.includes('presence')) {
-        window.dispatchEvent(new CustomEvent('wazo-presence-updated', { detail: eventPayload }))
-      }
-    }
-  }
-
-  _scheduleReconnect() {
-    clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = setTimeout(() => {
-      this.connect()
-    }, 5000)
+    wazoService.openWebSocketEvents()
   }
 
   /**
@@ -142,14 +51,8 @@ class WebSocketService {
   }
 
   disconnect() {
-    clearTimeout(this.reconnectTimer)
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
-    }
-    this.isConnected = false
+    // Socket dùng chung được quản lý tập trung bởi wazoService
   }
 }
 
 export const websocketService = new WebSocketService()
-
