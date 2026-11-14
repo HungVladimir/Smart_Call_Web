@@ -210,12 +210,13 @@ const handleIncomingCall = (event) => {
     return
   }
 
+  const sipHost = (wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').split(':')[0]
   incomingCallData.value = {
     rawSession: session,
     name,
     extension: ext,
     dept,
-    sipUri: session?.sipUri || (ext ? `sip:${ext}@107.126.11.126` : ''),
+    sipUri: session?.sipUri || (ext ? `sip:${ext}@${sipHost}` : ''),
   }
   showIncomingModal.value = true
   currentCall.value = session

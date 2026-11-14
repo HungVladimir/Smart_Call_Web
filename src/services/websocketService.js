@@ -68,7 +68,9 @@ class WebSocketService {
       'call_answered',
       'call_ended',
       'chatd_user_room_message_created',
+      'chatd_user_message_created',
       'chatd_presence_updated',
+      'chatd_user_presence_updated',
     ]
 
     events.forEach((eventName) => {
@@ -85,10 +87,16 @@ class WebSocketService {
   }
 
   _handleMessage(msg) {
-    if (msg.op === 'event' && msg.data) {
-      const eventName = msg.data.name
-      const eventPayload = msg.data.data
+    const ev = msg.op === 'event' ? msg.data : msg
+    if (ev && ev.name) {
+      const eventName = ev.name
+      const eventPayload = ev.data || {}
       this.emit(eventName, eventPayload)
+
+      // Chuẩn hóa và phát sự kiện presence cho toàn hệ thống
+      if (eventName.includes('presence')) {
+        window.dispatchEvent(new CustomEvent('wazo-presence-updated', { detail: eventPayload }))
+      }
     }
   }
 

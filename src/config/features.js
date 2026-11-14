@@ -15,7 +15,7 @@ export const DEFAULT_FEATURES = {
   history: true, // Màn hình Lịch sử cuộc gọi (/history)
 
   // Cờ dữ liệu thử nghiệm / dữ liệu giả lập (Mock / Test Data)
-  mockData: true, // true: Cho phép đăng nhập Offline và dùng dữ liệu Mock; false: 100% dữ liệu thật từ Wazo
+  mockData: false, // true: Cho phép đăng nhập Offline và dùng dữ liệu Mock; false: 100% dữ liệu thật từ Wazo
 }
 
 /**

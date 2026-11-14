@@ -41,7 +41,7 @@
     </ul>
 
     <div class="sidebar-footer">
-      <div>SIP: <code>{{ userExt }}@107.126.11.126</code></div>
+      <div>SIP: <code>{{ userExt }}@{{ sipDomain }}</code></div>
       <div class="webrtc-status" :class="{ 'status-online': isWebRtcReady, 'status-offline': !isWebRtcReady }">
         ● {{ isWebRtcReady ? 'WebRTC SIP Online' : 'WebRTC SIP Sẵn sàng' }}
       </div>
@@ -50,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { contactService } from '@/services/contactService'
 import { chatService } from '@/services/chatService'
 import { historyService } from '@/services/historyService'
@@ -59,6 +59,9 @@ import { getFeatures } from '@/config/features'
 
 const features = ref(getFeatures())
 const userExt = ref(localStorage.getItem('smartcall_extension') || '1001')
+const sipDomain = computed(() =>
+  (wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').split(':')[0],
+)
 const isWebRtcReady = ref(
   wazoService.isPhoneRegistered() ||
     (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true')

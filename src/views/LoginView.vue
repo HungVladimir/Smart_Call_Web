@@ -193,7 +193,7 @@ const handleLogin = async () => {
 
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout máy chủ Wazo')), 4500),
+      setTimeout(() => reject(new Error('Timeout máy chủ Wazo')), 15000),
     )
     const session = await Promise.race([wazoService.login(u, p), timeoutPromise])
 
@@ -276,7 +276,7 @@ const handleLogin = async () => {
       err.message?.toLowerCase().includes('unauthorized') ||
       err.message?.toLowerCase().includes('credentials')
     ) {
-      msg = 'Tên đăng nhập hoặc mật khẩu không chính xác. (Lưu ý: mật khẩu alice có thể là atc2024!)'
+      msg = 'Tên đăng nhập hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại.'
     } else if (err.message?.includes('Timeout') || err.message?.includes('timeout')) {
       msg = 'Không thể kết nối đến máy chủ tổng đài (Hết thời gian chờ). Vui lòng kiểm tra lại mạng.'
     } else if (

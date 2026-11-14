@@ -33,6 +33,7 @@
 | **17** | Tiếp nhận WAZO_API_REFERENCE.md (841 API), Rà soát toàn bộ dự án & Chuẩn hóa Endpoint Presence | Khớp nối toàn bộ OpenAPI spec Wazo 26.10 | **HOÀN THÀNH** ✅ | Tự động làm sạch & nối liền 5 phần của `WAZO_API_REFERENCE.md` (841 API) đưa vào `doc/`; Đối chiếu toàn diện từng phân hệ; Chuẩn hóa API cập nhật presence sang `/users/{user_uuid}/presences` với `smartcall_user_uuid`. |
 | **18** | Kiểm toán Chuyên sâu & Khắc phục Triệt để 8 Lỗ hổng Nghiệp vụ VoIP / WebRTC | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Khắc phục treo modal cuộc gọi đến, tách DTMF khỏi số máy lẻ, sửa 2 chiều Mute/Hold, chặn xung đột gọi đè, đồng bộ thời lượng chuẩn xác, auto-reconnect SIP, auto-hangup tab close. |
 | **19** | Thiết lập Wazo Local Server Emulator Độc lập (Port 9443) Phục vụ Kiểm thử 2 Tài khoản | Yêu cầu kiểm thử ngoài mạng văn phòng | **HOÀN THÀNH** ✅ | Xây dựng Wazo Server Emulator độc lập ngoài thư mục dự án (`wazo-emulator`), hỗ trợ REST API (Auth, Confd, Dird, Chatd, CDR), WebSocket Events (`websocketd`) và SIP WebRTC Signaling (`asterisk/ws`). Chạy 2 tài khoản thật Alice (1001) - Bob (1002) mà không cần fake data trong frontend. |
+| **20** | Khắc phục Triệt để 8 Điểm Kiểm toán VoIP, WebRTC, WebSocket & Vòng đời Trạng thái | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Sửa lỗi mất đàm thoại khi chuyển tab KeepAlive (`CallsView`), dọn dẹp rò rỉ query URL cúp máy, hợp nhất sự kiện WebSocket v2 (`websocketService`), chuẩn hóa dữ liệu tin nhắn realtime, gỡ bỏ nút test fake và tên riêng trên Dashboard, nâng timeout login 15s, động hóa SIP URI. |
 
 ---
 
@@ -1302,6 +1303,31 @@ Dựa trên báo cáo kiểm toán chuyên sâu toàn diện về giao thức th
    - Tab thường: Đăng nhập `alice` / `Test@123` (Máy lẻ 1001).
    - Tab ẩn danh (Incognito): Đăng nhập `bob` / `Test@123` (Máy lẻ 1002).
    - Kiểm tra: Danh bạ hiển thị đầy đủ, chấm trạng thái presence nhảy tức thì, gửi tin nhắn chat 2 chiều thời gian thực, bấm gọi máy lẻ từ Alice sang Bob kích hoạt modal cuộc gọi đến.
+
+---
+
+## 20. KHẮC PHỤC TRIỆT ĐỂ 8 ĐIỂM KIỂM TOÁN CHUYÊN SÂU VOIP, WEBRTC, WEBSOCKET & VÒNG ĐỜI TRẠNG THÁI
+
+Dựa trên kết quả rà soát chi tiết toàn bộ luồng nghiệp vụ và mã nguồn theo tiêu chuẩn chất lượng Mục 7 GEMINI.md, 8 vấn đề đã được khắc phục hoàn toàn trên mã nguồn công ty:
+
+1. **Khắc phục Mất trạng thái cuộc gọi khi chuyển tab KeepAlive (`CallsView.vue`):**
+   - Thay thế biến không tồn tại `wazoService.currentSession` bằng hàm kiểm tra chuẩn `wazoService.hasActiveCall()` và `wazoService.currentCallSession` trong hook `onActivated`. Người dùng có thể tự do chuyển sang tab Danh bạ hoặc Tin nhắn khi đang đàm thoại mà giao diện không bao giờ bị reset về `idle`.
+2. **Dọn dẹp rò rỉ Query Parameter khi cúp máy (`CallsView.vue`):**
+   - Bổ sung lệnh `router.replace({ path: '/calls', query: {} })` ngay khi kết thúc cuộc gọi (`hangupCall`), triệt tiêu hoàn toàn lỗi rò rỉ `?active=true` gây kích hoạt bộ đếm thời gian đàm thoại giả khi quay lại tab.
+3. **Hợp nhất và Chuẩn hóa WebSocket Sự kiện v2 (`websocketService.js`):**
+   - Bổ sung đăng ký đầy đủ các sự kiện Wazo v2: `chatd_user_room_message_created`, `chatd_user_message_created`, `chatd_presence_updated`, `chatd_user_presence_updated`.
+   - Tự động bóc tách bản tin JSON và phát sự kiện `wazo-presence-updated` toàn cục, đảm bảo các component UI nhận sự kiện đồng bộ và không bị phân tán socket.
+4. **Chuẩn hóa Bộ chuyển đổi (Normalizer) Tin nhắn Realtime (`MessagesView.vue` & `server.js`):**
+   - Hàm `handleRealtimeMessage` hỗ trợ xử lý mềm cả 2 cấu trúc payload (cấu trúc phẳng Wazo v2 `room_uuid`, `content`, `alias` lẫn cấu trúc lồng `data.message`), đảm bảo tin nhắn gửi đến hiển thị tức thì 0 giây và cuộn xuống cuối khung chat mượt mà.
+5. **Loại bỏ Hoàn toàn Nút Test Mock & Dữ liệu Tên riêng trên Nhánh chính (`DashboardView.vue`):**
+   - Xóa bỏ nút `🔔 Thử cuộc gọi đến` và hàm `simulateCall` chứa tên cá nhân trên `DashboardView.vue`. Dự án chính `Smart_Call_Web` luôn giữ nguyên tắc 100% dữ liệu thật, không có code giả lập.
+6. **Mở rộng Thời gian Chờ Timeout Đăng nhập (`LoginView.vue`):**
+   - Nâng giới hạn `timeoutPromise` từ 4.5s lên 15s để xử lý trơn tru các lượt bắt tay xác thực đa tầng của Wazo SDK (Auth Token $\rightarrow$ Status Head $\rightarrow$ Confd Profile $\rightarrow$ Confd Infos $\rightarrow$ SIP Line $\rightarrow$ Browser Mic Permission).
+   - Xóa bỏ câu chữ chứa tên cá nhân và mật khẩu fix cứng trong thông báo lỗi.
+7. **Động hóa Địa chỉ Máy chủ trong SIP URI (`CallsView.vue`, `App.vue`, `AppSidebar.vue`):**
+   - Thay thế toàn bộ chuỗi hardcode `@107.126.11.126` bằng biến trích xuất động từ `wazoService.host`, giúp giao diện hiển thị đúng SIP URI theo môi trường đang chạy (`localhost:9443` hoặc IP văn phòng).
+8. **Bảo toàn Cấu hình Production Mặc định (`features.js`):**
+   - Đặt lại cờ `DEFAULT_FEATURES.mockData = false` trên nhánh chính công ty để đảm bảo ứng dụng luôn chạy 100% dữ liệu thật từ máy chủ tổng đài.
 
 
 

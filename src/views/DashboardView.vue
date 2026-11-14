@@ -14,13 +14,6 @@
           </p>
         </div>
       </div>
-
-      <div class="banner-actions">
-        <!-- Nút Test mô phỏng cuộc gọi đến -->
-        <button class="btn-test-call-banner" @click="simulateCall">
-          🔔 Thử cuộc gọi đến
-        </button>
-      </div>
     </div>
 
     <!-- 2. Thẻ thống kê tổng quan (Top 4 KPI Cards) -->
@@ -370,21 +363,6 @@ const callQuickContact = (ext) => {
       autocall: 'true',
     },
   })
-}
-
-// Bấm thử giả lập cuộc gọi đến
-const simulateCall = () => {
-  window.dispatchEvent(
-    new CustomEvent('wazo-incoming', {
-      detail: {
-        id: `call-${Date.now()}`,
-        name: 'Nguyễn Hữu Hiếu',
-        extension: '1007',
-        sipUri: 'sip:1007@smartcall.internal',
-        dept: 'Trưởng nhóm Phát triển Hệ thống',
-      },
-    }),
-  )
 }
 
 const onPhoneRegistered = () => {

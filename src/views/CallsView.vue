@@ -142,7 +142,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { wazoService } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
 import { historyService } from '@/services/historyService'
@@ -150,6 +150,7 @@ import { contactService } from '@/services/contactService'
 import { logger } from '@/services/loggerService'
 
 const route = useRoute()
+const router = useRouter()
 const extension = ref('')
 
 // Quản lý trạng thái cuộc gọi: 'idle' (sẵn sàng), 'ringing' (đang đổ chuông), 'connected' (đang đàm thoại)
@@ -190,8 +191,10 @@ const callerName = computed(() => {
 })
 
 const callerSip = computed(() => {
-  if (isCalling.value) return `sip:${extension.value}@107.126.11.126`
-  return 'WebRTC SIP Line 1001'
+  const domain = (wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').split(':')[0]
+  if (isCalling.value) return `sip:${extension.value}@${domain}`
+  const myExt = wazoService.getMyExtension() || '1001'
+  return `WebRTC SIP Line ${myExt}`
 })
 
 const callAvatarInitials = computed(() => {
@@ -459,6 +462,11 @@ const hangupCall = (dispatchEnded = true) => {
   dtmfLog.value = ''
   clearInterval(timer)
 
+  // Dọn dẹp query parameter trên URL để ngăn rò rỉ trạng thái active khi quay lại tab
+  if (route.query && (route.query.active || route.query.autocall || route.query.direction)) {
+    router.replace({ path: '/calls', query: {} }).catch(() => {})
+  }
+
   // Đồng bộ phát sự kiện wazo-ended để App.vue và toàn hệ thống cập nhật trạng thái đã kết thúc
   if (dispatchEnded) {
     window.dispatchEvent(new CustomEvent('wazo-ended'))
@@ -579,7 +587,12 @@ onMounted(async () => {
 
 onActivated(() => {
   // Đồng bộ lại trạng thái cuộc gọi khi quay lại tab nếu cuộc gọi đã ngắt từ nơi khác
-  if (callState.value !== 'idle' && !wazoService.currentSession && localStorage.getItem('smartcall_offline_mode') !== 'true') {
+  if (
+    callState.value !== 'idle' &&
+    !wazoService.hasActiveCall() &&
+    !wazoService.currentCallSession &&
+    localStorage.getItem('smartcall_offline_mode') !== 'true'
+  ) {
     callState.value = 'idle'
     clearInterval(timer)
     audioService.stopAllTones()

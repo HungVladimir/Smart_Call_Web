@@ -376,29 +376,37 @@ watch(
 // Lắng nghe tin nhắn mới từ WebSocket
 const handleRealtimeMessage = (data) => {
   if (!data) return
-  const targetRoom = rooms.value.find((r) => r.id === data.room_uuid)
+  // Chuẩn hóa dữ liệu tin nhắn (hỗ trợ cả cấu trúc phẳng lẫn cấu trúc lồng data.message)
+  const roomUuid = data.room_uuid || data.room?.uuid || data.message?.room_uuid
+  const content = data.content || data.message?.content || data.msg || ''
+  const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
+  const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}`
+
+  if (!roomUuid || !content) return
+
+  const targetRoom = rooms.value.find((r) => r.id === roomUuid)
   if (targetRoom) {
     if (!targetRoom.messages) targetRoom.messages = []
-    targetRoom.messages.push({
-      id: data.uuid || `msg-${Date.now()}`,
-      sender: 'theirs',
-      senderName: data.alias || 'Đồng nghiệp',
-      text: data.content,
-      time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-      readStatus: 'Read',
-      readers: [],
-    })
-    targetRoom.preview = data.content
-    targetRoom.updatedAt = Date.now()
-    rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-    chatService.saveRooms()
-    chatService.getRooms().then((res) => {
-      rooms.value = [...res]
-    })
-    if (currentRoom.value && currentRoom.value.id === targetRoom.id) {
-      scrollToBottom()
-    } else {
-      targetRoom.unread = (targetRoom.unread || 0) + 1
+    const alreadyExists = targetRoom.messages.some((m) => m.id === msgId)
+    if (!alreadyExists) {
+      targetRoom.messages.push({
+        id: msgId,
+        sender: 'theirs',
+        senderName: alias,
+        text: content,
+        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        readStatus: 'Read',
+        readers: [],
+      })
+      targetRoom.preview = content
+      targetRoom.updatedAt = Date.now()
+      rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      chatService.saveRooms()
+      if (currentRoom.value && currentRoom.value.id === targetRoom.id) {
+        scrollToBottom()
+      } else {
+        targetRoom.unread = (targetRoom.unread || 0) + 1
+      }
     }
   }
 }
@@ -408,10 +416,12 @@ onMounted(async () => {
   await checkDirectChatRoute()
   websocketService.connect()
   websocketService.on('chatd_user_room_message_created', handleRealtimeMessage)
+  websocketService.on('chatd_user_message_created', handleRealtimeMessage)
 })
 
 onUnmounted(() => {
   websocketService.off('chatd_user_room_message_created', handleRealtimeMessage)
+  websocketService.off('chatd_user_message_created', handleRealtimeMessage)
 })
 
 // Modal Quản lý thành viên
