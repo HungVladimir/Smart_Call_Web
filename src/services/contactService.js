@@ -64,20 +64,14 @@ class ContactService {
   }
 
   /**
-   * Khớp nối chuỗi tìm kiếm hỗ trợ tiếng Việt không dấu
+   * Khớp nối chuỗi tìm kiếm theo tên, phòng ban hoặc số máy lẻ
    */
   matchesSearch(contact, query) {
     if (!query || !query.trim()) return true
-    const normalize = (str) =>
-      String(str || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim()
-    const q = normalize(query)
-    const name = normalize(contact.name)
-    const dept = normalize(contact.dept)
-    const num = normalize(contact.number)
+    const q = query.toLowerCase().trim()
+    const name = String(contact.name || '').toLowerCase()
+    const dept = String(contact.dept || '').toLowerCase()
+    const num = String(contact.number || '').toLowerCase()
     return name.includes(q) || dept.includes(q) || num.includes(q)
   }
 
@@ -239,26 +233,29 @@ class ContactService {
   _filterContacts(list) {
     const meUuid = wazoService.session?.uuid || localStorage.getItem('smartcall_user_uuid')
     let meExten = wazoService.getMyExtension()
+    const cleanExt = (n) => String(n || '').split('@')[0].trim()
 
     // Tự động nhận diện số máy lẻ của chính mình nếu session chưa kịp điền (giống mã nguồn tham chiếu mẫu)
     const mine = list.find((c) => c.uuid && c.uuid === meUuid)
     if (mine && !meExten && mine.number) {
-      meExten = mine.number
-      callStore.myExtension = mine.number
+      const cleanedMine = cleanExt(mine.number)
+      meExten = cleanedMine
+      callStore.myExtension = cleanedMine
       if (wazoService.session) {
         wazoService.session.profile = wazoService.session.profile || {}
-        wazoService.session.profile.lines = [{ extensions: [{ exten: mine.number }] }]
+        wazoService.session.profile.lines = [{ extensions: [{ exten: cleanedMine }] }]
       }
-      localStorage.setItem('smartcall_user_exten', mine.number)
-      localStorage.setItem('smartcall_extension', mine.number)
-      logger.info('AUTH', `Đã tự động nhận diện số máy lẻ của bạn từ danh bạ: ${mine.number}`)
+      localStorage.setItem('smartcall_user_exten', cleanedMine)
+      localStorage.setItem('smartcall_extension', cleanedMine)
+      logger.info('AUTH', `Đã tự động nhận diện số máy lẻ của bạn từ danh bạ: ${cleanedMine}`)
     }
 
     let filtered = list
     if (meUuid || meExten) {
+      const cleanMe = cleanExt(meExten)
       filtered = list.filter((c) => {
         if (meUuid && c.uuid && c.uuid === meUuid) return false
-        if (meExten && c.number && String(c.number).trim() === String(meExten).trim()) return false
+        if (cleanMe && c.number && cleanExt(c.number) === cleanMe) return false
         return true
       })
     }
@@ -375,15 +372,17 @@ class ContactService {
   }
 
   /**
-   * Tìm kiếm thông tin liên hệ theo số máy lẻ
+   * Tìm kiếm thông tin liên hệ theo số máy lẻ (So khớp chính xác số máy lẻ hoặc UUID)
    */
   findContactByExtension(ext) {
     if (!ext) return null
-    const str = String(ext).trim()
+    const cleanTarget = String(ext).split('@')[0].trim()
     const pool = Array.isArray(this.currentContacts) ? this.currentContacts : []
     return (
       pool.find(
-        (c) => String(c.number).trim() === str || String(c.id).includes(str),
+        (c) =>
+          String(c.number || '').split('@')[0].trim() === cleanTarget ||
+          (c.uuid && c.uuid === String(ext).trim()),
       ) || null
     )
   }
