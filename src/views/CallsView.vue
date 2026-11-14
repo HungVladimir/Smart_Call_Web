@@ -227,6 +227,7 @@ const pressKey = (key) => {
     // Khi đang rảnh: Nhập số máy lẻ để chuẩn bị quay số
     if (extension.value.length < 8) {
       extension.value += key
+      logger.info('UI', `Bấm phím [${key}] trên bàn phím số (Số hiện tại: ${extension.value})`)
     }
   } else {
     // Khi đang trong cuộc gọi (Ringing hoặc Talking): Gửi tín hiệu DTMF tới máy chủ tổng đài
@@ -258,7 +259,10 @@ const startCallTimer = () => {
 
 const handleDial = async () => {
   // 1. Khóa chống bấm liên tục ngay tại cửa vào (Immediate Anti-Collision Lock)
-  if (isDialing.value) return
+  if (isDialing.value) {
+    logger.warn('UI', 'Thao tác quay số quá nhanh, vui lòng chờ trong giây lát!')
+    return
+  }
 
   // Chặn thực hiện cuộc gọi mới nếu đang trong cuộc gọi khác
   if (callState.value !== 'idle' || wazoService.hasActiveCall()) {
@@ -285,13 +289,15 @@ const handleDial = async () => {
 
   // 2. Chặn người dùng tự gọi cho chính mình
   const myExt = wazoService.getMyExtension()
-  if (myExt && ext === myExt) {
-    logger.warn('CALL', `Chặn thao tác: Người dùng cố gắng gọi tới chính máy lẻ của mình (${ext})`)
+  const cleanExt = ext.split('@')[0].trim()
+  const cleanMyExt = myExt.split('@')[0].trim()
+  if (cleanMyExt && cleanExt === cleanMyExt) {
+    logger.warn('CALL', `Chặn thao tác: Người dùng cố gắng gọi tới chính máy lẻ của mình (${cleanExt})`)
     isDialing.value = false
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `⚠️ Không thể thực hiện cuộc gọi tới chính máy lẻ của bạn (${ext})!`,
+          message: `⚠️ Không thể thực hiện cuộc gọi tới chính máy lẻ của bạn (${cleanExt})!`,
           type: 'warning',
         },
       }),

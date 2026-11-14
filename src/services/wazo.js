@@ -38,6 +38,7 @@ class WazoService {
         } catch (e) {}
         if (exten) {
           localStorage.setItem('smartcall_user_exten', exten)
+          localStorage.setItem('smartcall_extension', exten)
         }
         logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
       }
@@ -84,6 +85,7 @@ class WazoService {
           } catch (e) {}
           if (exten) {
             localStorage.setItem('smartcall_user_exten', exten)
+            localStorage.setItem('smartcall_extension', exten)
           }
           logger.success('AUTH', 'Đã khôi phục phiên đăng nhập Wazo từ Token thành công!')
           this.openWebSocketEvents()
@@ -126,6 +128,7 @@ class WazoService {
     localStorage.removeItem('smartcall_wazo_token')
     localStorage.removeItem('smartcall_wazo_refreshToken')
     localStorage.removeItem('smartcall_user_exten')
+    localStorage.removeItem('smartcall_extension')
     localStorage.removeItem('smartcall_offline_mode')
     this.currentCallSession = null
     this.stopRemoteAudio()
@@ -144,9 +147,14 @@ class WazoService {
   getMyExtension() {
     try {
       const ext = this.session?.primaryNumber?.()
-      if (ext) return String(ext)
+      if (ext) return String(ext).trim()
     } catch (e) {}
-    return localStorage.getItem('smartcall_user_exten') || localStorage.getItem('smartcall_sip_user') || ''
+    const stored =
+      localStorage.getItem('smartcall_extension') ||
+      localStorage.getItem('smartcall_user_exten') ||
+      localStorage.getItem('smartcall_sip_user') ||
+      ''
+    return String(stored).trim()
   }
 
   openWebSocketEvents() {

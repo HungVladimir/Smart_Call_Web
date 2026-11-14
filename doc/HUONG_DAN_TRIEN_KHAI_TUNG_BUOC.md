@@ -1343,7 +1343,12 @@ Dựa trên kết quả rà soát chi tiết toàn bộ luồng nghiệp vụ v�
      - Kiểm tra trạng thái máy bận (`busy`), DND, đang đổ chuông (`ringing`), ngoại tuyến (`offline`) trực tiếp từ bộ nhớ đệm thời gian thực (0 ms). Nếu máy lẻ chưa có trong cache, cho phép lệnh gọi WebRTC phát trực tiếp tới Asterisk để tổng đài xử lý theo đúng chuẩn VoIP.
   3. **Bổ sung AbortSignal Timeout (3 giây) cho toàn bộ API (`contactService`, `historyService`, `chatService`, `wazoService`):**
      - Thiết lập giới hạn thời gian chờ 3 giây cho toàn bộ các lệnh `fetch()`. Khi máy chủ chưa sẵn sàng hoặc ngoài mạng, lệnh gọi sẽ tự động ngắt thay vì bị kẹt trong trạng thái TCP SYN_SENT 21 giây của trình duyệt.
-  4. **Kiểm tra biên dịch:** `npm run build` thành công 100% trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
+  4. **Đồng bộ hóa khóa lưu trữ máy lẻ (`smartcall_extension` vs `smartcall_user_exten`) trong `wazoService`:**
+     - Chuẩn hóa hàm `getMyExtension()` để luôn đọc thông suốt từ `smartcall_extension` và `smartcall_user_exten`, đảm bảo ngay ở mili-giây đầu tiên khi vừa tải trang (F5), hệ thống đã nhận diện chính xác máy lẻ hiện tại (1002), chặn gọi chính mình tức thì 100% không còn hiện tượng chập chờn lúc nhận lúc không.
+  5. **Chuẩn hóa so sánh chuỗi máy lẻ và bổ sung log thao tác bàn phím (`CallsView.vue`):**
+     - Loại bỏ `@domain` và khoảng trắng trước khi so sánh (`cleanExt === cleanMyExt`).
+     - Bổ sung log phản hồi khi bấm phím số trên keypad và cảnh báo rõ ràng khi người dùng click gọi quá nhanh thay vì kết thúc âm thầm.
+  6. **Kiểm tra biên dịch:** `npm run build` thành công 100% trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
 
 
 
