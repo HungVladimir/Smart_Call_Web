@@ -241,12 +241,13 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { chatService } from '@/services/chatService'
 import { websocketService } from '@/services/websocketService'
 
 const route = useRoute()
+const router = useRouter()
 
 const showPinned = ref(true)
 const pinnedNotice = ref('Thông báo: Mọi thắc mắc kỹ thuật vui lòng liên hệ bộ phận hỗ trợ LAN.')
@@ -291,6 +292,9 @@ const selectRoom = async (room) => {
   currentRoom.value = room
   room.unread = 0
   chatService.saveRooms()
+  if (route.query && route.query.ext) {
+    router.replace({ path: '/messages', query: {} }).catch(() => {})
+  }
   // Tự động kéo lịch sử tin nhắn từ Wazo chatd nếu là phòng trên server thật
   if (room && room.id && !room.id.startsWith('room-') && !room.id.startsWith('direct-')) {
     const msgs = await chatService.getRoomMessages(room.id)
@@ -354,13 +358,14 @@ const scrollToBottom = () => {
 // Xử lý mở hội thoại 1-1 trực tiếp khi người dùng chuyển từ Danh bạ sang
 const checkDirectChatRoute = async () => {
   if (route.query && route.query.ext) {
-    const ext = String(route.query.ext)
+    const ext = String(route.query.ext).split('@')[0].trim()
     const name = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
 
     const directRoom = await chatService.getDirectRoom(ext, name, currentUserName.value)
     const fresh = await chatService.getRooms()
     rooms.value = [...fresh]
-    currentRoom.value = directRoom
+    const target = rooms.value.find((r) => r.id === directRoom.id) || directRoom
+    currentRoom.value = target
     scrollToBottom()
   }
 }
@@ -372,6 +377,12 @@ watch(
   },
   { immediate: true },
 )
+
+onActivated(async () => {
+  if (route.query && route.query.ext) {
+    await checkDirectChatRoute()
+  }
+})
 
 // Lắng nghe tin nhắn mới từ WebSocket
 const handleRealtimeMessage = (data) => {

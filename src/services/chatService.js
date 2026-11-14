@@ -49,9 +49,13 @@ class ChatService {
   }
 
   /**
-   * Lấy danh sách các phòng chat của người dùng
+   * Lấy danh sách các phòng chat của người dùng (Đồng bộ phòng server Wazo và phòng 1-1 cục bộ)
    */
   async getRooms() {
+    if (!this.rooms || this.rooms.length === 0) {
+      this.rooms = this.loadSavedRooms()
+    }
+
     try {
       const token = wazoService.getToken()
       if (token) {
@@ -68,16 +72,36 @@ class ChatService {
           const data = await res.json()
           if (data.items && data.items.length > 0) {
             // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
-            return data.items.map((room) => ({
-              id: room.uuid,
-              title: room.name || 'Phòng thảo luận',
-              preview: 'Cuộc trò chuyện mới',
-              time: '',
-              unread: 0,
-              avatarBg: '#3b82f6',
-              icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
-              messages: [],
-            }))
+            const serverRooms = data.items.map((room) => {
+              const existing = (this.rooms || []).find((r) => r.id === room.uuid)
+              return {
+                id: room.uuid,
+                title: room.name || 'Phòng thảo luận',
+                preview: existing?.preview || 'Cuộc trò chuyện mới',
+                time: existing?.time || '',
+                unread: existing?.unread || 0,
+                avatarBg: existing?.avatarBg || '#3b82f6',
+                icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
+                messages: existing?.messages || [],
+                members: existing?.members || [],
+                pinned: existing?.pinned || '',
+                updatedAt: existing?.updatedAt || Date.now(),
+              }
+            })
+
+            // Giữ lại các phòng chat 1-1 (direct rooms) đã tạo
+            const directRooms = (this.rooms || []).filter(
+              (r) => r.isDirect || (r.id && r.id.startsWith('direct-')),
+            )
+            const merged = [...serverRooms]
+            for (const dr of directRooms) {
+              if (!merged.some((m) => m.id === dr.id)) {
+                merged.push(dr)
+              }
+            }
+            this.rooms = merged
+            this.saveRooms()
+            return [...this.rooms]
           }
         }
       }
@@ -85,9 +109,6 @@ class ChatService {
       /* Fallback sang local rooms */
     }
 
-    if (!this.rooms || this.rooms.length === 0) {
-      this.rooms = this.loadSavedRooms()
-    }
     this.sortRooms()
     return [...(this.rooms || [])]
   }
@@ -154,26 +175,34 @@ class ChatService {
       this.rooms = this.loadSavedRooms()
     }
 
+    const myExt =
+      wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || '1001'
+    const myUuid =
+      wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'me'
+
+    const cleanExt = String(ext || '').split('@')[0].trim()
     let found = this.rooms.find(
-      (r) => r.ext === ext || (r.title && (r.title === name || r.title.includes(ext))),
+      (r) =>
+        String(r.ext || '').split('@')[0].trim() === cleanExt ||
+        (r.title && (r.title === name || r.title.includes(cleanExt))),
     )
 
     if (!found) {
       found = {
-        id: `direct-${ext}-${Date.now()}`,
-        title: name,
+        id: `direct-${cleanExt}-${Date.now()}`,
+        title: name || `Máy lẻ ${cleanExt}`,
         preview: 'Bắt đầu cuộc trò chuyện...',
         time: 'Mới',
         unread: 0,
         avatarBg: '#0284c7',
-        icon: (name || 'U').slice(0, 2).toUpperCase(),
+        icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
         isDirect: true,
-        ext: ext,
+        ext: cleanExt,
         memberCount: 2,
         updatedAt: Date.now(),
         members: [
-          { id: '1001', name: currentUserName, dept: 'Khối Kỹ thuật', ext: '1001', isAdmin: true },
-          { id: `emp-${ext}`, name: name, dept: 'Nội bộ', ext: ext, isAdmin: false },
+          { id: myUuid, name: currentUserName, dept: 'Khối Kỹ thuật', ext: myExt, isAdmin: true },
+          { id: `emp-${cleanExt}`, name: name, dept: 'Nội bộ', ext: cleanExt, isAdmin: false },
         ],
         messages: [],
       }
