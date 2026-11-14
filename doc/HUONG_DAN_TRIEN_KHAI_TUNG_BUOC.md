@@ -1331,6 +1331,20 @@ Dựa trên kết quả rà soát chi tiết toàn bộ luồng nghiệp vụ v�
 8. **Bảo toàn Cấu hình Production Mặc định (`features.js`):**
    - Đặt lại cờ `DEFAULT_FEATURES.mockData = false` trên nhánh chính công ty để đảm bảo ứng dụng luôn chạy 100% dữ liệu thật từ máy chủ tổng đài.
 
+---
+
+### BƯỚC 6.9: TỐI ƯU HÓA LUỒNG GỌI THOẠI TỨC THÌ & KHÓA CHỐNG BẤM LIÊN TỤC (NON-BLOCKING OUTBOUND CALL & ANTI-COLLISION)
+* **Trạng thái:** `HOÀN THÀNH ✅`
+* **Công việc đã thực hiện:**
+  1. **Khóa chống bấm liên tục ngay tại cửa vào (`CallsView.vue`):**
+     - Đặt cờ `isDialing.value = true` ngay dòng đầu tiên của hàm `handleDial()`, ngăn chặn triệt để hiện tượng double-click hoặc bấm liên tục tạo ra nhiều phiên gọi song song khi hệ thống đang xử lý.
+  2. **Chuyển kiểm tra trạng thái máy lẻ sang Non-blocking In-memory Check:**
+     - Loại bỏ việc `await contactService.getContacts()` làm treo luồng bấm phím khi danh bạ chưa kịp nạp vào bộ nhớ.
+     - Kiểm tra trạng thái máy bận (`busy`), DND, đang đổ chuông (`ringing`), ngoại tuyến (`offline`) trực tiếp từ bộ nhớ đệm thời gian thực (0 ms). Nếu máy lẻ chưa có trong cache, cho phép lệnh gọi WebRTC phát trực tiếp tới Asterisk để tổng đài xử lý theo đúng chuẩn VoIP.
+  3. **Bổ sung AbortSignal Timeout (3 giây) cho toàn bộ API (`contactService`, `historyService`, `chatService`, `wazoService`):**
+     - Thiết lập giới hạn thời gian chờ 3 giây cho toàn bộ các lệnh `fetch()`. Khi máy chủ chưa sẵn sàng hoặc ngoài mạng, lệnh gọi sẽ tự động ngắt thay vì bị kẹt trong trạng thái TCP SYN_SENT 21 giây của trình duyệt.
+  4. **Kiểm tra biên dịch:** `npm run build` thành công 100% trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
+
 
 
 

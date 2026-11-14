@@ -257,6 +257,7 @@ const startCallTimer = () => {
 }
 
 const handleDial = async () => {
+  // 1. Khóa chống bấm liên tục ngay tại cửa vào (Immediate Anti-Collision Lock)
   if (isDialing.value) return
 
   // Chặn thực hiện cuộc gọi mới nếu đang trong cuộc gọi khác
@@ -276,10 +277,17 @@ const handleDial = async () => {
   const ext = extension.value.trim()
   if (!ext) return
 
-  // 1. Chặn người dùng tự gọi cho chính mình
+  // Kích hoạt ngay cờ isDialing để ngăn double-click/spam nút gọi
+  isDialing.value = true
+  setTimeout(() => {
+    isDialing.value = false
+  }, 1200)
+
+  // 2. Chặn người dùng tự gọi cho chính mình
   const myExt = wazoService.getMyExtension()
   if (myExt && ext === myExt) {
     logger.warn('CALL', `Chặn thao tác: Người dùng cố gắng gọi tới chính máy lẻ của mình (${ext})`)
+    isDialing.value = false
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
@@ -291,19 +299,13 @@ const handleDial = async () => {
     return
   }
 
-  // 2. Chặn cuộc gọi nếu đối phương đang trong cuộc gọi khác (busy)
-  let targetContact = contactService.findContactByExtension(ext)
-  if (!targetContact && (!contactService.currentContacts || contactService.currentContacts.length === 0)) {
-    try {
-      await contactService.getContacts()
-      targetContact = contactService.findContactByExtension(ext)
-    } catch {
-      /* ignore */
-    }
-  }
+  // 3. Kiểm tra trạng thái máy lẻ từ bộ nhớ đệm thời gian thực (Non-blocking In-memory Check)
+  // Tuyệt đối không await fetch danh bạ REST API làm đơ luồng gọi
+  const targetContact = contactService.findContactByExtension(ext)
 
   if (targetContact && targetContact.status === 'busy') {
     logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang bận trong cuộc gọi khác.`)
+    isDialing.value = false
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
@@ -315,9 +317,9 @@ const handleDial = async () => {
     return
   }
 
-  // 3. Chặn cuộc gọi nếu đối phương đang bật chế độ Không làm phiền (dnd)
   if (targetContact && targetContact.status === 'dnd') {
     logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang bật chế độ Không làm phiền (DND).`)
+    isDialing.value = false
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
@@ -329,9 +331,9 @@ const handleDial = async () => {
     return
   }
 
-  // 4. Chặn cuộc gọi nếu đối phương đang nhận cuộc gọi khác (ringing)
   if (targetContact && targetContact.status === 'ringing') {
     logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} đang đổ chuông nhận cuộc gọi khác.`)
+    isDialing.value = false
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
@@ -343,9 +345,9 @@ const handleDial = async () => {
     return
   }
 
-  // 5. Chặn cuộc gọi nếu đối phương đang ngoại tuyến (offline)
   if (targetContact && (targetContact.status === 'offline' || targetContact.status === 'unavailable')) {
     logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${ext} hiện đang ngoại tuyến.`)
+    isDialing.value = false
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
@@ -357,13 +359,14 @@ const handleDial = async () => {
     return
   }
 
-  // 6. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
+  // 4. Kiểm tra thiết bị Microphone phần cứng trước khi thực hiện gọi
   try {
     if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const hasMic = devices.some((d) => d.kind === 'audioinput')
       if (devices.length > 0 && !hasMic) {
         logger.error('CALL', 'Không tìm thấy thiết bị Microphone trên máy tính để thực hiện cuộc gọi WebRTC!')
+        isDialing.value = false
         window.dispatchEvent(
           new CustomEvent('app-toast', {
             detail: {
@@ -379,11 +382,18 @@ const handleDial = async () => {
     /* ignore */
   }
 
-  // 5. Khóa chống spam nút gọi (Throttle 1.5 giây)
-  isDialing.value = true
-  setTimeout(() => {
-    isDialing.value = false
-  }, 1500)
+  // 5. Kiểm tra kết nối WebRTC SIP Phone tới máy chủ
+  if (!wazoService.isPhoneRegistered()) {
+    logger.warn('SIP', 'WebRTC Phone chưa ở trạng thái Registered với máy chủ.')
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: '⚠️ WebRTC SIP Phone chưa kết nối tới máy chủ tổng đài. Đang thử gửi tín hiệu gọi...',
+          type: 'warning',
+        },
+      }),
+    )
+  }
 
   logger.info('UI', `Người dùng bấm nút Gọi tới máy lẻ: ${ext}`)
   clearInterval(timer)
@@ -391,11 +401,11 @@ const handleDial = async () => {
   isHeld.value = false
   isMuted.value = false
 
-  // Bước 1: Chuyển sang trạng thái Đang đổ chuông (Chờ sự kiện Wazo WebRTC)
+  // Bước 1: Chuyển ngay sang trạng thái Đang đổ chuông (Phản hồi tức thì 0 giây)
   callState.value = 'ringing'
   audioService.startRingbackTone()
 
-  // Thử gọi thật qua Wazo WebRTC
+  // Bước 2: Thử gọi thật qua Wazo WebRTC
   try {
     const session = await wazoService.makeCall(ext)
     if (session) {

@@ -110,6 +110,7 @@ class HistoryService {
           'X-Auth-Token': token,
           'Content-Type': 'application/json',
         },
+        signal: AbortSignal.timeout(3000),
       })
 
       if (!res.ok) throw new Error(`HTTP error ${res.status}`)

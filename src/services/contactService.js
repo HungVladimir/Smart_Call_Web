@@ -86,6 +86,7 @@ class ContactService {
           `${host}/api/dird/0.1/directories/default/sources?backend=wazo`,
           {
             headers: { 'X-Auth-Token': token },
+            signal: AbortSignal.timeout(3000),
           },
         )
 
@@ -98,6 +99,7 @@ class ContactService {
               `${host}/api/dird/0.1/backends/wazo/sources/${sourceUuid}/contacts?limit=1000`,
               {
                 headers: { 'X-Auth-Token': token },
+                signal: AbortSignal.timeout(3000),
               },
             )
             if (contactsRes.ok) {
@@ -116,6 +118,7 @@ class ContactService {
             `${host}/api/dird/0.1/directories/lookup/default?term=1`,
             {
               headers: { 'X-Auth-Token': token },
+              signal: AbortSignal.timeout(3000),
             },
           )
           if (lookupRes.ok) {
@@ -257,6 +260,7 @@ class ContactService {
     try {
       const res = await fetch(`${host}/api/chatd/1.0/users/presences?user_uuid=${uuids.join(',')}`, {
         headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+        signal: AbortSignal.timeout(3000),
       })
       if (!res.ok) return contacts
 

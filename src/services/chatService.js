@@ -61,6 +61,7 @@ class ChatService {
 
         const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms`, {
           headers: { 'X-Auth-Token': token },
+          signal: AbortSignal.timeout(3000),
         })
 
         if (res.ok) {
@@ -110,6 +111,7 @@ class ChatService {
           `${host}/api/chatd/1.0/users/me/rooms/${roomId}/messages?limit=${limit}`,
           {
             headers: { 'X-Auth-Token': token },
+            signal: AbortSignal.timeout(3000),
           },
         )
 
@@ -217,6 +219,7 @@ class ChatService {
             'X-Auth-Token': token,
             'Content-Type': 'application/json',
           },
+          signal: AbortSignal.timeout(3000),
           body: JSON.stringify({
             content: text,
             alias: userAlias,

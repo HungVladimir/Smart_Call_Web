@@ -529,6 +529,7 @@ class WazoService {
           'X-Auth-Token': token,
           'Content-Type': 'application/json',
         },
+        signal: AbortSignal.timeout(3000),
         body: JSON.stringify({
           state,
           status: statusText || (state === 'available' ? 'Sẵn sàng' : 'Bận'),
