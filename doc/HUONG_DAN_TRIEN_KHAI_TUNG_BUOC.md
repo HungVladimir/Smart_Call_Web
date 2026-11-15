@@ -37,6 +37,8 @@
 | **21** | Tái cấu trúc Toàn diện Kiến trúc Cuộc gọi theo mô hình Single Source of Truth (SSOT) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Khởi tạo reactive `callStore` tập trung; Rút gọn `CallsView.vue` hơn 60% code; Hợp nhất xác thực cuộc gọi & ghi nhận CDR tập trung tại `wazoService`; Hợp nhất kết nối duy nhất tới `wazo-websocketd`; Đồng bộ song song sang `Smart_Call_Web_Mock`. |
 | **22** | Chuẩn hóa Toàn diện Phân hệ Danh bạ (Contacts), Tối ưu KeepAlive & Loại bỏ Mock Data | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Mã tham chiếu chuẩn | **HOÀN THÀNH** ✅ | Tối ưu KeepAlive 0ms không chớp tắt spinner; Phân tách phiên đăng nhập bằng User-bound KeepAlive key; Tự động nhận diện số máy lẻ của chính mình; Dọn sạch dữ liệu khi Logout; Bổ sung nút ↻ Làm mới danh bạ; Loại bỏ nút Thêm/Xóa liên hệ mock và nút Video giả lập; Hỗ trợ tìm kiếm tiếng Việt không dấu. |
 | **23** | Chuẩn hóa Toàn diện Phân hệ Tin nhắn (Messages), SSOT WebSocket & Tích hợp Wazo Chatd API | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Mã tham chiếu chuẩn | **HOÀN THÀNH** ✅ | Phân tách kho lưu trữ tin nhắn theo từng User UUID tránh rò rỉ chéo; Hợp nhất xử lý WebSocket tin nhắn tập trung tại `chatService.js` (SSOT); Dọn sạch cache tin nhắn khi Logout; Tích hợp tạo phòng 1-1 qua Wazo Chatd API (`/users/me/rooms`). |
+| **24** | Khắc phục Triệt để Lỗi Nhân đôi Tin nhắn, Khựng 1s Chuyển phòng, Múi giờ UTC & Rò rỉ CDR | Kiểm toán toàn diện & Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Dedup tin nhắn cmsg- và serverMsg; UTC sang local time; 0ms direct room switch; smartcall-call-ended cleanup; Phân tách cache theo User UUID; Động hóa SIP URI. |
+| **25** | Khắc phục Triệt để Vòng lặp Vô tận (Infinite Event Loop) & Nã Request CDR trên Dashboard | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Vòng đời khép kín | **HOÀN THÀNH** ✅ | Bổ sung cờ silent cho saveRooms(); Cắt đứt vòng lặp smartcall-rooms-updated; Thêm in-flight lock isLoadingDashboard & debounce 400ms; Quản lý KeepAlive active/deactivated; In-flight Promise Sharing cho CDR và Chat Rooms. |
 
 ---
 
@@ -1512,5 +1514,39 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 ### 7. Đồng bộ Song song và Kiểm tra Toàn diện:
 * Cập nhật đồng bộ toàn bộ logic trên sang cả 2 dự án: `Smart_Call_Web` (production chuẩn công ty) và `Smart_Call_Web_Mock` (bản thử nghiệm ngoại tuyến, bảo toàn toàn bộ dữ liệu mock và cơ chế fallback offline).
 * Cả 2 dự án đều chạy lệnh `npm run build` thành công 100% với 0 cảnh báo lỗi cú pháp.
+
+---
+
+## 25. KHẮC PHỤC TRIỆT ĐỂ VÒNG LẶP VÔ TẬN (INFINITE EVENT LOOP) & NÃ REQUEST CDR TRÊN DASHBOARD
+
+### 1. Nguyên nhân gốc rễ:
+* Trong `chatService.js`, phương thức `getRooms()` là hàm truy vấn (getter) nhưng lại gọi `this.saveRooms()`.
+* `saveRooms()` phát sự kiện toàn cục:
+  ```javascript
+  window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
+  ```
+* `DashboardView.vue` và `AppSidebar.vue` cùng đăng ký lắng nghe sự kiện `smartcall-rooms-updated` và gọi lại `getRooms()`.
+* Dẫn đến vòng lặp vô tận theo cấp số nhân trong tích tắc, liên tục gọi `historyService.getHistory()` (`/api/call-logd/1.0/users/me/cdr`) làm nghẽn toàn bộ kết nối và kích hoạt 50+ cảnh báo `signal timed out`.
+
+### 2. Các giải pháp đã triển khai:
+1. **Bổ sung cờ `silent` cho `saveRooms(silent = false)` trong `chatService.js`:**
+   - Khi `silent = true`: Chỉ lưu dữ liệu vào `localStorage`, tuyệt đối không phát sự kiện `smartcall-rooms-updated`.
+   - Trong `getRooms()` và `getRoomMessages()`, đổi sang `this.saveRooms(true)` $\rightarrow$ Cắt đứt hoàn toàn vòng lặp sự kiện tròn.
+2. **Cơ chế In-flight Promise Sharing:**
+   - Thêm `this._fetchingRoomsPromise` vào `chatService.getRooms()`.
+   - Thêm `this._fetchingHistoryPromise` vào `historyService.getHistory()`.
+   - Khi nhiều component gọi cùng một hàm đồng thời (ví dụ: `DashboardView` và `AppSidebar`), các lệnh gọi sẽ chia sẻ chung 1 Promise duy nhất, chỉ gửi 1 request HTTP tới máy chủ Wazo.
+3. **Cờ khóa chống gọi đè & Debounce trên `DashboardView.vue` và `AppSidebar.vue`:**
+   - Thêm cờ khóa `isLoadingDashboard` để ngăn chặn các lượt nạp dữ liệu chồng chéo khi request trước đó chưa hoàn thành.
+   - Bổ sung `debouncedLoadData()` với thời gian chờ 400ms để gom các sự kiện bắn liên tiếp thành đúng 1 lần thực thi.
+4. **Kiểm soát vòng đời KeepAlive (`onActivated` / `onDeactivated`):**
+   - Thêm biến cờ `isViewActive` trong `DashboardView.vue`.
+   - Khi người dùng chuyển sang tab khác (`onDeactivated`), `isViewActive = false` và timer debounce bị hủy. Dashboard hoàn toàn không chạy ngầm, không tiêu tốn băng thông mạng.
+   - Khi người dùng quay lại tab Dashboard (`onActivated`), `isViewActive = true` và nạp lại dữ liệu mượt mà.
+
+### 3. Đồng bộ Song song & Kiểm tra:
+* Cập nhật đồng bộ toàn bộ logic trên sang cả `Smart_Call_Web` và `Smart_Call_Web_Mock` (bảo toàn toàn bộ khối mock data và kịch bản thử nghiệm ngoại tuyến).
+* Chạy kiểm tra biên dịch `npm run build` trên cả 2 dự án: Hoàn thành 100% với 0 lỗi.
+
 
 

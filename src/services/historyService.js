@@ -5,6 +5,7 @@ import { logger } from './loggerService'
 class HistoryService {
   constructor() {
     this.localHistory = this.loadSavedHistory()
+    this._fetchingHistoryPromise = null
   }
 
   // Khóa lưu trữ cục bộ phân tách riêng biệt theo từng User UUID đăng nhập
@@ -99,96 +100,108 @@ class HistoryService {
    * 1. Thử gọi Wazo Call-Logd API (hoặc API Backend tổng đài):
    *    GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
    * 2. Nếu không có kết nối -> Sử dụng dữ liệu dự phòng.
+   * Hỗ trợ In-flight Promise Sharing để chống nã request trùng lặp từ nhiều component.
    */
   async getHistory({ tab = 'all', limit = 50 } = {}) {
-    try {
-      const token = wazoService.getToken()
-      if (!token) throw new Error('No token available')
-
-      const host = wazoService.host.startsWith('http')
-        ? wazoService.host
-        : `https://${wazoService.host}`
-
-      // Bám sát mục 4.3 trong dev_guide.md
-      const url = `${host}/api/call-logd/1.0/users/me/cdr?limit=${limit}&order=start&direction=desc`
-      const res = await fetch(url, {
-        headers: {
-          'X-Auth-Token': token,
-          'Content-Type': 'application/json',
-        },
-        signal: AbortSignal.timeout(3000),
-      })
-
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`)
-
-      const data = await res.json()
-      if (!data.items) return this._filterLocal(tab)
-
-      // Map trường dữ liệu từ Wazo CDR sang cấu trúc hiển thị của SmartCall Web
-      const mapped = data.items.map((cdr, idx) => {
-        const isOutbound = cdr.call_direction === 'outbound'
-        const isAnswered = Boolean(cdr.answered)
-        const durationSec = cdr.duration || 0
-
-        const name = isOutbound
-          ? cdr.destination_name || cdr.destination_extension || 'Số ngoài'
-          : cdr.source_name || cdr.source_extension || 'Số ngoài'
-
-        const extension = isOutbound
-          ? cdr.destination_extension || ''
-          : cdr.source_extension || ''
-
-        let status = 'success'
-        let statusLabel = 'Success'
-        if (!isAnswered) {
-          status = isOutbound ? 'declined' : 'missed'
-          statusLabel = isOutbound ? 'Declined' : 'Missed'
-        }
-
-        const formatCdrDate = (isoStr) => {
-          if (!isoStr) return ''
-          const d = new Date(isoStr)
-          if (isNaN(d.getTime())) return isoStr.replace('T', ' ').substring(0, 19)
-          const pad = (n) => String(n).padStart(2, '0')
-          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-        }
-
-        return {
-          id: cdr.id || `cdr-${idx}`,
-          date: formatCdrDate(cdr.start),
-          name,
-          extension,
-          dept: 'Nội bộ công ty',
-          duration: durationSec,
-          direction: isOutbound ? 'outbound' : 'inbound',
-          directionLabel: isOutbound ? 'Outgoing' : 'Incoming',
-          status,
-          statusLabel,
-          answered: isAnswered,
-        }
-      })
-
-      // Hợp nhất dữ liệu: kết hợp các cuộc gọi cục bộ mới nhất với CDR từ Wazo server
-      const merged = [...mapped]
-      this.localHistory.forEach((loc) => {
-        const alreadyExists = merged.some(
-          (m) => m.id === loc.id || (m.date === loc.date && m.extension === loc.extension),
-        )
-        if (!alreadyExists) {
-          merged.push(loc)
-        }
-      })
-      merged.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+    if (this._fetchingHistoryPromise) {
+      const merged = await this._fetchingHistoryPromise
       return this._filterList(merged, tab)
-    } catch (err) {
-      if (!isFeatureEnabled('mockData')) {
-        logger.warn('API', 'Cờ mockData=false: Lỗi lấy CDR từ Wazo, trả về danh sách rỗng hoặc chỉ cuộc gọi phiên hiện tại', err.message)
-        const realOnly = this.localHistory.filter((r) => !String(r.id).startsWith('cdr-00'))
-        return this._filterList(realOnly, tab)
-      }
-      // Offline fallback: Dùng dữ liệu mock nội bộ để UI luôn chạy mượt
-      return this._filterLocal(tab)
     }
+
+    this._fetchingHistoryPromise = (async () => {
+      try {
+        const token = wazoService.getToken()
+        if (!token) throw new Error('No token available')
+
+        const host = wazoService.host.startsWith('http')
+          ? wazoService.host
+          : `https://${wazoService.host}`
+
+        // Bám sát mục 4.3 trong dev_guide.md
+        const url = `${host}/api/call-logd/1.0/users/me/cdr?limit=${limit}&order=start&direction=desc`
+        const res = await fetch(url, {
+          headers: {
+            'X-Auth-Token': token,
+            'Content-Type': 'application/json',
+          },
+          signal: AbortSignal.timeout(3000),
+        })
+
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`)
+
+        const data = await res.json()
+        if (!data.items) return this.localHistory
+
+        // Map trường dữ liệu từ Wazo CDR sang cấu trúc hiển thị của SmartCall Web
+        const mapped = data.items.map((cdr, idx) => {
+          const isOutbound = cdr.call_direction === 'outbound'
+          const isAnswered = Boolean(cdr.answered)
+          const durationSec = cdr.duration || 0
+
+          const name = isOutbound
+            ? cdr.destination_name || cdr.destination_extension || 'Số ngoài'
+            : cdr.source_name || cdr.source_extension || 'Số ngoài'
+
+          const extension = isOutbound
+            ? cdr.destination_extension || ''
+            : cdr.source_extension || ''
+
+          let status = 'success'
+          let statusLabel = 'Success'
+          if (!isAnswered) {
+            status = isOutbound ? 'declined' : 'missed'
+            statusLabel = isOutbound ? 'Declined' : 'Missed'
+          }
+
+          const formatCdrDate = (isoStr) => {
+            if (!isoStr) return ''
+            const d = new Date(isoStr)
+            if (isNaN(d.getTime())) return isoStr.replace('T', ' ').substring(0, 19)
+            const pad = (n) => String(n).padStart(2, '0')
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+          }
+
+          return {
+            id: cdr.id || `cdr-${idx}`,
+            date: formatCdrDate(cdr.start),
+            name,
+            extension,
+            dept: 'Nội bộ công ty',
+            duration: durationSec,
+            direction: isOutbound ? 'outbound' : 'inbound',
+            directionLabel: isOutbound ? 'Outgoing' : 'Incoming',
+            status,
+            statusLabel,
+            answered: isAnswered,
+          }
+        })
+
+        // Hợp nhất dữ liệu: kết hợp các cuộc gọi cục bộ mới nhất với CDR từ Wazo server
+        const merged = [...mapped]
+        this.localHistory.forEach((loc) => {
+          const alreadyExists = merged.some(
+            (m) => m.id === loc.id || (m.date === loc.date && m.extension === loc.extension),
+          )
+          if (!alreadyExists) {
+            merged.push(loc)
+          }
+        })
+        merged.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+        return merged
+      } catch (err) {
+        if (!isFeatureEnabled('mockData')) {
+          logger.warn('API', 'Cờ mockData=false: Lỗi lấy CDR từ Wazo, trả về danh sách rỗng hoặc chỉ cuộc gọi phiên hiện tại', err.message)
+          return this.localHistory.filter((r) => !String(r.id).startsWith('cdr-00'))
+        }
+        // Offline fallback: Dùng dữ liệu mock nội bộ để UI luôn chạy mượt
+        return this.localHistory
+      } finally {
+        this._fetchingHistoryPromise = null
+      }
+    })()
+
+    const list = await this._fetchingHistoryPromise
+    return this._filterList(list, tab)
   }
 
   /**

@@ -76,54 +76,75 @@ const contactsCount = ref(0)
 const unreadMessagesCount = ref(0)
 const missedCallsCount = ref(0)
 
+let isUpdatingSidebar = false
+let sidebarDebounceTimer = null
+
 const updateSidebarCounts = async () => {
-  // 1. Thống kê tổng số danh bạ
-  try {
-    const contacts = await contactService.getContacts()
-    if (Array.isArray(contacts)) {
-      contactsCount.value = contacts.length
-    }
-  } catch (e) {
-    /* ignore */
-  }
+  if (isUpdatingSidebar) return
+  isUpdatingSidebar = true
 
-  // 2. Thống kê tin nhắn chưa đọc
   try {
-    const rooms = await chatService.getRooms()
-    if (Array.isArray(rooms)) {
-      unreadMessagesCount.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
+    // 1. Thống kê tổng số danh bạ
+    try {
+      const contacts = await contactService.getContacts()
+      if (Array.isArray(contacts)) {
+        contactsCount.value = contacts.length
+      }
+    } catch (e) {
+      /* ignore */
     }
-  } catch (e) {
-    /* ignore */
-  }
 
-  // 3. Thống kê cuộc gọi nhỡ
-  try {
-    const history = await historyService.getHistory()
-    if (Array.isArray(history)) {
-      missedCallsCount.value = history.filter(
-        (h) => h.status === 'missed' || h.status === 'declined' || !h.answered,
-      ).length
+    // 2. Thống kê tin nhắn chưa đọc
+    try {
+      const rooms = await chatService.getRooms()
+      if (Array.isArray(rooms)) {
+        unreadMessagesCount.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
+      }
+    } catch (e) {
+      /* ignore */
     }
-  } catch (e) {
-    /* ignore */
+
+    // 3. Thống kê cuộc gọi nhỡ
+    try {
+      const history = await historyService.getHistory()
+      if (Array.isArray(history)) {
+        missedCallsCount.value = history.filter(
+          (h) => h.status === 'missed' || h.status === 'declined' || !h.answered,
+        ).length
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  } finally {
+    isUpdatingSidebar = false
   }
 }
 
+const debouncedUpdateSidebarCounts = () => {
+  if (sidebarDebounceTimer) clearTimeout(sidebarDebounceTimer)
+  sidebarDebounceTimer = setTimeout(() => {
+    updateSidebarCounts()
+  }, 400)
+}
+
 onMounted(() => {
-  updateSidebarCounts()
-  window.addEventListener('app-login-success', updateSidebarCounts)
-  window.addEventListener('smartcall-rooms-updated', updateSidebarCounts)
-  window.addEventListener('smartcall-contacts-updated', updateSidebarCounts)
-  window.addEventListener('smartcall-cdr-updated', updateSidebarCounts)
+  debouncedUpdateSidebarCounts()
+  window.addEventListener('app-login-success', debouncedUpdateSidebarCounts)
+  window.addEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
+  window.addEventListener('smartcall-contacts-updated', debouncedUpdateSidebarCounts)
+  window.addEventListener('smartcall-cdr-updated', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('app-login-success', updateSidebarCounts)
-  window.removeEventListener('smartcall-rooms-updated', updateSidebarCounts)
-  window.removeEventListener('smartcall-contacts-updated', updateSidebarCounts)
-  window.removeEventListener('smartcall-cdr-updated', updateSidebarCounts)
+  if (sidebarDebounceTimer) {
+    clearTimeout(sidebarDebounceTimer)
+    sidebarDebounceTimer = null
+  }
+  window.removeEventListener('app-login-success', debouncedUpdateSidebarCounts)
+  window.removeEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
+  window.removeEventListener('smartcall-contacts-updated', debouncedUpdateSidebarCounts)
+  window.removeEventListener('smartcall-cdr-updated', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 </script>

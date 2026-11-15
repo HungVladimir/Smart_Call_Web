@@ -6,6 +6,7 @@ import { logger } from './loggerService'
 class ChatService {
   constructor() {
     this.rooms = []
+    this._fetchingRoomsPromise = null
     if (typeof window !== 'undefined') {
       this.rooms = this.loadSavedRooms()
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
@@ -48,13 +49,15 @@ class ChatService {
     this.rooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   }
 
-  // Lưu bền vững vào localStorage của user hiện tại
-  saveRooms() {
+  // Lưu bền vững vào localStorage của user hiện tại (hỗ trợ cờ silent để chống vòng lặp vô tận)
+  saveRooms(silent = false) {
     try {
       this.sortRooms()
       const key = this.getStorageKey()
       localStorage.setItem(key, JSON.stringify(this.rooms))
-      window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
+      if (!silent) {
+        window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
+      }
     } catch (e) {
       console.warn('Lỗi lưu cache phòng chat:', e)
     }
@@ -150,65 +153,75 @@ class ChatService {
    * Lấy danh sách các phòng chat của người dùng (Đồng bộ phòng server Wazo và phòng 1-1 cục bộ)
    */
   async getRooms() {
-    if (!this.rooms || this.rooms.length === 0) {
-      this.rooms = this.loadSavedRooms()
+    if (this._fetchingRoomsPromise) {
+      return this._fetchingRoomsPromise
     }
 
-    try {
-      const token = wazoService.getToken()
-      if (token) {
-        const host = wazoService.host.startsWith('http')
-          ? wazoService.host
-          : `https://${wazoService.host}`
+    this._fetchingRoomsPromise = (async () => {
+      try {
+        if (!this.rooms || this.rooms.length === 0) {
+          this.rooms = this.loadSavedRooms()
+        }
 
-        const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms`, {
-          headers: { 'X-Auth-Token': token },
-          signal: AbortSignal.timeout(3000),
-        })
+        const token = wazoService.getToken()
+        if (token) {
+          const host = wazoService.host.startsWith('http')
+            ? wazoService.host
+            : `https://${wazoService.host}`
 
-        if (res.ok) {
-          const data = await res.json()
-          if (data.items && data.items.length > 0) {
-            // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
-            const serverRooms = data.items.map((room) => {
-              const existing = (this.rooms || []).find((r) => r.id === room.uuid)
-              return {
-                id: room.uuid,
-                title: room.name || 'Phòng thảo luận',
-                preview: existing?.preview || 'Cuộc trò chuyện mới',
-                time: existing?.time || '',
-                unread: existing?.unread || 0,
-                avatarBg: existing?.avatarBg || '#3b82f6',
-                icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
-                messages: existing?.messages || [],
-                members: existing?.members || [],
-                pinned: existing?.pinned || '',
-                updatedAt: existing?.updatedAt || Date.now(),
+          const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms`, {
+            headers: { 'X-Auth-Token': token },
+            signal: AbortSignal.timeout(3000),
+          })
+
+          if (res.ok) {
+            const data = await res.json()
+            if (data.items && data.items.length > 0) {
+              // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
+              const serverRooms = data.items.map((room) => {
+                const existing = (this.rooms || []).find((r) => r.id === room.uuid)
+                return {
+                  id: room.uuid,
+                  title: room.name || 'Phòng thảo luận',
+                  preview: existing?.preview || 'Cuộc trò chuyện mới',
+                  time: existing?.time || '',
+                  unread: existing?.unread || 0,
+                  avatarBg: existing?.avatarBg || '#3b82f6',
+                  icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
+                  messages: existing?.messages || [],
+                  members: existing?.members || [],
+                  pinned: existing?.pinned || '',
+                  updatedAt: existing?.updatedAt || Date.now(),
+                }
+              })
+
+              // Giữ lại các phòng chat 1-1 (direct rooms) đã tạo
+              const directRooms = (this.rooms || []).filter(
+                (r) => r.isDirect || (r.id && r.id.startsWith('direct-')),
+              )
+              const merged = [...serverRooms]
+              for (const dr of directRooms) {
+                if (!merged.some((m) => m.id === dr.id)) {
+                  merged.push(dr)
+                }
               }
-            })
-
-            // Giữ lại các phòng chat 1-1 (direct rooms) đã tạo
-            const directRooms = (this.rooms || []).filter(
-              (r) => r.isDirect || (r.id && r.id.startsWith('direct-')),
-            )
-            const merged = [...serverRooms]
-            for (const dr of directRooms) {
-              if (!merged.some((m) => m.id === dr.id)) {
-                merged.push(dr)
-              }
+              this.rooms = merged
+              this.saveRooms(true) // Silent: không kích hoạt vòng lặp sự kiện
+              return [...this.rooms]
             }
-            this.rooms = merged
-            this.saveRooms()
-            return [...this.rooms]
           }
         }
+      } catch (err) {
+        /* Fallback sang local rooms */
+      } finally {
+        this._fetchingRoomsPromise = null
       }
-    } catch (err) {
-      /* Fallback sang local rooms */
-    }
 
-    this.sortRooms()
-    return [...(this.rooms || [])]
+      this.sortRooms()
+      return [...(this.rooms || [])]
+    })()
+
+    return this._fetchingRoomsPromise
   }
 
   /**
@@ -252,7 +265,7 @@ class ChatService {
             })
             if (localRoom) {
               localRoom.messages = mapped
-              this.saveRooms()
+              this.saveRooms(true)
             }
             return mapped
           }

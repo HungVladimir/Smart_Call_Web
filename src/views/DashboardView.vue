@@ -219,7 +219,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { contactService } from '@/services/contactService'
 import { chatService } from '@/services/chatService'
@@ -227,6 +227,10 @@ import { historyService } from '@/services/historyService'
 import { isFeatureEnabled } from '@/config/features'
 
 const router = useRouter()
+
+const isViewActive = ref(true)
+let isLoadingDashboard = false
+let debounceTimer = null
 
 const userName = ref(localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const userExtension = ref(localStorage.getItem('smartcall_extension') || '1001')
@@ -258,80 +262,96 @@ const quickContacts = ref([])
 // Cuộc gọi gần đây (động theo lịch sử CDR)
 const recentCalls = ref([])
 
-// Tải toàn bộ dữ liệu thống kê động từ các service
+// Tải toàn bộ dữ liệu thống kê động từ các service (Có khóa bảo vệ chống spam lặp vô tận)
 const loadDashboardData = async () => {
-  // 1. Cập nhật thông tin User hiện tại
-  userName.value = localStorage.getItem('smartcall_username') || 'Quản trị viên'
-  userExtension.value = localStorage.getItem('smartcall_extension') || '1001'
+  if (!isViewActive.value || isLoadingDashboard) return
+  isLoadingDashboard = true
 
-  // 2. Tải thống kê Danh bạ nội bộ
   try {
-    const contacts = await contactService.getContacts()
-    if (Array.isArray(contacts)) {
-      totalContactsCount.value = contacts.length
-      onlineContactsCount.value =
-        contacts.filter((c) => c.status === 'online' || c.status === 'available').length ||
-        contacts.length
+    // 1. Cập nhật thông tin User hiện tại
+    userName.value = localStorage.getItem('smartcall_username') || 'Quản trị viên'
+    userExtension.value = localStorage.getItem('smartcall_extension') || '1001'
 
-      // Cập nhật phím tắt danh bạ thường gọi
-      const mappedQuick = contacts.slice(0, 5).map((c) => ({
-        name: c.name,
-        ext: String(c.number || c.extension || '1000'),
-      }))
-      quickContacts.value = mappedQuick
+    // 2. Tải thống kê Danh bạ nội bộ
+    try {
+      const contacts = await contactService.getContacts()
+      if (Array.isArray(contacts)) {
+        totalContactsCount.value = contacts.length
+        onlineContactsCount.value =
+          contacts.filter((c) => c.status === 'online' || c.status === 'available').length ||
+          contacts.length
+
+        // Cập nhật phím tắt danh bạ thường gọi
+        const mappedQuick = contacts.slice(0, 5).map((c) => ({
+          name: c.name,
+          ext: String(c.number || c.extension || '1000'),
+        }))
+        quickContacts.value = mappedQuick
+      }
+    } catch (e) {
+      console.warn('Lỗi tải danh bạ cho Dashboard:', e)
     }
-  } catch (e) {
-    console.warn('Lỗi tải danh bạ cho Dashboard:', e)
-  }
 
-  // 3. Tải thống kê Tin nhắn & Phòng chat
-  try {
-    const rooms = await chatService.getRooms()
-    if (Array.isArray(rooms)) {
-      activeRoomsCount.value = rooms.length
-      totalUnreadMessages.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
+    // 3. Tải thống kê Tin nhắn & Phòng chat
+    try {
+      const rooms = await chatService.getRooms()
+      if (Array.isArray(rooms)) {
+        activeRoomsCount.value = rooms.length
+        totalUnreadMessages.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
+      }
+    } catch (e) {
+      console.warn('Lỗi tải phòng chat cho Dashboard:', e)
     }
-  } catch (e) {
-    console.warn('Lỗi tải phòng chat cho Dashboard:', e)
-  }
 
-  // 4. Tải thống kê Lịch sử cuộc gọi (CDR)
-  try {
-    const history = await historyService.getHistory()
-    if (Array.isArray(history)) {
-      totalCallsCount.value = history.length
-      inboundCallsCount.value = history.filter(
-        (h) => h.direction === 'inbound' || h.direction === 'incoming',
-      ).length
-      outboundCallsCount.value = history.filter(
-        (h) => h.direction === 'outbound' || h.direction === 'outgoing',
-      ).length
-      missedCallsCount.value = history.filter(
-        (h) => h.status === 'missed' || h.status === 'declined' || !h.answered,
-      ).length
+    // 4. Tải thống kê Lịch sử cuộc gọi (CDR)
+    try {
+      const history = await historyService.getHistory()
+      if (Array.isArray(history)) {
+        totalCallsCount.value = history.length
+        inboundCallsCount.value = history.filter(
+          (h) => h.direction === 'inbound' || h.direction === 'incoming',
+        ).length
+        outboundCallsCount.value = history.filter(
+          (h) => h.direction === 'outbound' || h.direction === 'outgoing',
+        ).length
+        missedCallsCount.value = history.filter(
+          (h) => h.status === 'missed' || h.status === 'declined' || !h.answered,
+        ).length
 
-      // Cập nhật danh sách 3 cuộc gọi gần nhất
-      recentCalls.value = history.slice(0, 3).map((item, idx) => {
-        const timePart = item.date ? item.date.split(' ')[1]?.slice(0, 5) : 'Vừa xong'
-        const s = parseInt(item.duration, 10) || 0
-        const m = Math.floor(s / 60)
-        const rem = s % 60
-        const durStr = `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
+        // Cập nhật danh sách 3 cuộc gọi gần nhất
+        recentCalls.value = history.slice(0, 3).map((item, idx) => {
+          const timePart = item.date ? item.date.split(' ')[1]?.slice(0, 5) : 'Vừa xong'
+          const s = parseInt(item.duration, 10) || 0
+          const m = Math.floor(s / 60)
+          const rem = s % 60
+          const durStr = `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
 
-        return {
-          id: item.id || idx,
-          name: item.name || `Máy lẻ ${item.extension}`,
-          ext: item.extension || '1000',
-          direction:
-            item.direction === 'inbound' || item.direction === 'incoming' ? 'inbound' : 'outbound',
-          time: timePart || '12:00',
-          duration: durStr,
-        }
-      })
+          return {
+            id: item.id || idx,
+            name: item.name || `Máy lẻ ${item.extension}`,
+            ext: item.extension || '1000',
+            direction:
+              item.direction === 'inbound' || item.direction === 'incoming' ? 'inbound' : 'outbound',
+            time: timePart || '12:00',
+            duration: durStr,
+          }
+        })
+      }
+    } catch (e) {
+      console.warn('Lỗi tải lịch sử CDR cho Dashboard:', e)
     }
-  } catch (e) {
-    console.warn('Lỗi tải lịch sử CDR cho Dashboard:', e)
+  } finally {
+    isLoadingDashboard = false
   }
+}
+
+// Debounce chống kích hoạt dồn dập nhiều lần trong vài mili-giây
+const debouncedLoadData = () => {
+  if (!isViewActive.value) return
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    loadDashboardData()
+  }, 400)
 }
 
 const navigateTo = (path) => {
@@ -370,17 +390,36 @@ const onPhoneRegistered = () => {
 }
 
 onMounted(() => {
-  loadDashboardData()
-  window.addEventListener('smartcall-cdr-updated', loadDashboardData)
-  window.addEventListener('smartcall-rooms-updated', loadDashboardData)
-  window.addEventListener('smartcall-contacts-updated', loadDashboardData)
+  isViewActive.value = true
+  debouncedLoadData()
+  window.addEventListener('smartcall-cdr-updated', debouncedLoadData)
+  window.addEventListener('smartcall-rooms-updated', debouncedLoadData)
+  window.addEventListener('smartcall-contacts-updated', debouncedLoadData)
   window.addEventListener('wazo-registered', onPhoneRegistered)
 })
 
+onActivated(() => {
+  isViewActive.value = true
+  debouncedLoadData()
+})
+
+onDeactivated(() => {
+  isViewActive.value = false
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+})
+
 onUnmounted(() => {
-  window.removeEventListener('smartcall-cdr-updated', loadDashboardData)
-  window.removeEventListener('smartcall-rooms-updated', loadDashboardData)
-  window.removeEventListener('smartcall-contacts-updated', loadDashboardData)
+  isViewActive.value = false
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  window.removeEventListener('smartcall-cdr-updated', debouncedLoadData)
+  window.removeEventListener('smartcall-rooms-updated', debouncedLoadData)
+  window.removeEventListener('smartcall-contacts-updated', debouncedLoadData)
   window.removeEventListener('wazo-registered', onPhoneRegistered)
 })
 </script>
