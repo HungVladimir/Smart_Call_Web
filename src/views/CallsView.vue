@@ -367,29 +367,28 @@
                   {{ c.isFavorite ? '⭐' : '☆' }}
                 </button>
 
-                <!-- Avatar & Status Dot Indicator (Chuẩn statusOf) -->
-                <div class="avatar-wrap" :title="`${c.name} • ${c.statusLabel || 'Ngoại tuyến'}`">
+                <!-- Avatar tròn chữ cái -->
+                <div class="avatar-wrap">
                   <div class="contact-avatar" :style="{ backgroundColor: getAvatarColor(c.name) }">
                     {{ getInitials(c.name) }}
                   </div>
-                  <span
-                    class="avatar-status-dot"
-                    :class="`status-${c.status || 'offline'}`"
-                    :title="c.statusLabel || 'Ngoại tuyến'"
-                  ></span>
                 </div>
 
-                <!-- Thông tin nhân viên -->
+                <!-- Thông tin nhân viên (Chấm màu đặt ngay trước Tên nhân viên) -->
                 <div class="contact-meta">
                   <div class="meta-row-top">
-                    <strong class="contact-name" :title="c.name">{{ c.name }}</strong>
+                    <div class="name-status-group">
+                      <span
+                        class="status-dot-inline"
+                        :class="`dot-${c.status || 'offline'}`"
+                        :title="`${c.name}: ${c.statusLabel || 'Ngoại tuyến'}`"
+                      ></span>
+                      <strong class="contact-name" :title="c.name">{{ c.name }}</strong>
+                    </div>
                   </div>
                   <div class="meta-row-sub">
                     <span class="ext-badge">📞 {{ c.number || 'Chưa gán' }}</span>
-                    <span class="dept-text" :title="c.dept">{{ c.dept || 'Khối Kỹ thuật' }}</span>
-                    <span class="status-text-sub" :class="`sub-${c.status || 'offline'}`">
-                      • {{ c.statusLabel || 'Ngoại tuyến' }}
-                    </span>
+                    <span class="dept-text" :title="c.dept">• {{ c.dept || 'Khối Kỹ thuật' }}</span>
                   </div>
                 </div>
 
@@ -923,7 +922,7 @@ onUnmounted(() => {
 
 <style scoped>
 .calls-view {
-  max-width: 1360px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 0 4px;
 }
@@ -1043,10 +1042,10 @@ onUnmounted(() => {
    ADAPTIVE 3-TIER GRID SYSTEM
    ========================================================================= */
 
-/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối */
+/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 300px, Đàm thoại 420px, Danh bạ 1fr mở rộng) */
 .calls-grid-layout {
   display: grid;
-  grid-template-columns: 310px 1fr 410px;
+  grid-template-columns: 300px 420px 1fr;
   grid-template-areas: 'dialer status contacts';
   gap: 20px;
   align-items: start;
@@ -1551,7 +1550,8 @@ onUnmounted(() => {
   background: #ffffff;
   border: 1px solid #f1f5f9;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 10px 14px;
+  gap: 12px;
   transition: all 0.15s ease;
 }
 
@@ -1607,43 +1607,12 @@ onUnmounted(() => {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
-.avatar-status-dot {
-  position: absolute;
-  bottom: -1px;
-  right: -1px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 2px solid white;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-}
-
-.status-online {
-  background: #10b981;
-}
-.status-busy {
-  background: #ef4444;
-}
-.status-ringing {
-  background: #3b82f6;
-  animation: pulse-ring 1s infinite;
-}
-.status-dnd {
-  background: #f97316;
-}
-.status-away {
-  background: #f59e0b;
-}
-.status-offline {
-  background: #94a3b8;
-}
-
 .contact-meta {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .meta-row-top {
@@ -1653,37 +1622,47 @@ onUnmounted(() => {
   gap: 6px;
 }
 
+.name-status-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.status-dot-inline {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.status-dot-inline.dot-online {
+  background: #22c55e;
+}
+.status-dot-inline.dot-busy {
+  background: #ef4444;
+}
+.status-dot-inline.dot-ringing {
+  background: #3b82f6;
+  animation: pulse-ring 1s infinite;
+}
+.status-dot-inline.dot-dnd {
+  background: #f97316;
+}
+.status-dot-inline.dot-away {
+  background: #eab308;
+}
+.status-dot-inline.dot-offline {
+  background: #94a3b8;
+}
+
 .contact-name {
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   color: #1e293b;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.status-text-sub {
-  font-size: 0.72rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.status-text-sub.sub-online {
-  color: #059669;
-}
-.status-text-sub.sub-busy {
-  color: #dc2626;
-}
-.status-text-sub.sub-ringing {
-  color: #2563eb;
-}
-.status-text-sub.sub-dnd {
-  color: #ea580c;
-}
-.status-text-sub.sub-away {
-  color: #b45309;
-}
-.status-text-sub.sub-offline {
-  color: #94a3b8;
 }
 
 .meta-row-sub {

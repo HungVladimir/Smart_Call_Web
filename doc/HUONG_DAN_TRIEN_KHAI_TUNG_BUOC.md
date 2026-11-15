@@ -1688,6 +1688,61 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 581ms).
 * `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 591ms).
 
+---
+
+## 29. TÁI CÂN ĐỐI TỶ LỆ BỐ CỤC 3 CỘT (REBALANCE 3-COLUMN GRID) VÀ CHUẨN HÓA CHẤM TRẠNG THÁI TRỰC TIẾP TRƯỚC TÊN NHÂN VIÊN THEO THIẾT KẾ MẪU
+
+### 1. Động lực & Phân tích Tối ưu:
+* **Vấn đề kích thước khung đàm thoại & danh bạ:**
+  - Ở phiên bản trước (`310px 1fr 410px`), khung đàm thoại ở giữa (`ActiveCallPanel`) chiếm độ rộng tự do `1fr` lên tới $\sim 600\text{ px}$. Ở trạng thái chờ (Idle) hoặc cả khi đang đàm thoại thoại (Voice Audio-Only), khung này quá to và trống trải, gây lãng phí diện tích hiển thị.
+  - Ngược lại, Cột 3 Danh bạ bị cố định ở $410\text{ px}$ trong khi phải chứa rất nhiều thông tin (Icon sao yêu thích, Avatar, Tên nhân viên, Số máy lẻ, Phòng ban, Nút Gọi 📞, Nút Chat 💬), khiến các dòng liên hệ bị chật chội khi tên hoặc tên phòng ban dài.
+* **Chuẩn hóa vị trí Dấu chấm trạng thái (Inline Status Dot) theo tài liệu mẫu (`FileQuest/app4.webp`):**
+  - Trong tài liệu thiết kế danh bạ mẫu chuẩn (`app4.webp`), mỗi dòng danh bạ được tổ chức cực kỳ trực quan:
+    `[Avatar tròn chữ cái]  🟢 [Tên nhân viên]`
+    `                       📞 [Số máy lẻ] • [Phòng ban]`
+  - Dấu chấm trạng thái màu tròn (xanh lá, đỏ, cam, xám...) được đặt **ngay trước Tên nhân viên**, giúp mắt người dùng dễ dàng nhận diện trạng thái online/offline của đồng nghiệp ngay trong một cái liếc nhìn, không cần dùng badge chữ nhật hay dòng text phụ rườm rà.
+
+### 2. Các nội dung kỹ thuật đã triển khai:
+1. **`src/views/CallsView.vue`:**
+   - **Tái cấu trúc lưới bố cục 3 cột (`.calls-grid-layout`):**
+     - Chuyển từ `grid-template-columns: 310px 1fr 410px` sang:
+       ```css
+       grid-template-columns: 300px 420px 1fr;
+       ```
+     - Cột 1 (Bàn phím Dialer): $300\text{ px}$ - Giữ form bấm số vuông vức, đầm tay.
+     - Cột 2 (Khung đàm thoại): Thu gọn về $420\text{ px}$ - Vừa vặn hoàn hảo cho vòng tròn trạng thái, tên đối phương, sóng âm thanh và cụm nút điều khiển đàm thoại, không còn cảm giác bị to hay loãng.
+     - Cột 3 (Danh bạ liên hệ): Chiếm phần còn lại `1fr` ($\sim 640\text{ px}$) - Rộng rãi, thoáng đãng, hiển thị đầy đủ tên dài, phòng ban và 2 nút hành động lớn.
+     - Tăng độ rộng tối đa toàn màn hình `.calls-view`: Từ $1360\text{ px}$ lên $1400\text{ px}$.
+   - **Định vị Chấm trạng thái Inline (`.status-dot-inline`) ngay trước Tên:**
+     - Tạo cụm `.name-status-group` (`display: flex; align-items: center; gap: 8px;`):
+       ```html
+       <div class="name-status-group">
+         <span class="status-dot-inline" :class="`dot-${c.status || 'offline'}`" :title="`${c.name}: ${c.statusLabel || 'Ngoại tuyến'}`"></span>
+         <strong class="contact-name" :title="c.name">{{ c.name }}</strong>
+       </div>
+       ```
+     - Chấm trạng thái có kích thước $9 \times 9\text{ px}$, bo tròn `50%`, đổ bóng nhẹ `0 1px 2px rgba(0,0,0,0.15)`.
+     - Phản ánh chính xác 6 mã màu:
+       - 🟢 `.dot-online`: `#22c55e` (Sẵn sàng)
+       - 🔴 `.dot-busy`: `#ef4444` (Đang bận / Trong cuộc gọi)
+       - 🔵 `.dot-ringing`: `#3b82f6` (Đang đổ chuông + hiệu ứng pulse)
+       - 🟠 `.dot-dnd`: `#f97316` (Không làm phiền)
+       - 🟡 `.dot-away`: `#eab308` (Vắng mặt)
+       - ⚪ `.dot-offline`: `#94a3b8` (Ngoại tuyến)
+     - Dọn sạch chấm ở góc avatar và text phụ thừa ở dòng dưới (`📞 {{ c.number }} • {{ c.dept }}`).
+   - **Tối ưu hóa thẻ liên hệ (`.contact-item-card`):**
+     - Tăng khoảng đệm: `padding: 10px 14px; gap: 12px;`
+     - Tăng cỡ chữ tên nhân viên lên `0.92rem` đậm nét, rõ ràng.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Sao chép đồng bộ 100% cấu trúc template và CSS của `CallsView.vue` sang `Smart_Call_Web_Mock`.
+* Bảo toàn nguyên vẹn mọi logic mock data và cơ chế kiểm thử offline.
+
+### 4. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 452ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 412ms).
+
+
 
 
 
