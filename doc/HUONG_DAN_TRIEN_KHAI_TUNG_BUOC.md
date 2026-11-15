@@ -1646,6 +1646,48 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 415ms).
 * `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 467ms).
 
+---
+
+## 28. LOẠI BỎ Ô TÌM KIẾM HEADER & CHUẨN HÓA DẤU CHẤM TRẠNG THÁI PRESENCE (STATUS DOTS) THEO MÃ NGUỒN THAM CHIẾU MẪU
+
+### 1. Động lực & Cơ sở Tối ưu:
+* **Loại bỏ trùng lặp tìm kiếm:** Sau khi gộp phân hệ Danh bạ sang hiển thị song song ngay tại tab Gọi điện (`CallsView.vue`), Cột 3 đã có thanh tìm kiếm chuyên dụng đầy đủ tính năng. Việc duy trì thêm một ô tìm kiếm trên thanh Top Header (`AppHeader.vue`) là thừa thãi, gây rối thị giác và tạo cảm giác "2 ô tìm kiếm nhìn nhau".
+* **Chuẩn hóa trạng thái Hiện diện (Presence) theo mã nguồn tham chiếu mẫu:**
+  - Badge chữ nhật to đùng mang chữ *"Trực tuyến"* / *"Ngoại tuyến"* trước đây chiếm mất $\sim 80\text{ px}$ chiều ngang mỗi dòng, ép sát các nút thao tác Gọi 📞 và Chat 💬 vào viền ngoài và không thể hiện được các trạng thái thời gian thực như Đang gọi (Busy), Đang đổ chuông (Ringing), Không làm phiền (DND), Vắng mặt (Away).
+  - Đối chiếu mã nguồn tham chiếu mẫu Wazo (`FileQuest/codeAnhHai.txt` & `fileLoginAnhHai.txt`), hệ thống đã chuyển sang dùng chấm tròn trạng thái (Status Dot Indicator) gắn ở góc Avatar và nhãn text tinh tế ở dòng phụ.
+
+### 2. Các nội dung kỹ thuật đã triển khai:
+1. **`src/components/layout/AppHeader.vue`:**
+   - Xóa bỏ hoàn toàn khối `<div class="header-center">` (ô tìm kiếm và dropdown autocomplete).
+   - Dọn sạch toàn bộ state và methods liên quan đến tìm kiếm header (`searchQuery`, `showDropdown`, `matchingContacts`, `quickCall`, `quickChat`, click outside listeners).
+   - Tối ưu CSS `.app-header` sang `justify-content: space-between`, giúp thanh Header vô cùng thông thoáng, cân đối: bên trái là Logo + SIP Badge, bên phải là User Profile + Cài đặt + Thoát.
+   - Thêm thuộc tính `aria-label="Trạng thái hiện diện trực tuyến"` cho combobox select.
+2. **`src/views/CallsView.vue`:**
+   - Sửa lỗi chính tả lặp từ tại phụ đề trang: *"Quản trị đàm thoại WebRTC và tra cứu danh bạ máy lẻ nội bộ"*.
+   - **Gỡ bỏ badge chữ nhật `.status-pill` cồng kềnh**, giải phóng $\sim 80\text{ px}$ chiều rộng cho thẻ liên hệ.
+   - **Tích hợp Chấm tròn Trạng thái nổi góc Avatar (`.avatar-status-dot`)**:
+     - Kích thước $11 \times 11\text{ px}$, viền trắng $2\text{ px}$, đổ bóng nhẹ.
+     - Phản ánh chuẩn xác 6 trạng thái thời gian thực theo hàm `statusOf(uuid)`:
+       - 🟢 Xanh lá (`#10b981` / `#22c55e`): Sẵn sàng (*Online*)
+       - 🔴 Đỏ (`#ef4444`): Đang bận / Trong cuộc gọi (*Busy*)
+       - 🔵 Xanh dương (`#3b82f6`): Đang đổ chuông (*Ringing*) kèm animation pulse
+       - 🟠 Cam (`#f97316`): Không làm phiền (*DND*)
+       - 🟡 Vàng (`#f59e0b`): Vắng mặt (*Away*)
+       - ⚪ Xám (`#94a3b8`): Ngoại tuyến (*Offline*)
+   - **Dòng phụ dưới tên**: Bổ sung text trạng thái tinh tế (`.status-text-sub`): `📞 1001 • Khối Kỹ thuật • Sẵn sàng`.
+   - **Mở rộng kích thước nút Gọi 📞 và Chat 💬**: Nâng lên $34 \times 34\text{ px}$, bo góc $8\text{ px}$, khoảng cách $6\text{ px}$, đạt chuẩn WCAG AA Tap Target.
+   - **Mở rộng vùng đệm nút ⭐ yêu thích**: Thêm `min-width: 32px; min-height: 32px;` đạt chuẩn điểm chạm.
+   - **Tối ưu chiều cao Card Danh bạ**: Giảm `min-height` từ 480px xuống 240px, giúp card tự co giãn vừa vặn với số lượng liên hệ, triệt tiêu mảng trắng thừa ở đáy.
+   - Bổ sung đầy đủ các nhãn công nghệ hỗ trợ: `aria-label` cho ô nhập số máy lẻ, ô tìm kiếm danh bạ, nút xóa tìm kiếm, nút làm mới danh bạ.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Đồng bộ 100% các cập nhật trên sang `Smart_Call_Web_Mock`.
+* Giữ nguyên vẹn toàn bộ các khối dữ liệu mẫu và cơ chế chạy thử nghiệm Offline.
+
+### 4. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 581ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 591ms).
+
 
 
 

@@ -5,7 +5,7 @@
       <div class="header-titles">
         <h1>Gọi điện & Danh bạ</h1>
         <span class="sub-text"
-          >Quản trị đàm thoại thoại WebRTC và tra cứu danh bạ máy lẻ nội bộ</span
+          >Quản trị đàm thoại WebRTC và tra cứu danh bạ máy lẻ nội bộ</span
         >
       </div>
     </div>
@@ -60,6 +60,7 @@
               v-model="extension"
               type="tel"
               placeholder="Nhập số máy lẻ..."
+              aria-label="Nhập số máy lẻ cần gọi"
               maxlength="8"
               @keyup.enter="handleDial"
             />
@@ -95,6 +96,7 @@
               class="btn-clear"
               :class="{ visible: Boolean(extension) }"
               title="Xóa một số"
+              aria-label="Xóa ký tự cuối"
               :disabled="!extension"
               @click="clearDigit"
             >
@@ -148,7 +150,7 @@
             </div>
 
             <div class="caller-details">
-              <h3>{{ callerName }}</h3>
+              <h2>{{ callerName }}</h2>
               <p class="sip-uri">{{ callerSip }}</p>
               <p
                 v-if="isCalling"
@@ -283,15 +285,25 @@
               <input
                 v-model="searchTerm"
                 placeholder="Tìm nhân viên, số máy lẻ..."
+                aria-label="Tìm kiếm trong danh bạ"
                 class="search-input"
               />
-              <button v-if="searchTerm" class="btn-clear-search" @click="clearSearch">✖</button>
+              <button
+                v-if="searchTerm"
+                class="btn-clear-search"
+                title="Xóa tìm kiếm"
+                aria-label="Xóa từ khóa tìm kiếm"
+                @click="clearSearch"
+              >
+                ✖
+              </button>
             </div>
 
             <button
               class="btn-refresh"
               :disabled="loadingContacts"
               title="Làm mới danh bạ từ máy chủ"
+              aria-label="Làm mới danh bạ từ máy chủ"
               @click="refreshContacts"
             >
               <span :class="{ 'spin-icon': loadingContacts }">↻</span>
@@ -349,30 +361,35 @@
                   class="btn-star"
                   :class="{ active: c.isFavorite }"
                   :title="c.isFavorite ? 'Bỏ khỏi yêu thích' : 'Thêm vào yêu thích'"
+                  :aria-label="c.isFavorite ? 'Bỏ khỏi yêu thích' : 'Thêm vào yêu thích'"
                   @click.stop="toggleFavorite(c)"
                 >
                   {{ c.isFavorite ? '⭐' : '☆' }}
                 </button>
 
-                <!-- Avatar & Status Dot -->
-                <div class="avatar-wrap">
+                <!-- Avatar & Status Dot Indicator (Chuẩn statusOf) -->
+                <div class="avatar-wrap" :title="`${c.name} • ${c.statusLabel || 'Ngoại tuyến'}`">
                   <div class="contact-avatar" :style="{ backgroundColor: getAvatarColor(c.name) }">
                     {{ getInitials(c.name) }}
                   </div>
-                  <span class="avatar-status-dot" :class="`status-${c.status || 'offline'}`"></span>
+                  <span
+                    class="avatar-status-dot"
+                    :class="`status-${c.status || 'offline'}`"
+                    :title="c.statusLabel || 'Ngoại tuyến'"
+                  ></span>
                 </div>
 
                 <!-- Thông tin nhân viên -->
                 <div class="contact-meta">
                   <div class="meta-row-top">
                     <strong class="contact-name" :title="c.name">{{ c.name }}</strong>
-                    <span class="status-pill" :class="`pill-${c.status || 'offline'}`">
-                      {{ c.statusLabel || 'Ngoại tuyến' }}
-                    </span>
                   </div>
                   <div class="meta-row-sub">
                     <span class="ext-badge">📞 {{ c.number || 'Chưa gán' }}</span>
                     <span class="dept-text" :title="c.dept">{{ c.dept || 'Khối Kỹ thuật' }}</span>
+                    <span class="status-text-sub" :class="`sub-${c.status || 'offline'}`">
+                      • {{ c.statusLabel || 'Ngoại tuyến' }}
+                    </span>
                   </div>
                 </div>
 
@@ -380,7 +397,8 @@
                 <div class="contact-actions">
                   <button
                     class="btn-action-icon call"
-                    title="Gọi thoại qua WebRTC"
+                    :title="`Gọi máy lẻ ${c.number || ''}`"
+                    :aria-label="`Gọi cho ${c.name}`"
                     :disabled="isCalling"
                     @click.stop="handleCallFromPanel(c)"
                   >
@@ -388,7 +406,8 @@
                   </button>
                   <button
                     class="btn-action-icon chat"
-                    title="Mở tin nhắn"
+                    :title="`Nhắn tin với ${c.name}`"
+                    :aria-label="`Nhắn tin cho ${c.name}`"
                     @click.stop="handleMessage(c)"
                   >
                     💬
@@ -1266,6 +1285,7 @@ onUnmounted(() => {
   }
 }
 
+.caller-details h2,
 .caller-details h3 {
   font-size: 1.25rem;
   font-weight: 700;
@@ -1386,7 +1406,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  min-height: 480px;
+  min-height: 240px;
 }
 
 .panel-header {
@@ -1544,13 +1564,18 @@ onUnmounted(() => {
 .btn-star {
   background: none;
   border: none;
-  font-size: 1.05rem;
+  font-size: 1.1rem;
   cursor: pointer;
   color: #cbd5e1;
   transition:
     transform 0.15s,
     color 0.15s;
-  padding: 2px;
+  padding: 4px;
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -1570,26 +1595,27 @@ onUnmounted(() => {
 }
 
 .contact-avatar {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .avatar-status-dot {
   position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 9px;
-  height: 9px;
+  bottom: -1px;
+  right: -1px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
 .status-online {
@@ -1617,7 +1643,7 @@ onUnmounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .meta-row-top {
@@ -1628,44 +1654,36 @@ onUnmounted(() => {
 }
 
 .contact-name {
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   color: #1e293b;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.status-pill {
-  font-size: 0.68rem;
+.status-text-sub {
+  font-size: 0.72rem;
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 8px;
   white-space: nowrap;
 }
 
-.pill-online {
-  background: #ecfdf5;
+.status-text-sub.sub-online {
   color: #059669;
 }
-.pill-busy {
-  background: #fee2e2;
+.status-text-sub.sub-busy {
   color: #dc2626;
 }
-.pill-ringing {
-  background: #eff6ff;
+.status-text-sub.sub-ringing {
   color: #2563eb;
 }
-.pill-dnd {
-  background: #ffedd5;
+.status-text-sub.sub-dnd {
   color: #ea580c;
 }
-.pill-away {
-  background: #fef3c7;
-  color: #d97706;
+.status-text-sub.sub-away {
+  color: #b45309;
 }
-.pill-offline {
-  background: #f1f5f9;
-  color: #64748b;
+.status-text-sub.sub-offline {
+  color: #94a3b8;
 }
 
 .meta-row-sub {
@@ -1693,21 +1711,22 @@ onUnmounted(() => {
 
 .contact-actions {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
+  margin-left: 6px;
 }
 
 .btn-action-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
   border: 1px solid #e2e8f0;
   background: white;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
+  font-size: 0.92rem;
   transition: all 0.15s;
   position: relative;
 }

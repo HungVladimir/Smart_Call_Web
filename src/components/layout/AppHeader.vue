@@ -16,88 +16,14 @@
       </div>
     </div>
 
-    <!-- Center Search Bar với Menu Gợi Ý Tự Động (Autocomplete) -->
-    <div class="header-center" ref="searchContainerRef">
-      <div class="search-bar">
-        <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-        </svg>
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Tìm nhanh nhân viên, số máy lẻ (VD: 1002)..."
-          @focus="showDropdown = true"
-          @keyup.enter="handleSearch"
-          @keyup.esc="showDropdown = false"
-        />
-        <button
-          v-if="searchQuery"
-          class="btn-clear-search"
-          title="Xóa tìm kiếm"
-          @click="clearSearch"
-        >
-          ✖
-        </button>
-      </div>
-
-      <!-- Dropdown Gợi Ý Kết Quả Tìm Kiếm Nhanh -->
-      <div
-        v-if="showDropdown && searchQuery.trim() && matchingContacts.length > 0"
-        class="search-dropdown"
-      >
-        <div class="dropdown-header">
-          <span>GỢI Ý TÌM KIẾM NHANH ({{ matchingContacts.length }} KẾT QUẢ)</span>
-        </div>
-
-        <div class="dropdown-list">
-          <div
-            v-for="item in matchingContacts"
-            :key="item.id"
-            class="dropdown-item"
-          >
-            <div class="item-avatar" :class="{ offline: item.status === 'offline' }">
-              {{ item.name.slice(0, 1) }}
-            </div>
-
-            <div class="item-info">
-              <div class="item-name-row">
-                <strong>{{ item.name }}</strong>
-                <span class="status-dot" :class="item.status === 'online' ? 'online' : 'offline'"></span>
-              </div>
-              <small class="item-sub">
-                Máy lẻ: <span class="ext-tag">{{ item.number }}</span> • {{ item.dept }}
-              </small>
-            </div>
-
-            <div class="item-actions">
-              <button
-                class="btn-action-icon call"
-                title="Gọi thoại ngay"
-                @click.stop="quickCall(item)"
-              >
-                📞
-              </button>
-              <button
-                class="btn-action-icon chat"
-                title="Nhắn tin ngay"
-                @click.stop="quickChat(item)"
-              >
-                💬
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="dropdown-footer" @click="handleSearch">
-          <span>Xem tất cả kết quả trong Danh bạ ➔</span>
-        </div>
-      </div>
-    </div>
-
     <!-- User Profile & Status Dropdown -->
     <div class="header-right">
-      <select v-model="presenceState" class="status-select" @change="updatePresence">
+      <select
+        v-model="presenceState"
+        class="status-select"
+        aria-label="Trạng thái hiện diện trực tuyến"
+        @change="updatePresence"
+      >
         <option value="available">🟢 Online (Sẵn sàng)</option>
         <option value="away">🟡 Vắng mặt (Away)</option>
         <option value="dnd">🔴 Đang bận (DND)</option>
@@ -164,19 +90,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { contactService } from '@/services/contactService'
 import { wazoService, callStore } from '@/services/wazo'
 
 const router = useRouter()
 defineEmits(['logout', 'open-settings'])
 
-const searchQuery = ref('')
 const presenceState = ref('available')
-const showDropdown = ref(false)
-const searchContainerRef = ref(null)
-const contactsList = ref([])
 
 // Lấy thông tin tài khoản đang đăng nhập đồng bộ từ callStore (SSOT)
 const userName = computed(() => callStore.myUserName || localStorage.getItem('smartcall_username') || 'Quản trị viên')
@@ -192,51 +113,6 @@ const showSipHelp = () => {
   showSipInfoModal.value = true
 }
 
-onMounted(async () => {
-  try {
-    contactsList.value = await contactService.getContacts()
-  } catch (e) {
-    /* ignore */
-  }
-  document.addEventListener('click', handleClickOutside)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
-})
-
-const handleClickOutside = (e) => {
-  if (searchContainerRef.value && !searchContainerRef.value.contains(e.target)) {
-    showDropdown.value = false
-  }
-}
-
-// Hàm xóa dấu tiếng Việt phục vụ tìm kiếm không dấu
-const removeVietnameseTones = (str) => {
-  return (str || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase()
-    .trim()
-}
-
-// Lọc tối đa 5 kết quả trùng khớp cho thanh Autocomplete (hỗ trợ tiếng Việt không dấu)
-const matchingContacts = computed(() => {
-  const q = searchQuery.value.trim()
-  if (!q) return []
-  const cleanQ = removeVietnameseTones(q)
-  return contactsList.value
-    .filter((c) => {
-      const nameNorm = removeVietnameseTones(c.name || '')
-      const deptNorm = removeVietnameseTones(c.dept || '')
-      const numNorm = String(c.number || '').toLowerCase()
-      return nameNorm.includes(cleanQ) || deptNorm.includes(cleanQ) || numNorm.includes(cleanQ)
-    })
-    .slice(0, 5)
-})
-
 const userInitials = computed(() => {
   if (!userName.value) return 'U'
   return userName.value
@@ -249,80 +125,6 @@ const userInitials = computed(() => {
 
 const goHome = () => {
   router.push('/calls')
-}
-
-const clearSearch = () => {
-  searchQuery.value = ''
-  showDropdown.value = false
-}
-
-const handleSearch = () => {
-  showDropdown.value = false
-  if (searchQuery.value.trim()) {
-    router.push({ path: '/calls', query: { q: searchQuery.value.trim() } })
-  }
-}
-
-// Gọi nhanh từ dropdown
-const quickCall = (contact) => {
-  showDropdown.value = false
-
-  if (contact.status === 'busy' || contact.status === 'talking' || contact.status === 'holding') {
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `🚫 [${contact.name}] hiện đang trong cuộc gọi khác (Máy bận)!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-  if (contact.status === 'ringing') {
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `🔔 [${contact.name}] hiện đang nhận một cuộc gọi khác!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-  if (contact.status === 'dnd') {
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `🔕 [${contact.name}] đang bật chế độ Không làm phiền (DND)!`,
-          type: 'warning',
-        },
-      }),
-    )
-    return
-  }
-  if (contact.status === 'offline' || contact.status === 'unavailable') {
-    const confirmMessage = confirm(
-      `Máy lẻ [${contact.name} - ${contact.number}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
-    )
-    if (confirmMessage) {
-      quickChat(contact)
-    }
-    return
-  }
-
-  router.push({
-    path: '/calls',
-    query: { number: contact.number, autocall: 'true' },
-  })
-}
-
-// Nhắn tin nhanh từ dropdown
-const quickChat = (contact) => {
-  showDropdown.value = false
-  router.push({
-    path: '/messages',
-    query: { ext: contact.number, name: contact.name },
-  })
 }
 
 const updatePresence = async () => {
@@ -378,17 +180,6 @@ const updatePresence = async () => {
   filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.3));
 }
 
-.search-icon-svg {
-  width: 16px;
-  height: 16px;
-  color: #768390;
-  flex-shrink: 0;
-}
-
-.search-bar:focus-within .search-icon-svg {
-  color: #64b5f6;
-}
-
 .sip-status-badge {
   display: flex;
   align-items: center;
@@ -427,211 +218,6 @@ const updatePresence = async () => {
 
 .sip-status-badge.offline .sip-dot {
   background: #94a3b8;
-}
-
-/* Center Search Container with Dropdown */
-.header-center {
-  flex: 1;
-  max-width: 480px;
-  margin: 0 30px;
-  position: relative;
-}
-
-.search-bar {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  background: #2d333b;
-  border-radius: 20px;
-  padding: 6px 14px;
-  border: 1px solid #444c56;
-  transition: border-color 0.2s;
-}
-
-.search-bar:focus-within {
-  border-color: #64b5f6;
-  box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
-}
-
-.search-bar input {
-  background: transparent;
-  border: none;
-  outline: none;
-  color: white;
-  width: 100%;
-  font-size: 0.88rem;
-  margin-left: 8px;
-}
-
-.search-bar input::placeholder {
-  color: #768390;
-}
-
-.btn-clear-search {
-  background: none;
-  border: none;
-  color: #8b949e;
-  cursor: pointer;
-  font-size: 0.8rem;
-  padding: 0 4px;
-}
-
-.btn-clear-search:hover {
-  color: white;
-}
-
-/* Floating Autocomplete Dropdown */
-.search-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin-top: 8px;
-  background: #22272e;
-  border: 1px solid #444c56;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  z-index: 1000;
-  overflow: hidden;
-}
-
-.dropdown-header {
-  padding: 8px 12px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #768390;
-  border-bottom: 1px solid #343a40;
-  background: #1c2128;
-}
-
-.dropdown-list {
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-.dropdown-item {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid #2d333b;
-  gap: 10px;
-  transition: background 0.15s;
-}
-
-.dropdown-item:hover {
-  background: #2d333b;
-}
-
-.item-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #3b82f6;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 0.85rem;
-  flex-shrink: 0;
-}
-
-.item-avatar.offline {
-  background: #64748b;
-}
-
-.item-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.item-name-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.item-name-row strong {
-  font-size: 0.85rem;
-  color: #e6edf3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.status-dot.online {
-  background: #10b981;
-}
-
-.status-dot.offline {
-  background: #94a3b8;
-}
-
-.item-sub {
-  color: #8b949e;
-  font-size: 0.75rem;
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ext-tag {
-  color: #64b5f6;
-  font-weight: 600;
-}
-
-.item-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.btn-action-icon {
-  background: #343a40;
-  border: 1px solid #444c56;
-  border-radius: 4px;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 0.82rem;
-  transition: all 0.15s;
-}
-
-.btn-action-icon.call:hover {
-  background: #10b981;
-  border-color: #10b981;
-}
-
-.btn-action-icon.chat:hover {
-  background: #3b82f6;
-  border-color: #3b82f6;
-}
-
-.dropdown-footer {
-  padding: 8px 12px;
-  background: #1c2128;
-  color: #58a6ff;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-align: center;
-  cursor: pointer;
-  border-top: 1px solid #343a40;
-  transition: background 0.15s;
-}
-
-.dropdown-footer:hover {
-  background: #2d333b;
-  text-decoration: underline;
 }
 
 /* Header Right */
@@ -930,10 +516,6 @@ const updatePresence = async () => {
   }
 
   .header-left .sip-status-badge .sip-status-text {
-    display: none;
-  }
-
-  .header-center {
     display: none;
   }
 
