@@ -66,7 +66,7 @@
             <div class="mic-meter-bar">
               <div class="mic-meter-fill" :style="{ width: `${micLevel}%` }"></div>
             </div>
-            <span class="meter-status" :class="{ active: micLevel > 5 }">{{ micStatusText }}</span>
+            <span class="meter-status" :class="{ active: isVoiceActive }">{{ micStatusText }}</span>
           </div>
         </div>
 
@@ -240,11 +240,17 @@ const selectedMic = ref(localStorage.getItem('smartcall_selected_mic') || 'defau
 const selectedSpeaker = ref(localStorage.getItem('smartcall_selected_speaker') || 'default')
 const ringtoneVol = ref(80)
 
-// Quản lý VU Meter đo tín hiệu Micro thật
+// Quản lý VU Meter đo tín hiệu Micro thật với cơ chế VAD Hangover 1000ms
 const micLevel = ref(0)
+const isVoiceActive = ref(false)
+let lastVoiceTime = 0
+const VAD_THRESHOLD = 10 // Ngưỡng nhận diện giọng nói (%)
+const VAD_HANGOVER_MS = 1000 // Giữ trạng thái ổn định 1 giây (Hangover Time)
+
 const micStatusText = computed(() => {
-  if (micLevel.value > 15) return '🟢 Đang thu âm giọng nói'
-  if (micLevel.value > 2) return '🟡 Tín hiệu micro nhẹ'
+  if (isVoiceActive.value) {
+    return '🟢 Đang nhận tín hiệu giọng nói'
+  }
   return '⚪ Sẵn sàng (Hãy nói vào mic để thử)'
 })
 
@@ -331,12 +337,25 @@ const startMicMeter = async () => {
       }
       const avg = sum / dataArray.length
       // Chuẩn hóa mức âm lượng từ 0% đến 100%
-      micLevel.value = Math.min(100, Math.round((avg / 64) * 100))
+      const currentVol = Math.min(100, Math.round((avg / 64) * 100))
+      micLevel.value = currentVol
+
+      // Thuật toán VAD Hangover:
+      const now = Date.now()
+      if (currentVol >= VAD_THRESHOLD) {
+        isVoiceActive.value = true
+        lastVoiceTime = now
+      } else if (isVoiceActive.value && now - lastVoiceTime > VAD_HANGOVER_MS) {
+        isVoiceActive.value = false
+      }
+
       animFrameId = requestAnimationFrame(updateVolume)
     }
     updateVolume()
   } catch (e) {
     micLevel.value = 0
+    isVoiceActive.value = false
+    lastVoiceTime = 0
     console.warn('Lỗi kết nối Micro đo tín hiệu VU:', e)
   }
 }
@@ -355,6 +374,8 @@ const stopMicMeter = () => {
     audioContext = null
   }
   micLevel.value = 0
+  isVoiceActive.value = false
+  lastVoiceTime = 0
 }
 
 const restartMicMeter = () => {
@@ -641,15 +662,17 @@ const handleSave = () => {
   height: 100%;
   background: linear-gradient(90deg, #22c55e 0%, #eab308 70%, #ef4444 100%);
   border-radius: 4px;
-  transition: width 0.06s ease-out;
+  transition: width 0.08s ease-out;
 }
 
 .meter-status {
   font-size: 0.75rem;
   color: #94a3b8;
   font-weight: 500;
-  min-width: 175px;
+  min-width: 190px;
   text-align: right;
+  white-space: nowrap;
+  transition: color 0.2s ease;
 }
 
 .meter-status.active {

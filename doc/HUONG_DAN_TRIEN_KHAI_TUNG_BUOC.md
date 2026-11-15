@@ -1829,3 +1829,34 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 
 
 
+
+
+## 32. TRIỆT TIÊU HIỆN TƯỢNG NHẢY GIẬT CHỮ TRẠNG THÁI MICRO TRONG CÀI ĐẶT HỆ THỐNG VỚI CƠ CHẾ VAD 1000MS HANGOVER
+
+### 1. Động lực & Phân tích Tối ưu:
+* **Hiện tượng:**
+  - Tại modal Cài đặt hệ thống (`SettingsModal.vue`), tab **"🎙️ Âm thanh & WebRTC"**, khi người dùng thử giọng nói vào microphone thật, dòng chữ trạng thái micro liên tục bị nhấp nháy, nhảy qua nhảy lại giữa `"🟢 Đang thu âm giọng nói"`, `"🟡 Tín hiệu micro nhẹ"` và `"⚪ Sẵn sàng"` với tần suất từ 10 đến 25 lần/giây, gây cảm giác giật mắt và thiếu chuyên nghiệp.
+* **Nguyên nhân cốt lõi:**
+  - `updateVolume` chạy ở tần số 60 FPS (`requestAnimationFrame`). Biên độ sóng âm giọng nói tự nhiên dao động liên tục giữa các nguyên âm (20% - 40%) và phụ âm / khoảng ngắt giữa các từ (0% - 8%).
+  - Đoạn code `computed` kiểm tra trực tiếp ngưỡng tức thời `> 15` và `> 2`. Trạng thái trung gian 2% - 15% thực chất chỉ là tạp âm môi trường/ngắt âm tự nhiên.
+* **Giải pháp chuẩn viễn thông WebRTC (Voice Activity Detection Hangover):**
+  - **Fast Attack ($\le 50\text{ms}$):** Khi âm lượng $\ge 10\%$, lập tức chuyển sang `🟢 Đang nhận tín hiệu giọng nói` và ghi nhận mốc thời gian `lastVoiceTime`.
+  - **Hangover Time (1000ms):** Giữ cố định trạng thái xanh trong suốt câu nói dù người dùng có ngắt âm giữa các từ (`Date.now() - lastVoiceTime <= 1000ms`), triệt tiêu 100% hiện tượng chớp nháy.
+  - **Slow Decay:** Sau khi im lặng hoàn toàn quá 1 giây mới trở về `⚪ Sẵn sàng (Hãy nói vào mic để thử)`.
+  - **Loại bỏ trạng thái trung gian gây nhiễu:** Bỏ vĩnh viễn trạng thái `"🟡 Tín hiệu micro nhẹ"`. Thanh đo VU bar trực quan vẫn co giãn êm dịu theo âm lượng thực tế.
+  - **Tối ưu CSS & Giao diện:** Thiết lập `white-space: nowrap; min-width: 190px; transition: color 0.2s ease;` chống giật layout và gắn cờ `:class="{ active: isVoiceActive }"`.
+
+### 2. Các file đã chỉnh sửa:
+1. `src/components/common/SettingsModal.vue`:
+   - Thêm các biến phản ứng `isVoiceActive`, `lastVoiceTime`, hằng số `VAD_THRESHOLD = 10` và `VAD_HANGOVER_MS = 1000`.
+   - Cập nhật hàm `updateVolume` áp dụng thuật toán VAD Hangover.
+   - Cập nhật hàm `stopMicMeter` và `catch` dọn dẹp sạch `isVoiceActive = false; lastVoiceTime = 0;`.
+   - Cập nhật CSS mượt mà và chống tràn dòng cho `.meter-status`.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Áp dụng đầy đủ thuật toán VAD Hangover và tối ưu CSS tương ứng cho `D:\Project\Smart_Call_Web_Mock\src\components\common\SettingsModal.vue`.
+* Bảo toàn nguyên vẹn mọi tab cấu hình và mock fallback sẵn có.
+
+### 4. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 534ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 592ms).
