@@ -383,7 +383,13 @@
                         :class="`dot-${c.status || 'offline'}`"
                         :title="`${c.name}: ${c.statusLabel || 'Ngoại tuyến'}`"
                       ></span>
-                      <strong class="contact-name" :title="c.name">{{ c.name }}</strong>
+                      <strong class="contact-name" :title="c.name">
+                        {{ c.name }}
+                        <span
+                          v-if="c.number && String(c.number).trim() === String(callStore.myExtension || '1001').trim()"
+                          class="self-badge"
+                        >(Bạn)</span>
+                      </strong>
                     </div>
                   </div>
                   <div class="meta-row-sub">
@@ -1718,6 +1724,19 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.self-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #059669;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 
 .meta-row-sub {

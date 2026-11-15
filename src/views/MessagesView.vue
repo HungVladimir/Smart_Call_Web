@@ -16,8 +16,12 @@
             :class="{ active: currentRoom && currentRoom.id === room.id }"
             @click="selectRoom(room)"
           >
-            <div class="avatar-sm" :style="{ backgroundColor: room.avatarBg }">
-              {{ room.icon || room.title.slice(0, 2) }}
+            <div
+              class="avatar-sm"
+              :class="{ 'group-avatar': !room.isDirect }"
+              :style="{ backgroundColor: room.avatarBg }"
+            >
+              {{ room.icon || (!room.isDirect ? '👥' : room.title.slice(0, 2).toUpperCase()) }}
             </div>
 
             <div class="room-info">
@@ -25,7 +29,9 @@
                 <span class="room-title">
                   {{ room.title }}
                   <small v-if="!room.isDirect" class="member-tag">
-                    ({{ currentRoom && room.id === currentRoom.id ? currentRoomMembers.length : (room.memberCount || (room.members ? room.members.length : 3)) }})
+                    ({{ currentRoom && room.id === currentRoom.id 
+                         ? (currentRoomMembers.length || room.memberCount || 2) 
+                         : (room.memberCount || (room.members && room.members.length ? room.members.length : 2)) }})
                   </small>
                 </span>
                 <span class="room-time">{{ room.time }}</span>
@@ -361,7 +367,9 @@ const scrollToBottom = () => {
 const checkDirectChatRoute = () => {
   if (route.query && route.query.ext) {
     const ext = String(route.query.ext).split('@')[0].trim()
-    const name = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
+    const isSelf = ext === currentUserExt.value
+    const rawName = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
+    const name = isSelf && !rawName.includes('(Bạn)') ? `${rawName} (Bạn)` : rawName
 
     // 1. Tìm ngay trong RAM (0ms)
     let target = chatService.rooms.find(
@@ -369,6 +377,9 @@ const checkDirectChatRoute = () => {
     )
 
     if (target) {
+      if (isSelf && !target.title.includes('(Bạn)')) {
+        target.title = `${target.title} (Bạn)`
+      }
       currentRoom.value = target
     } else {
       // Tạo phòng tạm ngay tức thì để hiển thị mà không bị gián đoạn giao diện
@@ -378,15 +389,15 @@ const checkDirectChatRoute = () => {
         preview: 'Bắt đầu cuộc trò chuyện...',
         time: 'Mới',
         unread: 0,
-        avatarBg: '#0284c7',
-        icon: (name || ext).slice(0, 2).toUpperCase(),
+        avatarBg: isSelf ? '#059669' : '#0284c7',
+        icon: (rawName || ext).slice(0, 2).toUpperCase(),
         isDirect: true,
         ext: ext,
         memberCount: 2,
-        updatedAt: Date.now(),
+        updatedAt: 0,
         members: [
-          { id: 'me', name: currentUserName.value, dept: '', ext: '', isAdmin: true },
-          { id: `emp-${ext}`, name: name, dept: 'Nội bộ', ext: ext, isAdmin: false },
+          { id: 'me', name: currentUserName.value, dept: '', ext: currentUserExt.value, isAdmin: true },
+          { id: `emp-${ext}`, name: rawName, dept: 'Nội bộ', ext: ext, isAdmin: false },
         ],
         messages: [],
       }
@@ -734,6 +745,12 @@ const startVideoCall = () => {
   font-weight: bold;
   font-size: 0.95rem;
   flex-shrink: 0;
+}
+
+.avatar-sm.group-avatar {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1) !important;
+  font-size: 1.15rem;
+  box-shadow: 0 2px 6px rgba(139, 92, 246, 0.25);
 }
 
 .room-info {

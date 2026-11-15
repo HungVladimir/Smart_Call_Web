@@ -29,7 +29,16 @@ class ChatService {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
           parsed.forEach((r, idx) => {
-            if (!r.updatedAt) {
+            // Chuẩn hóa updatedAt theo timestamp của tin nhắn cuối cùng nếu có
+            if (r.messages && r.messages.length > 0) {
+              const lastMsg = r.messages[r.messages.length - 1]
+              if (lastMsg && (lastMsg.timestamp || lastMsg.time)) {
+                if (lastMsg.timestamp) {
+                  r.updatedAt = Number(lastMsg.timestamp)
+                }
+              }
+            }
+            if (!r.updatedAt && r.updatedAt !== 0) {
               r.updatedAt = Date.now() - idx * 60000
             }
           })
@@ -70,9 +79,10 @@ class ChatService {
     const content = data.content || data.message?.content || data.msg || ''
     const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
     const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}-${Math.random()}`
+    const msgTimestamp = data.created_at ? new Date(data.created_at).getTime() : Date.now()
     const timeStr = data.created_at
       ? new Date(data.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-      : new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+      : new Date(msgTimestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
 
     if (!roomUuid || !content) return
 
@@ -82,17 +92,20 @@ class ChatService {
 
     let targetRoom = this.rooms.find((r) => r.id === roomUuid)
     if (!targetRoom) {
+      const isGroup = !roomUuid.startsWith('direct-')
       targetRoom = {
         id: roomUuid,
         title: alias || 'Cuộc trò chuyện',
         preview: content,
         time: timeStr,
         unread: 0,
-        avatarBg: '#3b82f6',
-        icon: (alias || 'CH').slice(0, 2).toUpperCase(),
+        avatarBg: isGroup ? '#8b5cf6' : '#3b82f6',
+        icon: isGroup ? '👥' : (alias || 'CH').slice(0, 2).toUpperCase(),
+        isDirect: !isGroup,
         messages: [],
         members: [],
-        updatedAt: Date.now(),
+        memberCount: isGroup ? 2 : 2,
+        updatedAt: msgTimestamp,
       }
       this.rooms.unshift(targetRoom)
     }
@@ -115,9 +128,10 @@ class ChatService {
         // Chỉ cập nhật ID thật và chuẩn hóa thời gian, không push trùng lặp
         tempMsg.id = msgId
         tempMsg.time = timeStr
+        tempMsg.timestamp = msgTimestamp
         targetRoom.preview = content
         targetRoom.time = timeStr
-        targetRoom.updatedAt = Date.now()
+        targetRoom.updatedAt = msgTimestamp
         this.saveRooms()
         return
       }
@@ -129,13 +143,14 @@ class ChatService {
       senderName: alias,
       text: content,
       time: timeStr,
+      timestamp: msgTimestamp,
       readStatus: 'Read',
       readers: [],
     }
     targetRoom.messages.push(newMsg)
     targetRoom.preview = content
     targetRoom.time = timeStr
-    targetRoom.updatedAt = Date.now()
+    targetRoom.updatedAt = msgTimestamp
 
     const activeRoomId = localStorage.getItem('smartcall_active_room_id')
     if (activeRoomId !== roomUuid && !isMine) {
@@ -180,18 +195,41 @@ class ChatService {
               // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
               const serverRooms = data.items.map((room) => {
                 const existing = (this.rooms || []).find((r) => r.id === room.uuid)
+                const serverUsers = Array.isArray(room.users) ? room.users : []
+                const memberCount =
+                  serverUsers.length || existing?.members?.length || existing?.memberCount || 2
+                const isGroup = !room.isDirect && (!room.uuid || !room.uuid.startsWith('direct-'))
+
+                // Chuẩn hóa updatedAt theo timestamp của tin nhắn gần nhất
+                let lastMsgTimestamp = existing?.updatedAt
+                if (existing?.messages && existing.messages.length > 0) {
+                  const lastMsg = existing.messages[existing.messages.length - 1]
+                  if (lastMsg && (lastMsg.timestamp || lastMsg.time)) {
+                    if (lastMsg.timestamp) lastMsgTimestamp = Number(lastMsg.timestamp)
+                  }
+                }
+
                 return {
                   id: room.uuid,
                   title: room.name || 'Phòng thảo luận',
                   preview: existing?.preview || 'Cuộc trò chuyện mới',
                   time: existing?.time || '',
                   unread: existing?.unread || 0,
-                  avatarBg: existing?.avatarBg || '#3b82f6',
-                  icon: (room.name || 'CH').slice(0, 2).toUpperCase(),
+                  avatarBg: isGroup ? '#8b5cf6' : existing?.avatarBg || '#3b82f6',
+                  icon: isGroup ? '👥' : (room.name || 'CH').slice(0, 2).toUpperCase(),
+                  isDirect: !isGroup,
                   messages: existing?.messages || [],
-                  members: existing?.members || [],
+                  members:
+                    existing?.members && existing.members.length > 0
+                      ? existing.members
+                      : serverUsers.map((u) => ({
+                          id: typeof u === 'string' ? u : u.uuid,
+                          name: 'Thành viên',
+                          ext: '',
+                        })),
+                  memberCount: memberCount,
                   pinned: existing?.pinned || '',
-                  updatedAt: existing?.updatedAt || Date.now(),
+                  updatedAt: lastMsgTimestamp || existing?.updatedAt || Date.now(),
                 }
               })
 
@@ -292,6 +330,9 @@ class ChatService {
       wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'me'
 
     const cleanExt = String(ext || '').split('@')[0].trim()
+    const isSelf = cleanExt === myExt
+    const displayTitle = isSelf ? `${name || currentUserName} (Bạn)` : name || `Máy lẻ ${cleanExt}`
+
     let found = this.rooms.find(
       (r) =>
         String(r.ext || '').split('@')[0].trim() === cleanExt ||
@@ -299,8 +340,9 @@ class ChatService {
     )
 
     if (found) {
-      found.updatedAt = Date.now()
-      this.saveRooms()
+      if (isSelf && !found.title.includes('(Bạn)')) {
+        found.title = `${found.title} (Bạn)`
+      }
       return found
     }
 
@@ -325,7 +367,7 @@ class ChatService {
           },
           signal: AbortSignal.timeout(3000),
           body: JSON.stringify({
-            name: name || `Máy lẻ ${cleanExt}`,
+            name: displayTitle,
             users: [{ uuid: myUuid }, { uuid: targetUuid }],
           }),
         })
@@ -345,16 +387,16 @@ class ChatService {
     const roomId = realRoomUuid || `direct-${cleanExt}-${Date.now()}`
     found = {
       id: roomId,
-      title: name || `Máy lẻ ${cleanExt}`,
+      title: displayTitle,
       preview: 'Bắt đầu cuộc trò chuyện...',
       time: 'Mới',
       unread: 0,
-      avatarBg: '#0284c7',
+      avatarBg: isSelf ? '#059669' : '#0284c7',
       icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
       isDirect: true,
       ext: cleanExt,
       memberCount: 2,
-      updatedAt: Date.now(),
+      updatedAt: 0,
       members: [
         { id: myUuid, name: currentUserName, dept: '', ext: myExt, isAdmin: true },
         { id: targetUuid || `emp-${cleanExt}`, name: name, dept: 'Nội bộ', ext: cleanExt, isAdmin: false },
@@ -372,8 +414,9 @@ class ChatService {
    */
   async sendMessage(roomId, text, userAlias = 'Tôi') {
     const now = new Date()
+    const msgTimestamp = now.getTime()
     const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-    const tempId = `cmsg-${Date.now()}`
+    const tempId = `cmsg-${msgTimestamp}`
 
     const newMsg = {
       id: tempId,
@@ -382,6 +425,7 @@ class ChatService {
       dept: '',
       text,
       time: timeStr,
+      timestamp: msgTimestamp,
       readStatus: 'Read (0)',
       readers: [],
     }
@@ -392,7 +436,7 @@ class ChatService {
       room.messages.push(newMsg)
       room.preview = text
       room.time = timeStr
-      room.updatedAt = Date.now()
+      room.updatedAt = msgTimestamp
       this.saveRooms()
     }
 
@@ -421,11 +465,16 @@ class ChatService {
           if (serverMsg && (serverMsg.uuid || serverMsg.id)) {
             newMsg.id = serverMsg.uuid || serverMsg.id
             if (serverMsg.created_at) {
-              newMsg.time = new Date(serverMsg.created_at).toLocaleTimeString('vi-VN', {
+              const serverDate = new Date(serverMsg.created_at)
+              newMsg.time = serverDate.toLocaleTimeString('vi-VN', {
                 hour: '2-digit',
                 minute: '2-digit',
               })
-              if (room) room.time = newMsg.time
+              newMsg.timestamp = serverDate.getTime()
+              if (room) {
+                room.time = newMsg.time
+                room.updatedAt = newMsg.timestamp
+              }
             }
             this.saveRooms()
           }

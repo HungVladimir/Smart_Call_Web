@@ -48,6 +48,7 @@
 | **32** | Khắc phục Nhấp nháy Dòng trạng thái Tín hiệu Micro (VAD Hangover Smoothing) | Tối ưu UI/UX Web Audio API | **HOÀN THÀNH** ✅ | Bổ sung thuật toán VAD Hangover (1000ms delay), ngưỡng threshold 10, CSS transition mượt mà, triệt tiêu hiện tượng nhảy chữ liên tục khi nói. |
 | **33** | Chuẩn hóa `.gitignore`, Hủy Theo dõi Thư viện `node_modules` & Biến Môi trường `.env` | An toàn bảo mật & Tinh gọn Git | **HOÀN THÀNH** ✅ | Dọn sạch 5.849 file node_modules và .env khỏi git cache bằng `git rm --cached`, tạo .env.example mẫu, bảo toàn nguyên vẹn tệp cục bộ. |
 | **34** | Thiết lập Quy tắc Rà soát Bảo vệ Git (Mục 8 GEMINI.md) & Loại trừ Dữ liệu Phân tích AI | Tiêu chuẩn vệ sinh Git & Quy chuẩn dự án | **HOÀN THÀNH** ✅ | Bổ sung Mục 8 vào GEMINI.md, tự động rà soát `git status` sau mỗi bước code, đưa `.ua/`, `.understand-anything/`, `.specify/`, `specs/` vào `.gitignore`. |
+| **35** | Khắc phục Triệt để Lỗi Sắp xếp Phòng Chat (Timestamp SSOT), Đếm Thành viên `(0)` & Tự Chat 1-1 | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Phân hệ Tin nhắn | **HOÀN THÀNH** ✅ | Chuẩn hóa `updatedAt` theo tin nhắn thực tế; Chặn đè `updatedAt` khi chỉ click mở phòng; Xử lý mảng rỗng `members` chống hiển thị `(0)`; Phân biệt avatar 👥 cho nhóm và nhãn `(Bạn)` cho chính mình. |
 
 ---
 
@@ -1929,3 +1930,44 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 ### 3. Kết quả Kiểm tra (Verification):
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% trong `477ms`.
 * `Smart_Call_Web_Mock`: Đồng bộ nguyên vẹn cấu hình `.gitignore` và quy tắc `GEMINI.md`.
+
+
+## 35. KHẮC PHỤC TRIỆT ĐỂ LỖI SẮP XẾP PHÒNG CHAT (TIMESTAMP SSOT), ĐẾM THÀNH VIÊN `(0)`, AVATAR NHÓM & TỰ CHAT 1-1
+
+### 1. Phân tích Hiện tượng & Nguyên nhân Gốc rễ (Root Cause):
+1. **Lỗi thứ tự thời gian bị ngược (23:31 nằm dưới 23:30):**
+   - Hệ thống sắp xếp phòng theo trường số `updatedAt`.
+   - Trong `getDirectRoom` và `checkDirectChatRoute`, mỗi khi người dùng click vào phòng hoặc chuyển từ Danh bạ sang, hệ thống tự động gán `updatedAt = Date.now()` dù không có tin nhắn mới nào.
+   - Dẫn đến việc các phòng có tin nhắn cũ (23:30) bị đẩy lên đè phòng có tin nhắn mới hơn (23:31) chỉ vì người dùng bấm vào xem.
+2. **Lỗi hiển thị phòng nhóm có `(0)` thành viên:**
+   - Khi map dữ liệu phòng từ máy chủ Wazo Chatd, trường `members` được khởi tạo là mảng rỗng `[]`.
+   - Biểu thức `room.members ? room.members.length : 3` kiểm tra mảng rỗng là Object truthy nên lấy `[].length = 0`, render ra `(0)`.
+3. **Trùng lặp Avatar `AL` giữa phòng cá nhân và phòng nhóm:**
+   - Cả phòng `Alice Nguyễn` và `Alice & Bob` đều cắt 2 ký tự đầu lấy ra `AL` với màu nền xanh dương mặc định, thiếu ký hiệu phân biệt nhóm.
+4. **Tự nhắn tin 1-1 với chính mình:**
+   - Trong danh bạ khi bấm chat với số máy lẻ của chính mình, tiêu đề phòng hiển thị trùng tên của chính người dùng thay vì ghi rõ `(Bạn)` để phân biệt.
+
+### 2. Các tệp đã can thiệp & Giải pháp thực hiện:
+1. `src/services/chatService.js`:
+   - **Chuẩn hóa Timestamp SSOT:**
+     - Trong `loadSavedRooms`: Chuẩn hóa `updatedAt` theo `timestamp` của tin nhắn cuối cùng trong phòng.
+     - Trong `getDirectRoom`: Loại bỏ hoàn toàn lệnh `found.updatedAt = Date.now()`. Chỉ gán `updatedAt` khi có tin nhắn mới (`sendMessage` hoặc `handleIncomingMessage`).
+     - Khi tạo phòng tạm mới, gán `updatedAt: 0` để không tự động đẩy phòng rỗng lên đè các phòng đang có tin nhắn hoạt động.
+   - **Xử lý số lượng thành viên nhóm:**
+     - Đọc mảng `room.users` từ máy chủ tổng đài Wazo, tính toán `memberCount = serverUsers.length || 2`, triệt tiêu hoàn toàn trường hợp ra `(0)`.
+   - **Tối ưu Avatar & Phòng tự chat:**
+     - Gán `avatarBg = '#8b5cf6'` (màu tím nhận diện) và `icon = '👥'` cho toàn bộ các phòng nhóm.
+     - Nhận diện `isSelf = cleanExt === myExt`, tự động gắn hậu tố `(Bạn)` và gán màu xanh lục `avatarBg = '#059669'`.
+2. `src/views/MessagesView.vue`:
+   - Cập nhật template hiển thị avatar nhóm: `:class="{ 'group-avatar': !room.isDirect }"` với gradient tím và icon `👥`.
+   - Sửa biểu thức đếm thành viên nhóm: `(currentRoomMembers.length || room.memberCount || 2)`, đảm bảo luôn hiển thị tối thiểu 2 thành viên nếu là phòng nhóm.
+   - Trong `checkDirectChatRoute`: Thêm kiểm tra `isSelf`, tự động bổ sung hậu tố `(Bạn)` cho chính mình và gán `updatedAt: 0` cho phòng tạm.
+3. `src/views/CallsView.vue`:
+   - Thêm nhãn `<span class="self-badge">(Bạn)</span>` ngay cạnh tên của chính người dùng trong danh bạ nội bộ để dễ dàng nhận diện máy lẻ của mình.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Đồng bộ 100% logic xử lý sang `D:\Project\Smart_Call_Web_Mock\src\services\chatService.js`, `MessagesView.vue`, và `CallsView.vue`.
+
+### 4. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 441ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (608 modules transformed, built in 621ms).
