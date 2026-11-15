@@ -189,8 +189,8 @@ const callerName = computed(() => {
 })
 
 const callerSip = computed(() => {
-  const domain = (wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').split(':')[0]
-  if (callStore.activeCall) return `sip:${callStore.activeCall.number}@${domain}`
+  const host = (wazoService.host || '').trim().replace(/^https?:\/\//, '').split(':')[0]
+  if (callStore.activeCall) return `sip:${callStore.activeCall.number}@${host || 'smartcall'}`
   const myExt = callStore.myExtension || wazoService.getMyExtension() || '1001'
   return `WebRTC SIP Line ${myExt}`
 })
@@ -243,10 +243,17 @@ const handleDial = async () => {
   })
 }
 
+const onCallEnded = () => {
+  dtmfLog.value = ''
+  if (route.query && (route.query.active || route.query.autocall || route.query.direction || route.query.number)) {
+    router.replace({ path: '/calls', query: {} }).catch(() => {})
+  }
+}
+
 const hangupCall = () => {
   wazoService.hangup()
   dtmfLog.value = ''
-  if (route.query && (route.query.active || route.query.autocall || route.query.direction)) {
+  if (route.query && (route.query.active || route.query.autocall || route.query.direction || route.query.number)) {
     router.replace({ path: '/calls', query: {} }).catch(() => {})
   }
 }
@@ -280,6 +287,7 @@ watch(
 )
 
 onMounted(async () => {
+  window.addEventListener('smartcall-call-ended', onCallEnded)
   // Nạp danh bạ trước nếu chưa có dữ liệu để kiểm tra trạng thái máy bận / ngoại tuyến chính xác
   if (!contactService.currentContacts || contactService.currentContacts.length === 0) {
     try {
@@ -291,6 +299,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('smartcall-call-ended', onCallEnded)
   dtmfLog.value = ''
 })
 </script>

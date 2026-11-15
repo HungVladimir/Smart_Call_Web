@@ -10,7 +10,6 @@ class ChatService {
       this.rooms = this.loadSavedRooms()
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
       websocketService.on('chatd_user_room_message_created', (data) => this.handleIncomingMessage(data))
-      websocketService.on('chatd_user_message_created', (data) => this.handleIncomingMessage(data))
     }
   }
 
@@ -69,7 +68,7 @@ class ChatService {
     const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
     const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}-${Math.random()}`
     const timeStr = data.created_at
-      ? data.created_at.substring(11, 16)
+      ? new Date(data.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
       : new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
 
     if (!roomUuid || !content) return
@@ -96,35 +95,55 @@ class ChatService {
     }
 
     if (!targetRoom.messages) targetRoom.messages = []
+
+    // 1. Khử trùng tuyệt đối nếu UUID thật đã tồn tại
     const alreadyExists = targetRoom.messages.some((m) => m.id === msgId)
-    if (!alreadyExists) {
-      const currentUserName = localStorage.getItem('smartcall_username') || 'Người dùng'
-      const isMine = alias === currentUserName
-      const newMsg = {
-        id: msgId,
-        sender: isMine ? 'mine' : 'theirs',
-        senderName: alias,
-        text: content,
-        time: timeStr,
-        readStatus: 'Read',
-        readers: [],
-      }
-      targetRoom.messages.push(newMsg)
-      targetRoom.preview = content
-      targetRoom.time = timeStr
-      targetRoom.updatedAt = Date.now()
+    if (alreadyExists) return
 
-      const activeRoomId = localStorage.getItem('smartcall_active_room_id')
-      if (activeRoomId !== roomUuid && !isMine) {
-        targetRoom.unread = (targetRoom.unread || 0) + 1
-      }
+    const currentUserName = localStorage.getItem('smartcall_username') || 'Người dùng'
+    const isMine = alias === currentUserName
 
-      this.saveRooms()
-      logger.info('CHAT', `Nhận tin nhắn mới từ [${alias}] trong phòng [${targetRoom.title}]: ${content}`)
-      window.dispatchEvent(
-        new CustomEvent('smartcall-message-received', { detail: { roomId: roomUuid, message: newMsg } }),
+    // 2. Nếu là tin nhắn của chính mình, kiểm tra xem có tin tạm (prefix cmsg-) cùng nội dung hay không
+    if (isMine) {
+      const tempMsg = targetRoom.messages.find(
+        (m) => typeof m.id === 'string' && m.id.startsWith('cmsg-') && m.text === content,
       )
+      if (tempMsg) {
+        // Chỉ cập nhật ID thật và chuẩn hóa thời gian, không push trùng lặp
+        tempMsg.id = msgId
+        tempMsg.time = timeStr
+        targetRoom.preview = content
+        targetRoom.time = timeStr
+        targetRoom.updatedAt = Date.now()
+        this.saveRooms()
+        return
+      }
     }
+
+    const newMsg = {
+      id: msgId,
+      sender: isMine ? 'mine' : 'theirs',
+      senderName: alias,
+      text: content,
+      time: timeStr,
+      readStatus: 'Read',
+      readers: [],
+    }
+    targetRoom.messages.push(newMsg)
+    targetRoom.preview = content
+    targetRoom.time = timeStr
+    targetRoom.updatedAt = Date.now()
+
+    const activeRoomId = localStorage.getItem('smartcall_active_room_id')
+    if (activeRoomId !== roomUuid && !isMine) {
+      targetRoom.unread = (targetRoom.unread || 0) + 1
+    }
+
+    this.saveRooms()
+    logger.info('CHAT', `Nhận tin nhắn mới từ [${alias}] trong phòng [${targetRoom.title}]: ${content}`)
+    window.dispatchEvent(
+      new CustomEvent('smartcall-message-received', { detail: { roomId: roomUuid, message: newMsg } }),
+    )
   }
 
   /**
@@ -336,14 +355,15 @@ class ChatService {
 
   /**
    * Gửi một tin nhắn mới vào phòng
-   * Cập nhật vào mảng phòng và lưu ngay vào localStorage
+   * Cập nhật tức thì vào mảng phòng (Optimistic 0ms) và đồng bộ với Wazo Chatd
    */
   async sendMessage(roomId, text, userAlias = 'Tôi') {
     const now = new Date()
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    const tempId = `cmsg-${Date.now()}`
 
     const newMsg = {
-      id: `msg-${Date.now()}`,
+      id: tempId,
       sender: 'mine',
       senderName: userAlias,
       dept: 'Khối Kỹ thuật',
@@ -353,6 +373,16 @@ class ChatService {
       readers: [],
     }
 
+    const room = this.rooms.find((r) => r.id === roomId)
+    if (room) {
+      if (!room.messages) room.messages = []
+      room.messages.push(newMsg)
+      room.preview = text
+      room.time = timeStr
+      room.updatedAt = Date.now()
+      this.saveRooms()
+    }
+
     try {
       const token = wazoService.getToken()
       if (token && roomId) {
@@ -360,7 +390,7 @@ class ChatService {
           ? wazoService.host
           : `https://${wazoService.host}`
 
-        await fetch(`${host}/api/chatd/1.0/users/me/rooms/${roomId}/messages`, {
+        const res = await fetch(`${host}/api/chatd/1.0/users/me/rooms/${roomId}/messages`, {
           method: 'POST',
           headers: {
             'X-Auth-Token': token,
@@ -372,19 +402,25 @@ class ChatService {
             alias: userAlias,
           }),
         })
+
+        if (res.ok) {
+          const serverMsg = await res.json()
+          if (serverMsg && (serverMsg.uuid || serverMsg.id)) {
+            newMsg.id = serverMsg.uuid || serverMsg.id
+            if (serverMsg.created_at) {
+              newMsg.time = new Date(serverMsg.created_at).toLocaleTimeString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+              if (room) room.time = newMsg.time
+            }
+            this.saveRooms()
+          }
+        }
       }
     } catch (e) {
-      // Bỏ qua khi chạy chế độ offline
-    }
-
-    const room = this.rooms.find((r) => r.id === roomId)
-    if (room) {
-      if (!room.messages) room.messages = []
-      room.messages.push(newMsg)
-      room.preview = text
-      room.time = timeStr
-      room.updatedAt = Date.now()
-      this.saveRooms()
+      // Giữ ID tạm khi chạy ngoại tuyến hoặc timeout mạng
+      logger.warn('CHAT', `Gửi tin nhắn ngoại tuyến hoặc timeout: ${e.message}`)
     }
 
     return newMsg

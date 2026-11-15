@@ -168,6 +168,7 @@ class WazoService {
     callStore.incomingCall = null
     contactService.reset()
     chatService.reset()
+    historyService.reset()
     logger.info('AUTH', 'Đã xóa toàn bộ token và phiên làm việc cục bộ.')
   }
 
@@ -394,6 +395,7 @@ class WazoService {
     callStore.incomingCall = null
 
     window.dispatchEvent(new CustomEvent('wazo-ended', { detail: session }))
+    window.dispatchEvent(new CustomEvent('smartcall-call-ended', { detail: { reason, session } }))
   }
 
   attachListeners() {

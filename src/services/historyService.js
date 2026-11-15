@@ -2,17 +2,22 @@ import { wazoService } from './wazo'
 import { isFeatureEnabled } from '@/config/features'
 import { logger } from './loggerService'
 
-const STORAGE_KEY = 'smartcall_call_history'
-
 class HistoryService {
   constructor() {
     this.localHistory = this.loadSavedHistory()
   }
 
+  // Khóa lưu trữ cục bộ phân tách riêng biệt theo từng User UUID đăng nhập
+  getStorageKey() {
+    const userUuid = wazoService?.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'default'
+    return `smartcall_call_history_${userUuid}`
+  }
+
   // Tải dữ liệu lịch sử cuộc gọi từ localStorage
   loadSavedHistory() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
+      const key = this.getStorageKey()
+      const raw = localStorage.getItem(key)
       if (raw) {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -28,7 +33,8 @@ class HistoryService {
   // Lưu bền vững vào localStorage
   saveHistory() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.localHistory))
+      const key = this.getStorageKey()
+      localStorage.setItem(key, JSON.stringify(this.localHistory))
     } catch (e) {
       console.warn('Lỗi lưu cache lịch sử cuộc gọi:', e)
     }
@@ -139,9 +145,17 @@ class HistoryService {
           statusLabel = isOutbound ? 'Declined' : 'Missed'
         }
 
+        const formatCdrDate = (isoStr) => {
+          if (!isoStr) return ''
+          const d = new Date(isoStr)
+          if (isNaN(d.getTime())) return isoStr.replace('T', ' ').substring(0, 19)
+          const pad = (n) => String(n).padStart(2, '0')
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+        }
+
         return {
           id: cdr.id || `cdr-${idx}`,
-          date: cdr.start ? cdr.start.replace('T', ' ').substring(0, 19) : '',
+          date: formatCdrDate(cdr.start),
           name,
           extension,
           dept: 'Nội bộ công ty',
@@ -221,6 +235,19 @@ class HistoryService {
       return true
     }
     return false
+  }
+
+  /**
+   * Dọn dẹp sạch sẽ lịch sử cuộc gọi cục bộ khi đăng xuất (SSOT)
+   */
+  reset() {
+    this.localHistory = []
+    try {
+      localStorage.removeItem(this.getStorageKey())
+    } catch {
+      /* ignore */
+    }
+    window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
   }
 }
 

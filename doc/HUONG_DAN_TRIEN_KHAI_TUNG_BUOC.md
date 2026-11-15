@@ -1462,3 +1462,55 @@ Dựa trên quá trình kiểm toán toàn diện kiến trúc phân hệ Tin nh
 
 5. **Kiểm tra Biên dịch:** `npm run build` thành công 100% với 0 lỗi trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`).
 
+---
+
+## 24. KHẮC PHỤC TRIỆT ĐỂ LỖI NHÂN ĐÔI TIN NHẮN, KHỰNG 1S CHUYỂN PHÒNG, MÚI GIỜ UTC VÀ RÒ RỈ PHIÊN CDR
+
+Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_full_project.md`) và kế hoạch triển khai đã được phê duyệt (`plan_fix_calls_contacts_messages.md`), toàn bộ các lỗi tiềm ẩn trên 3 phân hệ cốt lõi (Tin nhắn, Cuộc gọi, Danh bạ & CDR) đã được xử lý tận gốc theo nguyên tắc SSOT và vòng đời khép kín:
+
+### 1. Khắc phục Triệt để Lỗi Tin Nhắn Hiển Thị Lặp Đôi (Bug 1.1):
+* **Nguyên nhân gốc rễ:** 
+  1. Trong `chatService.js` đăng ký trùng lặp 2 listener WebSocket (`chatd_user_room_message_created` và `chatd_user_message_created`). Khi chạy với máy chủ/emulator phát 2 sự kiện, hàm `handleIncomingMessage` bị kích hoạt 2 lần.
+  2. Lệch pha (Race condition) giữa Client ID tạm thời (`msg-${Date.now()}`) và Server UUID thật khi tin nhắn được gửi lên Wazo Chatd API.
+* **Giải pháp dứt điểm:**
+  - Lược bỏ listener thừa trong constructor của `chatService.js`, chỉ giữ lại 1 sự kiện chuẩn của Wazo Chatd.
+  - Sử dụng quy ước tiền tố `cmsg-${Date.now()}` cho tin nhắn tạm thời phía client (Optimistic UI 0ms).
+  - Trong `sendMessage()`, sau khi `fetch` POST lên server thành công, await lấy ngay `serverMsg.uuid` và thời gian chuẩn hóa để cập nhật trực tiếp vào đối tượng tin nhắn.
+  - Trong `handleIncomingMessage()`, bổ sung khối dedup: nếu là tin nhắn của chính mình và trong mảng đã có tin tạm `cmsg-` cùng nội dung $\rightarrow$ chỉ cập nhật ID thật và giờ hiển thị, tuyệt đối không push thêm phần tử trùng lặp.
+
+### 2. Chuẩn hóa Múi giờ UTC sang Giờ Địa phương (Bug 1.2 & 2.2):
+* **Trước đây:** Code cắt chuỗi UTC thô `created_at.substring(11, 16)` và `cdr.start.substring(0, 19)`, dẫn đến tin nhắn và lịch sử cuộc gọi bị lệch 7 tiếng so với thực tế máy tính tại Việt Nam.
+* **Giải pháp:** Sử dụng hàm chuyển đổi chuẩn:
+  - Tin nhắn: `new Date(data.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })`.
+  - Lịch sử CDR: Chuyển đổi đối tượng `Date` sang chuỗi `YYYY-MM-DD HH:mm:ss` chuẩn múi giờ địa phương, đảm bảo thứ tự sắp xếp theo thời gian luôn chính xác.
+
+### 3. Tối ưu Chuyển phòng Chat 0ms khi Bấm từ Danh bạ (Bug 1.3):
+* **Trước đây:** Hàm `checkDirectChatRoute()` nằm sau chuỗi 3 `await` promise mạng tuần tự (`getDirectRoom`, `getRooms`), khiến giao diện bị khựng 1 giây và người dùng vẫn thấy phòng chat của người gần nhất.
+* **Giải pháp:** Tách luồng xử lý làm 2 pha:
+  - **Pha 1 (0ms Tức thì):** Tìm ngay trong RAM hoặc tạo đối tượng phòng trực tiếp tạm thời để gán ngay `currentRoom.value`. Đồng thời gọi `router.replace({ path: '/messages', query: {} })` để dọn sạch URL query ngay lập tức, ngăn ngừa hiện tượng re-trigger khi chuyển tab.
+  - **Pha 2 (Đồng bộ ngầm):** Đưa toàn bộ việc gọi Wazo Chatd API xuống chạy ngầm (không dùng `await` chặn luồng render UI). Khi máy chủ trả về UUID phòng thật, chỉ cập nhật nhẹ nhàng vào trạng thái đã hiển thị.
+
+### 4. Dọn dẹp Query URL và DTMF Log khi Remote Party Cúp Máy (Bug 2.1):
+* **Trước đây:** `CallsView.vue` chỉ xóa query `?autocall=true` khi người dùng chủ động bấm Cúp máy. Nếu đối phương cúp máy trước, query URL bị kẹt lại.
+* **Giải pháp:** 
+  - Tại hàm kết thúc cuộc gọi tập trung `_finalizeCallTermination()` của `wazoService`, phát sự kiện toàn cục:
+    ```javascript
+    window.dispatchEvent(new CustomEvent('smartcall-call-ended', { detail: { reason, session } }))
+    ```
+  - Trong `CallsView.vue`, đăng ký lắng nghe sự kiện này trong `onMounted()` và dọn dẹp listener trong `onUnmounted()`. Khi cuộc gọi kết thúc (bởi bất kỳ lý do nào), URL query và log bàn phím DTMF đều được dọn dẹp sạch sẽ về trạng thái ban đầu.
+
+### 5. Động hóa Hoàn toàn Địa chỉ SIP Host (Bug 2.2 & 4.2):
+* Loại bỏ toàn bộ các chuỗi IP fix cứng `107.126.11.126` trong `CallsView.vue`, `IncomingCallModal.vue`, `SettingsModal.vue`.
+* Thay thế bằng việc đọc động từ `wazoService.host` hoặc biến môi trường `import.meta.env.VITE_WAZO_HOST`.
+
+### 6. Phân tách Dữ liệu Lịch sử CDR và Favorites theo Từng Tài khoản:
+* Thay thế khóa cố định toàn cục bằng khóa gắn theo User UUID:
+  - `smartcall_call_history_${userUuid}`
+  - `smartcall_favorites_${userUuid}`
+* Bổ sung hàm `historyService.reset()` và kết nối trực tiếp vào hàm `wazoService.logout()`, triệt tiêu hoàn toàn rủi ro rò rỉ dữ liệu cuộc gọi giữa các phiên đăng nhập khác nhau trên cùng trình duyệt.
+
+### 7. Đồng bộ Song song và Kiểm tra Toàn diện:
+* Cập nhật đồng bộ toàn bộ logic trên sang cả 2 dự án: `Smart_Call_Web` (production chuẩn công ty) và `Smart_Call_Web_Mock` (bản thử nghiệm ngoại tuyến, bảo toàn toàn bộ dữ liệu mock và cơ chế fallback offline).
+* Cả 2 dự án đều chạy lệnh `npm run build` thành công 100% với 0 cảnh báo lỗi cú pháp.
+
+

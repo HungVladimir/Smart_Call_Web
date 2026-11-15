@@ -126,9 +126,9 @@
         <div class="wazo-info-card">
           <div class="info-label">Thông tin kết nối tổng đài Wazo:</div>
           <div class="info-content">
-            <strong>Tài khoản:</strong> admin • <strong>Máy lẻ SIP:</strong> 1001
+            <strong>Tài khoản:</strong> {{ currentUsername }} • <strong>Máy lẻ SIP:</strong> {{ currentExt }}
           </div>
-          <div class="info-sip">sip:1001@107.126.11.126 • Tenant: lan-company</div>
+          <div class="info-sip">{{ sipHostInfo }}</div>
         </div>
 
         <div class="st-field-group">
@@ -223,12 +223,20 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getFeatures, saveFeatures, resetFeatures } from '@/config/features'
+import { wazoService } from '@/services/wazo'
 
 const props = defineProps({
   isOpen: Boolean,
 })
 
 const emit = defineEmits(['close'])
+
+const currentUsername = computed(() => wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'admin')
+const currentExt = computed(() => wazoService.getMyExtension() || localStorage.getItem('smartcall_user_exten') || '1001')
+const sipHostInfo = computed(() => {
+  const host = (wazoService.host || '').trim().replace(/^https?:\/\//, '').split(':')[0]
+  return `sip:${currentExt.value}@${host || 'smartcall'}`
+})
 
 const activeTab = ref('audio')
 const featureConfig = ref(getFeatures())

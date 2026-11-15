@@ -16,10 +16,16 @@ class ContactService {
     }
   }
 
+  // Khóa danh sách yêu thích phân tách theo User UUID
+  getFavoritesKey() {
+    const userUuid = wazoService?.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'default'
+    return `smartcall_favorites_${userUuid}`
+  }
+
   // Quản lý danh sách Yêu thích (Favorites) - Mặc định là mảng rỗng [] chuẩn production
   getFavoriteIds() {
     try {
-      const raw = localStorage.getItem('smartcall_favorites')
+      const raw = localStorage.getItem(this.getFavoritesKey())
       return raw ? JSON.parse(raw) : []
     } catch (e) {
       return []
@@ -34,7 +40,7 @@ class ContactService {
     } else {
       list.push(id)
     }
-    localStorage.setItem('smartcall_favorites', JSON.stringify(list))
+    localStorage.setItem(this.getFavoritesKey(), JSON.stringify(list))
     return list.includes(id)
   }
 

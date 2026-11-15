@@ -357,18 +357,65 @@ const scrollToBottom = () => {
   })
 }
 
-// Xử lý mở hội thoại 1-1 trực tiếp khi người dùng chuyển từ Danh bạ sang
-const checkDirectChatRoute = async () => {
+// Xử lý mở hội thoại 1-1 trực tiếp khi người dùng chuyển từ Danh bạ sang (Zero-ms switch)
+const checkDirectChatRoute = () => {
   if (route.query && route.query.ext) {
     const ext = String(route.query.ext).split('@')[0].trim()
     const name = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
 
-    const directRoom = await chatService.getDirectRoom(ext, name, currentUserName.value)
-    const fresh = await chatService.getRooms()
-    rooms.value = [...fresh]
-    const target = rooms.value.find((r) => r.id === directRoom.id) || directRoom
-    currentRoom.value = target
+    // 1. Tìm ngay trong RAM (0ms)
+    let target = chatService.rooms.find(
+      (r) => r.ext === ext || (r.members && r.members.some((m) => m.ext === ext)),
+    )
+
+    if (target) {
+      currentRoom.value = target
+    } else {
+      // Tạo phòng tạm ngay tức thì để hiển thị mà không bị gián đoạn giao diện
+      target = {
+        id: `direct-${ext}`,
+        title: name,
+        preview: 'Bắt đầu cuộc trò chuyện...',
+        time: 'Mới',
+        unread: 0,
+        avatarBg: '#0284c7',
+        icon: (name || ext).slice(0, 2).toUpperCase(),
+        isDirect: true,
+        ext: ext,
+        memberCount: 2,
+        updatedAt: Date.now(),
+        members: [
+          { id: 'me', name: currentUserName.value, dept: 'Khối Kỹ thuật', ext: '', isAdmin: true },
+          { id: `emp-${ext}`, name: name, dept: 'Nội bộ', ext: ext, isAdmin: false },
+        ],
+        messages: [],
+      }
+      chatService.rooms.unshift(target)
+      rooms.value = [...chatService.rooms]
+      currentRoom.value = target
+    }
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('smartcall_active_room_id', target.id)
+    }
     scrollToBottom()
+
+    // Xóa sạch query URL ngay lập tức để tránh re-trigger khi switch tab
+    router.replace({ path: '/messages', query: {} }).catch(() => {})
+
+    // 2. Đồng bộ ngầm với Wazo server (Background sync - không chặn UI thread)
+    chatService
+      .getDirectRoom(ext, name, currentUserName.value)
+      .then((serverRoom) => {
+        if (serverRoom && currentRoom.value && currentRoom.value.ext === ext) {
+          currentRoom.value = serverRoom
+          rooms.value = [...chatService.rooms]
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('smartcall_active_room_id', serverRoom.id)
+          }
+        }
+      })
+      .catch(() => {})
   }
 }
 
@@ -401,7 +448,7 @@ const onRoomsUpdated = () => {
 
 onMounted(async () => {
   await loadRooms()
-  await checkDirectChatRoute()
+  checkDirectChatRoute()
   if (currentRoom.value && typeof localStorage !== 'undefined') {
     localStorage.setItem('smartcall_active_room_id', currentRoom.value.id)
   }
@@ -412,7 +459,7 @@ onMounted(async () => {
 onActivated(async () => {
   await loadRooms()
   if (route.query && route.query.ext) {
-    await checkDirectChatRoute()
+    checkDirectChatRoute()
   }
   if (currentRoom.value) {
     if (typeof localStorage !== 'undefined') {

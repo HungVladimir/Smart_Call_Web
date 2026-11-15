@@ -56,6 +56,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { audioService } from '@/services/audioService'
+import { wazoService } from '@/services/wazo'
 
 const props = defineProps({
   isOpen: {
@@ -78,7 +79,8 @@ const callerName = computed(() => {
 const callerSip = computed(() => {
   if (props.callData?.sipUri) return props.callData.sipUri
   const ext = props.callData?.extension || '1007'
-  return `sip:${ext}@107.126.11.126`
+  const domain = (wazoService.host || '').trim().replace(/^https?:\/\//, '').split(':')[0]
+  return `sip:${ext}@${domain || 'smartcall'}`
 })
 
 const callerDept = computed(() => {
