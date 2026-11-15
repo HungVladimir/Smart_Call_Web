@@ -2036,3 +2036,76 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
 
+---
+
+## 37. BÓC TÁCH CHI TIẾT TOÀN BỘ TẦNG SERVICES & TẦNG VIEWS/COMPONENTS (CODE ENCYCLOPEDIA)
+
+### 1. Mục tiêu & Định vị Nghiệp vụ:
+- Triển khai phân tích, mổ xẻ và giải thích toàn diện 100% mã nguồn từng hàm, từng biến, từng luồng gọi trong toàn bộ 7 file Services và 8 file Views/Components của dự án SmartCall Web theo phương pháp luận phối hợp giữa `code-documentation-code-explain` (Phân cấp gọi & Cấu trúc hàm) và `logic-explain` (Truy vết luồng thực thi liên thủ tục & Bóc tách trường hợp biên).
+- Đảm bảo người phát triển hiểu thấu đáo từng dòng lệnh: *Hàm này làm gì*, *Luồng thực thi từng dòng*, *Ai gọi tới (Callers)*, *Hàm này gọi tới ai (Callees)*, kèm trích dẫn code gốc và số dòng chính xác.
+
+### 2. Nội dung 2 Tập Tài liệu Chuyên sâu:
+
+#### Tập 1: Tầng Dịch vụ (`doc/GIAI_THICH_CHI_TIET_SERVICES.md` - 558 dòng, 38.790 ký tự):
+1. **Chương 1: Tổng quan về Tầng Dịch vụ & Mô hình SSOT**:
+   - Phân tích vai trò "bộ não nghiệp vụ" cách ly tầng giao diện khỏi giao thức mạng.
+   - Nguyên tắc Single Source of Truth (`callStore`, `presences`, `rooms`).
+   - Kỹ thuật In-flight Promise Sharing và phòng vệ chủ động (Defensive Programming).
+2. **Chương 2: Bóc tách chi tiết Wazo Service (`src/services/wazo.js`)**:
+   - Phân tích chi tiết đối tượng phản ứng `callStore` (8 trường trạng thái).
+   - Bảng ma trận 28 hàm & phương thức.
+   - Bóc tách chuyên sâu từng hàm: `login()`, `restoreSession()`, `logout()`, `openWebSocketEvents()`, `connectPhone()`, `validateAndMakeCall()` (7 Gate bảo vệ), `_finalizeCallTermination()`, `makeCall()`, `hangup()`, `toggleMute()`, `toggleHold()`, `sendDTMF()`.
+3. **Chương 3: Bóc tách chi tiết Audio Service (`src/services/audioService.js`)**:
+   - Kiến trúc Web Audio API Synthesizers không phụ thuộc file MP3 tĩnh.
+   - Bảng ma trận 11 phương thức.
+   - Bóc tách chuyên sâu: `startRingbackTone()` (Dual Sine 440Hz + 480Hz), `startIncomingRingtone()`, `playDtmfTone()` (Ma trận tần số ITU-T), `startMicMeter()` với thuật toán VAD Hangover (`HANG_OVER_MS = 1000`, `VAD_THRESHOLD = 10`) chống giật nhấp nháy.
+4. **Chương 4: Bóc tách chi tiết Contact Service (`src/services/contactService.js`)**:
+   - Kiến trúc đồng bộ danh bạ từ Wazo Dird API và sự kiện `wazo-presence-updated`.
+   - Bảng ma trận 12 phương thức.
+   - Bóc tách chuyên sâu: Thuật toán phân giải hiện diện `statusOf(uuid)` chuẩn 100% Wazo PBX, `matchesSearch()`, `getContacts()`, `loadPresencesForContacts()`.
+5. **Chương 5: Bóc tách chi tiết Chat Service (`src/services/chatService.js`)**:
+   - Kiến trúc Wazo Chatd, cách ly cache `smartcall_chat_rooms_<UserUUID>`, SSOT Timestamp.
+   - Bảng ma trận 10 phương thức.
+   - Bóc tách chuyên sâu: `sendMessage()` với Optimistic UI 0ms, `handleIncomingMessage()` từ WebSocket, `getDirectRoom()`, `createGroupRoom()`.
+6. **Chương 6: Bóc tách chi tiết History Service (`src/services/historyService.js`)**:
+   - Kiến trúc bản ghi CDR và cơ chế Dual-Source (Wazo Call-logd API + Ghi tức thời cục bộ).
+   - Bảng ma trận 9 phương thức.
+   - Bóc tách chuyên sâu: `getHistory()` với In-flight Promise Sharing, `addRecord()`, bộ lọc 4 tab `_filterList()`.
+7. **Chương 7: Bóc tách chi tiết WebSocket Service (`src/services/websocketService.js`)**:
+   - Event Bus nội bộ với cơ chế `on`, `off`, `emit` và quản lý `Map<string, Set<Function>>` chống rò rỉ bộ nhớ.
+8. **Chương 8: Bóc tách chi tiết Logger Service (`src/services/loggerService.js`)**:
+   - Structured Tagged Logger (7 nhãn màu: `AUTH`, `SIP`, `CALL`, `AUDIO`, `API`, `UI`, `SYSTEM`).
+   - Bộ nhớ vòng In-memory Ring Buffer tối đa 250 bản ghi, xuất log qua `exportLogsText()`.
+
+#### Tập 2: Tầng Giao diện & Thành phần (`doc/GIAI_THICH_CHI_TIET_VIEWS.md` - 385 dòng, 23.819 ký tự):
+1. **Chương 1: Tổng quan Tầng Giao diện & Vòng đời Vue 3 Composition API**:
+   - Chu trình `onMounted`, `watch`, `nextTick()`, `onUnmounted`.
+2. **Chương 2: Màn hình Đăng nhập (`src/views/LoginView.vue`)**:
+   - Cấu trúc form, ghi nhớ tài khoản `rememberMe`.
+   - Bóc tách hàm `handleLogin()`: Race condition Timeout 15s, trích xuất User Profile và số máy lẻ từ Wazo SDK.
+3. **Chương 3: Màn hình Cuộc gọi & Bàn phím (`src/views/CallsView.vue`)**:
+   - Giao diện kép Dialpad + Danh bạ nội bộ.
+   - Bảng ma trận 20 hàm nghiệp vụ.
+   - Bóc tách chuyên sâu: `pressKey()`, `handleDial()`, `handleCallFromPanel()` (gợi ý nhắn tin khi gọi số offline), `loadContacts()`, `hangupCall()`, `toggleMute()`, `toggleHold()`.
+4. **Chương 4: Màn hình Tin nhắn Realtime (`src/views/MessagesView.vue`)**:
+   - Bảng ma trận 16 hàm nghiệp vụ.
+   - Bóc tách chuyên sâu: `selectRoom()`, `sendMessage()`, `checkDirectChatRoute()` (gắn nhãn `(Bạn)` cho chính mình), `scrollToBottom()` với `nextTick()`, `startVoiceCall()`.
+5. **Chương 5: Màn hình Lịch sử Cuộc gọi (`src/views/HistoryView.vue`)**:
+   - Bảng dữ liệu CDR, 4 tab lọc số liệu động.
+   - Bóc tách chuyên sâu: `fetchHistory()`, `handleCallback()` (gọi lại tức thì), `handleChat()`, `handleDeleteItem()`, `confirmDeleteAll()`.
+6. **Chương 6: Popup Cuộc gọi đến (`IncomingCallModal.vue`)**:
+   - Global Overlay, chuông đến, `handleAccept()`, `handleReject()`, `handleTimeout()`.
+7. **Chương 7: Modal Cài đặt Thiết bị (`SettingsModal.vue`)**:
+   - Quét phần cứng `enumerateDevices()`, `loadAudioDevices()`, `startMicMeter()` với VAD Hangover, `testSound()`, `handleSave()`.
+8. **Chương 8: Header & Sidebar Điều hướng**:
+   - `AppHeader.vue`: Chấm hiện diện đa sắc thái, dropdown đổi trạng thái nhanh.
+   - `AppSidebar.vue`: Badge đếm tin chưa đọc thời gian thực, debounce cập nhật số liệu.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Đồng bộ toàn văn `doc/GIAI_THICH_CHI_TIET_SERVICES.md`, `doc/GIAI_THICH_CHI_TIET_VIEWS.md` và `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md` sang `D:\Project\Smart_Call_Web_Mock\doc\`.
+
+### 4. Kết quả Kiểm tra (Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+
+
