@@ -1860,3 +1860,37 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 ### 4. Kết quả Kiểm tra (Verification):
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 534ms).
 * `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 592ms).
+
+
+## 33. CHUẨN HÓA .GITIGNORE VÀ HỦY THEO DÕI TOÀN BỘ TỆP THƯ VIỆN, BIẾN MÔI TRƯỜNG & BẢN BUILD TRÊN GIT (REPOSITORY PURGE & SECURITY HARDENING)
+
+### 1. Động lực & Phân tích Tối ưu:
+* **Hiện tượng & Rủi ro phát hiện:**
+  - Trong quá trình phát triển trước đây, thư mục thư viện `node_modules/` chứa **5.849 tệp tin** và tệp biến môi trường `.env` chứa địa chỉ IP/cấu hình kết nối thật của hệ thống đã vô tình bị theo dõi (`tracked`) trong chỉ mục Git.
+  - Tệp `.gitignore` trước đây bị vô hiệu hóa dòng `.env` bằng dấu thăng (`# .env`), khiến Git vẫn tiếp tục theo dõi các thay đổi và đẩy thông tin nhạy cảm lên kho lưu trữ.
+  - Dung lượng commit và push bị phình to bất thường, gây chậm trễ khi tải mã nguồn và vi phạm quy chuẩn an toàn bảo mật thông tin nội bộ.
+* **Nguyên tắc kỹ thuật xử lý:**
+  - Chỉ sửa `.gitignore` là chưa đủ: Git vẫn theo dõi các tệp đã có trong index.
+  - Phải sử dụng cờ `git rm -r --cached` để **hủy theo dõi trong Git nhưng BẢO TOÀN NGUYÊN VẸN 100% tệp trên ổ cứng cục bộ**, không làm gián đoạn môi trường phát triển hiện tại của người dùng.
+  - Cung cấp tệp mẫu `.env.example` với địa chỉ placeholder chung `your-wazo-host:9443` để người khác khi kéo code về chỉ cần sao chép thành `.env` và tự cấu hình.
+
+### 2. Các tệp đã chỉnh sửa:
+1. `d:\Project\Smart_Call_Web\.gitignore`:
+   - Mở chặn và loại trừ toàn bộ: `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.production`.
+   - Giữ lại tệp mẫu `!.env.example`.
+   - Loại trừ triệt để: `node_modules/`, `dist/`, `dist-ssr/`, `logs/`, `*.log`, `.vite/`, `.cache/`, `FileQuest/wazo_api_reference.md`.
+2. `d:\Project\Smart_Call_Web\.env.example`:
+   - Chuẩn hóa thành tệp cấu hình mẫu an toàn, thay thế toàn bộ địa chỉ IP thật bằng giá trị mẫu `your-wazo-host:9443`.
+3. **Thực thi lệnh dọn dẹp chỉ mục Git (Purge Git Cache):**
+   - Chạy lệnh `git rm -r --cached node_modules` (hủy theo dõi 5.849 tệp phụ thuộc).
+   - Chạy lệnh `git rm --cached .env` (hủy theo dõi tệp biến môi trường nhạy cảm).
+   - Chạy lệnh `git rm -r --cached dist` (hủy theo dõi các tệp biên dịch đầu ra).
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Đồng bộ nội dung `.gitignore` và `.env.example` tương ứng sang `D:\Project\Smart_Call_Web_Mock`.
+* Thực thi `git rm --cached .env` và `git rm -r --cached dist` trên dự án thử nghiệm.
+
+### 4. Kết quả Kiểm tra (Verification):
+* Toàn bộ tệp thư viện `node_modules/`, biến môi trường `.env` và thư mục `dist/` trên máy tính cục bộ vẫn được bảo toàn nguyên vẹn 100%.
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 597ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 520ms).
