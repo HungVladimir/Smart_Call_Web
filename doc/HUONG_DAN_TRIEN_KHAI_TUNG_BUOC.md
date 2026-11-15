@@ -1971,3 +1971,68 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 ### 4. Kết quả Kiểm tra (Verification):
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 441ms).
 * `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (608 modules transformed, built in 621ms).
+
+---
+
+## 36. XÂY DỰNG TÀI LIỆU ĐẶC TẢ KIẾN TRÚC & LUỒNG VẬN HÀNH TOÀN DIỆN (PRODUCTION MASTER DOCUMENTATION)
+
+### 1. Mục tiêu & Bối cảnh:
+- Hệ thống đã vận hành ổn định qua các bài kiểm thử môi trường độc lập và sẵn sàng đưa vào vận hành thực tế.
+- Nhằm mục đích trang bị kiến thức chuyên sâu, hiểu rõ từng dòng lệnh, từng phương thức gọi API Wazo, báo hiệu WebRTC SIP, và phục vụ báo cáo giải trình đồ án giải pháp trước Ban Lãnh đạo/Hội đồng kỹ thuật, một tài liệu đặc tả kiến trúc toàn diện đã được biên soạn.
+
+### 2. Nội dung Tài liệu (`doc/KIEN_TRUC_VA_LUONG_HOAT_DONG_CHI_TIET.md`):
+Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ đồ Mermaid và trích dẫn mã nguồn thực tế kèm số dòng của 8 chương cốt lõi:
+1. **Chương 1: Tổng quan Kiến trúc Toàn hệ thống & Mô hình SSOT**:
+   - 5 tầng kiến trúc: View Layer $\rightarrow$ Component Layer $\rightarrow$ Business Service Layer $\rightarrow$ Signaling & Hardware Layer $\rightarrow$ Wazo Backend Infrastructure.
+   - Sơ đồ khối tổng thể (Mermaid flowchart) và nguyên tắc Single Source of Truth (`callStore`, `contactService.presences`, `chatService`).
+2. **Chương 2: Phân hệ Xác thực, Phiên làm việc & Kết nối Tổng đài**:
+   - Chi tiết API Wazo Auth `POST /api/auth/0.1/token` (Headers Basic Base64, Body JSON, Response Token).
+   - Vòng đời Token, Session Storage, và trích xuất hồ sơ User Profile từ Wazo SDK không gây lỗi CORS Preflight.
+   - Kết nối WebRTC SIP Phone qua Asterisk WebSocket (`wss://.../api/asterisk/ws`).
+   - Kết nối Wazo Event Bus WebSocket (`wss://.../api/websocketd/?token=...&version=2`).
+   - Sơ đồ tuần tự đăng nhập (Sequence Diagram).
+3. **Chương 3: Phân hệ Hiện diện Trực tuyến & Đồng bộ Danh bạ**:
+   - Truy vấn danh bạ Wazo Dird API (`/api/dird/0.1/backends/wazo/sources/.../contacts`).
+   - Lắng nghe sự kiện `wazo-presence-updated`.
+   - Thuật toán phân giải trạng thái `statusOf(uuid)` chuẩn 100% theo mã nguồn tham chiếu Wazo PBX (`talking/holding` $\rightarrow$ `busy`, `ringing/progressing` $\rightarrow$ `ringing`, `dnd`, `away`, `online`, `offline`).
+   - Bảng mã màu trực quan đa sắc thái (`online` - xanh lục, `busy` - cam, `ringing` - tím, `dnd` - đỏ, `away` - vàng, `offline` - xám).
+4. **Chương 4: Phân hệ Cuộc gọi thoại WebRTC (Telephony & WebRTC Call Flow)**:
+   - Điểm kích hoạt duy nhất `validateAndMakeCall()` với **bộ lọc an toàn 7 lớp (7 Defense Gates)**:
+     - Gate 1: Throttle 1200ms chống spam bấm nhanh.
+     - Gate 2: Local Busy check (chặn gọi đè khi đang có cuộc gọi hoạt động).
+     - Gate 3: Chặn tự gọi chính mình (`cleanExt === myExtension`).
+     - Gate 4: Kiểm tra trạng thái máy đích (Chặn gọi máy bận, chặn gọi máy offline kèm hộp thoại gợi ý chuyển sang chat).
+     - Gate 5: Kiểm tra phần cứng Microphone (`navigator.mediaDevices.enumerateDevices`).
+     - Gate 6: Kiểm tra đăng ký SIP Phone (`Wazo.Phone.isRegistered()`).
+     - Gate 7: Khởi tạo phiên `callStore.activeCall`, bật chuông đi và gọi `Wazo.Phone.call(cleanExt, false)`.
+   - Tạo âm chuông đi (Ringback Tone) 440Hz + 480Hz bằng Web Audio API thuần túy.
+   - Luồng tín hiệu SIP qua WebSocket (`INVITE` $\rightarrow$ `180 Ringing` $\rightarrow$ `200 OK` $\rightarrow$ `ACK`).
+   - Xử lý các sự kiện vòng đời (`ON_CALL_PROGRESS`, `ON_CALL_ACCEPTED`, `ON_CALL_ENDED`, `ON_CALL_FAILED`).
+   - Luồng cuộc gọi đến (Inbound Call): Bật chuông đến, hiển thị Popup, Nhấc máy/Từ chối.
+   - Cơ chế cúp máy và giải phóng tài nguyên khép kín (`_finalizeCallTermination`).
+5. **Chương 5: Phân hệ Tin nhắn tức thời Realtime (Wazo Chatd Subsystem)**:
+   - Phòng chat 1-1 và phòng nhóm, cách ly dữ liệu `smartcall_chat_rooms_<UserUUID>`.
+   - API tạo phòng `POST /api/chatd/1.0/users/me/rooms`.
+   - Gửi tin nhắn tức thì 0ms (Optimistic UI) & `POST /api/chatd/1.0/users/me/rooms/<roomId>/messages`.
+   - Nhận tin nhắn WebSocket `chatd_user_room_message_created`.
+   - Thuật toán sắp xếp phòng chat theo nguồn chân lý duy nhất (SSOT Timestamp), triệt tiêu lỗi nhảy lộn xộn.
+6. **Chương 6: Phân hệ Lịch sử Cuộc gọi & Bản ghi CDR (Call Detail Records)**:
+   - Nguồn dữ liệu kép (Dual-Source): Wazo Call-logd API (`GET /api/call-logd/1.0/users/me/cdr`) + Ghi nhận tức thì cục bộ trên trình duyệt.
+   - Phát sự kiện toàn cục `smartcall-cdr-updated`.
+   - Bộ lọc 4 tab: ALL, INCOMINGS, OUTGOINGS, MISSED.
+7. **Chương 7: Tầng Xử lý Âm thanh & Web Audio API (Audio & Media Subsystem)**:
+   - Audio Context độc lập không phụ thuộc file tĩnh ngoài.
+   - Dual Sine Oscillator (Chuông đến & Chuông đi) triệt tiêu tiếng click/pop.
+   - Âm phím DTMF chuẩn ITU-T.
+   - Quản lý định tuyến Mic/Loa bằng `setSinkId`.
+   - Đồng hồ đo Mic Meter với thuật toán VAD Hangover (`HANG_OVER_MS = 1000`, `VAD_THRESHOLD = 10`) chống giật nhấp nháy.
+8. **Chương 8: Cẩm nang Vấn đáp Kỹ thuật (Executive Defense FAQ)**:
+   - Bộ 10 câu hỏi cốt lõi giải trình kiến trúc viễn thông và bảo vệ thiết kế trước Lãnh đạo & Hội đồng kỹ thuật.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Đồng bộ toàn văn file tài liệu `doc/KIEN_TRUC_VA_LUONG_HOAT_DONG_CHI_TIET.md` và `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md` sang `D:\Project\Smart_Call_Web_Mock\doc\`.
+
+### 4. Kết quả Kiểm tra (Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+
