@@ -211,17 +211,29 @@ const handleClickOutside = (e) => {
   }
 }
 
-// Lọc tối đa 5 kết quả trùng khớp cho thanh Autocomplete
+// Hàm xóa dấu tiếng Việt phục vụ tìm kiếm không dấu
+const removeVietnameseTones = (str) => {
+  return (str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .trim()
+}
+
+// Lọc tối đa 5 kết quả trùng khớp cho thanh Autocomplete (hỗ trợ tiếng Việt không dấu)
 const matchingContacts = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
+  const q = searchQuery.value.trim()
   if (!q) return []
+  const cleanQ = removeVietnameseTones(q)
   return contactsList.value
-    .filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.number && c.number.includes(q)) ||
-        (c.dept && c.dept.toLowerCase().includes(q)),
-    )
+    .filter((c) => {
+      const nameNorm = removeVietnameseTones(c.name || '')
+      const deptNorm = removeVietnameseTones(c.dept || '')
+      const numNorm = String(c.number || '').toLowerCase()
+      return nameNorm.includes(cleanQ) || deptNorm.includes(cleanQ) || numNorm.includes(cleanQ)
+    })
     .slice(0, 5)
 })
 
@@ -254,6 +266,40 @@ const handleSearch = () => {
 // Gọi nhanh từ dropdown
 const quickCall = (contact) => {
   showDropdown.value = false
+
+  if (contact.status === 'busy' || contact.status === 'talking' || contact.status === 'holding') {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🚫 [${contact.name}] hiện đang trong cuộc gọi khác (Máy bận)!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+  if (contact.status === 'ringing') {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🔔 [${contact.name}] hiện đang nhận một cuộc gọi khác!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+  if (contact.status === 'dnd') {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🔕 [${contact.name}] đang bật chế độ Không làm phiền (DND)!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
   if (contact.status === 'offline' || contact.status === 'unavailable') {
     const confirmMessage = confirm(
       `Máy lẻ [${contact.name} - ${contact.number}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,

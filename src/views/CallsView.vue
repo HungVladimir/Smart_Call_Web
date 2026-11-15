@@ -285,7 +285,7 @@
                 placeholder="Tìm nhân viên, số máy lẻ..."
                 class="search-input"
               />
-              <button v-if="searchTerm" class="btn-clear-search" @click="searchTerm = ''">✖</button>
+              <button v-if="searchTerm" class="btn-clear-search" @click="clearSearch">✖</button>
             </div>
 
             <button
@@ -545,15 +545,33 @@ const clearDigit = () => {
   }
 }
 
+// Xóa từ khóa tìm kiếm và dọn sạch query URL q
+const clearSearch = () => {
+  searchTerm.value = ''
+  if (route.query && route.query.q) {
+    const remainingQuery = { ...route.query }
+    delete remainingQuery.q
+    router.replace({ path: '/calls', query: remainingQuery }).catch(() => {})
+  }
+}
+
 // Bấm gọi từ bàn phím số (Handle Dialpad)
 const handleDial = async () => {
   const ext = extension.value.trim()
   if (!ext) return
 
+  if (wazoService.hasActiveCall() || callStore.activeCall) {
+    cleanCallQueryParams()
+    return
+  }
+
   // Kiểm tra trạng thái máy lẻ nếu đã có trong danh bạ (Rule 3.1 & 3.3 GEMINI.md)
-  const target = contacts.value.find((c) => c.number === ext)
+  const target =
+    contacts.value.find((c) => c.number === ext) ||
+    contactService.currentContacts?.find((c) => c.number === ext)
   if (target) {
     if (target.status === 'busy' || target.status === 'talking' || target.status === 'holding') {
+      cleanCallQueryParams()
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -565,6 +583,7 @@ const handleDial = async () => {
       return
     }
     if (target.status === 'ringing') {
+      cleanCallQueryParams()
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -576,6 +595,7 @@ const handleDial = async () => {
       return
     }
     if (target.status === 'dnd') {
+      cleanCallQueryParams()
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -587,6 +607,7 @@ const handleDial = async () => {
       return
     }
     if (target.status === 'offline' || target.status === 'unavailable') {
+      cleanCallQueryParams()
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -606,7 +627,7 @@ const handleDial = async () => {
 }
 
 // Bấm nút Gọi thoại trực tiếp từ Danh bạ (Rule 3.1 & 3.2 GEMINI.md)
-const handleCallFromPanel = (contact) => {
+const handleCallFromPanel = async (contact) => {
   if (!contact || !contact.number) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
@@ -619,7 +640,7 @@ const handleCallFromPanel = (contact) => {
     return
   }
 
-  if (wazoService.hasActiveCall()) {
+  if (wazoService.hasActiveCall() || callStore.activeCall) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
@@ -682,9 +703,10 @@ const handleCallFromPanel = (contact) => {
     return
   }
 
-  // 5. Khả dụng -> Thiết lập số và gọi trực tiếp
+  // 5. Khả dụng -> Thiết lập số, chuyển tab di động sang dialer và gọi trực tiếp
   extension.value = contact.number
-  wazoService.validateAndMakeCall(contact.number, {
+  mobileTab.value = 'dialer'
+  await wazoService.validateAndMakeCall(contact.number, {
     name: contact.name,
     dept: contact.dept,
   })
@@ -757,7 +779,10 @@ const refreshContacts = async () => {
 // Dọn dẹp query sau khi cuộc gọi kết thúc (bảo toàn tham số tìm kiếm q)
 const cleanCallQueryParams = () => {
   dtmfLog.value = ''
-  if (route.query) {
+  if (
+    route.query &&
+    (route.query.number || route.query.autocall || route.query.active || route.query.direction)
+  ) {
     const remainingQuery = { ...route.query }
     delete remainingQuery.number
     delete remainingQuery.autocall

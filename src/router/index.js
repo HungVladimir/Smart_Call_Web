@@ -29,11 +29,11 @@ const router = createRouter({
     },
     {
       path: '/dashboard',
-      redirect: '/calls',
+      redirect: (to) => ({ path: '/calls', query: to.query }),
     },
     {
       path: '/contacts',
-      redirect: '/calls',
+      redirect: (to) => ({ path: '/calls', query: to.query }),
     },
     {
       path: '/calls',

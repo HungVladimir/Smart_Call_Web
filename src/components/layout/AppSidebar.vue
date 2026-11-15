@@ -38,7 +38,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { chatService } from '@/services/chatService'
-import { historyService } from '@/services/historyService'
 import { wazoService, callStore } from '@/services/wazo'
 import { getFeatures } from '@/config/features'
 
@@ -58,7 +57,6 @@ const onFeaturesChanged = (e) => {
 }
 
 const unreadMessagesCount = ref(0)
-const missedCallsCount = ref(0)
 
 let isUpdatingSidebar = false
 let sidebarDebounceTimer = null
@@ -68,23 +66,11 @@ const updateSidebarCounts = async () => {
   isUpdatingSidebar = true
 
   try {
-    // 1. Thống kê tin nhắn chưa đọc
+    // Thống kê tin nhắn chưa đọc (chỉ duy nhất tin nhắn hiển thị badge trên Sidebar theo Rule 3.4 GEMINI.md)
     try {
       const rooms = await chatService.getRooms()
       if (Array.isArray(rooms)) {
         unreadMessagesCount.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
-      }
-    } catch (e) {
-      /* ignore */
-    }
-
-    // 2. Thống kê cuộc gọi nhỡ
-    try {
-      const history = await historyService.getHistory()
-      if (Array.isArray(history)) {
-        missedCallsCount.value = history.filter(
-          (h) => h.status === 'missed' || h.status === 'declined' || !h.answered,
-        ).length
       }
     } catch (e) {
       /* ignore */
@@ -105,7 +91,6 @@ onMounted(() => {
   debouncedUpdateSidebarCounts()
   window.addEventListener('app-login-success', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
-  window.addEventListener('smartcall-cdr-updated', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 
@@ -116,7 +101,6 @@ onUnmounted(() => {
   }
   window.removeEventListener('app-login-success', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
-  window.removeEventListener('smartcall-cdr-updated', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 </script>
