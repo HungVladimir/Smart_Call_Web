@@ -387,8 +387,8 @@
                     </div>
                   </div>
                   <div class="meta-row-sub">
-                    <span class="ext-badge">📞 {{ c.number || 'Chưa gán' }}</span>
-                    <span class="dept-text" :title="c.dept">• {{ c.dept || 'Khối Kỹ thuật' }}</span>
+                    <span class="ext-badge">Máy lẻ {{ c.number || '---' }}</span>
+                    <span v-if="c.dept" class="dept-text" :title="c.dept">• {{ c.dept }}</span>
                   </div>
                 </div>
 
@@ -398,10 +398,24 @@
                     class="btn-action-icon call"
                     :title="`Gọi máy lẻ ${c.number || ''}`"
                     :aria-label="`Gọi cho ${c.name}`"
-                    :disabled="isCalling"
+                    :disabled="isCalling || isDialing || !c.number"
                     @click.stop="handleCallFromPanel(c)"
                   >
-                    📞
+                    <svg
+                      class="action-svg"
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+                      />
+                    </svg>
                   </button>
                   <button
                     class="btn-action-icon chat"
@@ -409,7 +423,21 @@
                     :aria-label="`Nhắn tin cho ${c.name}`"
                     @click.stop="handleMessage(c)"
                   >
-                    💬
+                    <svg
+                      class="action-svg"
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                      />
+                    </svg>
                     <span v-if="c.unreadCount > 0" class="badge-unread">{{ c.unreadCount }}</span>
                   </button>
                 </div>
@@ -1710,16 +1738,27 @@ onUnmounted(() => {
   position: relative;
 }
 
-.btn-action-icon:hover {
+.btn-action-icon .action-svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.btn-action-icon:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.btn-action-icon:hover:not(:disabled) .action-svg {
+  transform: scale(1.12);
 }
 
 .btn-action-icon.call {
   color: #10b981;
 }
 
-.btn-action-icon.call:hover {
+.btn-action-icon.call:hover:not(:disabled) {
   background: #ecfdf5;
   border-color: #10b981;
 }
@@ -1728,7 +1767,7 @@ onUnmounted(() => {
   color: #3b82f6;
 }
 
-.btn-action-icon.chat:hover {
+.btn-action-icon.chat:hover:not(:disabled) {
   background: #eff6ff;
   border-color: #3b82f6;
 }
@@ -1737,6 +1776,7 @@ onUnmounted(() => {
   opacity: 0.35;
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 
 .badge-unread {

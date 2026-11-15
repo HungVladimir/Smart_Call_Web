@@ -171,7 +171,7 @@ class ContactService {
           }
 
           const email = item.email || (Array.isArray(item.emails) && item.emails[0]?.email) || ''
-          const dept = item.department || item.userfield || item.description || 'Khối Kỹ thuật'
+          const dept = item.department || item.society || item.title || item.userfield || item.description || ''
 
           return {
             id,
@@ -207,7 +207,7 @@ class ContactService {
           const name = fullName || getVal('name') || getVal('display_name') || 'Ẩn danh'
           const number = getVal('number') || getVal('callable') || getVal('exten') || ''
           const email = getVal('email') || ''
-          const dept = getVal('department') || getVal('userfield') || 'Khối Kỹ thuật'
+          const dept = getVal('department') || getVal('society') || getVal('title') || getVal('userfield') || getVal('description') || ''
 
           return {
             id,

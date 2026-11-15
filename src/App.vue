@@ -190,7 +190,10 @@ const handleLogout = () => {
 
 const onDial = (extension) => {
   if (!extension) return
-  wazoService.validateAndMakeCall(extension)
+  router.push({
+    path: '/calls',
+    query: { number: extension, autocall: 'true' },
+  })
 }
 
 // --- Helper Toast ---

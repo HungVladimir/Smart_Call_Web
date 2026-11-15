@@ -562,7 +562,18 @@ const openReadIdModal = (msg) => {
 const startVoiceCall = () => {
   if (!currentRoom.value) return
   if (currentRoom.value.isDirect) {
-    const targetExt = currentRoom.value.ext || '1002'
+    if (!currentRoom.value.ext) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: 'Phòng chat này chưa được gán số máy lẻ nội bộ để thực hiện cuộc gọi',
+            type: 'warning',
+          },
+        }),
+      )
+      return
+    }
+    const targetExt = currentRoom.value.ext
     window.dispatchEvent(
       new CustomEvent('app-action', {
         detail: { type: 'dial', value: targetExt },
@@ -604,17 +615,28 @@ const startVoiceCall = () => {
 const startVideoCall = () => {
   if (!currentRoom.value) return
   if (currentRoom.value.isDirect) {
+    if (!currentRoom.value.ext) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: 'Phòng chat này chưa được gán số máy lẻ nội bộ để thực hiện cuộc gọi',
+            type: 'warning',
+          },
+        }),
+      )
+      return
+    }
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `Khởi tạo cuộc gọi Video 1-1 tới máy lẻ ${currentRoom.value.ext || '1002'}...`,
+          message: `Khởi tạo cuộc gọi Video 1-1 tới máy lẻ ${currentRoom.value.ext}...`,
           type: 'info',
         },
       }),
     )
     window.dispatchEvent(
       new CustomEvent('app-action', {
-        detail: { type: 'dial', value: currentRoom.value.ext || '1002' },
+        detail: { type: 'dial', value: currentRoom.value.ext },
       }),
     )
   } else {

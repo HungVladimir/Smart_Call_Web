@@ -40,6 +40,10 @@
 | **24** | Khắc phục Triệt để Lỗi Nhân đôi Tin nhắn, Khựng 1s Chuyển phòng, Múi giờ UTC & Rò rỉ CDR | Kiểm toán toàn diện & Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Dedup tin nhắn cmsg- và serverMsg; UTC sang local time; 0ms direct room switch; smartcall-call-ended cleanup; Phân tách cache theo User UUID; Động hóa SIP URI. |
 | **25** | Khắc phục Triệt để Vòng lặp Vô tận (Infinite Event Loop) & Nã Request CDR trên Dashboard | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Vòng đời khép kín | **HOÀN THÀNH** ✅ | Bổ sung cờ silent cho saveRooms(); Cắt đứt vòng lặp smartcall-rooms-updated; Thêm in-flight lock isLoadingDashboard & debounce 400ms; Quản lý KeepAlive active/deactivated; In-flight Promise Sharing cho CDR và Chat Rooms. |
 | **26** | Gộp Toàn diện Danh bạ vào Gọi điện & Xóa bỏ Tab Tổng quan (Dashboard) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Tái cấu trúc Adaptive 3-Tier Grid (max-width 1360px), tích hợp Danh bạ vào tab Gọi điện, tìm kiếm tiếng Việt không dấu, xóa DashboardView & ContactsView, bổ sung redirect chống trắng màn hình, đồng bộ song song. |
+| **27** | Tối ưu hóa Giao diện Di động Responsive (Mobile Bottom Navigation & Compact Header) | Kiểm thử trực quan đa màn hình | **HOÀN THÀNH** ✅ | Chuyển đổi Sidebar thành Bottom Navigation Bar 56px trên mobile, đổi hướng app-body, rút gọn header và tinh chỉnh padding. |
+| **28** | Loại bỏ Ô tìm kiếm Header & Chuẩn hóa Dấu chấm trạng thái Presence (Status Dots) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Gỡ bỏ ô tìm kiếm header trùng lặp, chuẩn hóa chấm trạng thái presence góc avatar và dòng phụ dưới tên, mở rộng kích thước nút đạt chuẩn WCAG AA. |
+| **29** | Tái cân đối Tỷ lệ Bố cục 3 Cột & Chuẩn hóa Chấm trạng thái trước Tên nhân viên | Thiết kế mẫu danh bạ chuẩn Wazo | **HOÀN THÀNH** ✅ | Điều chỉnh lưới 3 cột (300px 420px 1fr), đặt chấm trạng thái inline ngay trước tên nhân viên, mở rộng chiều rộng danh bạ và tối ưu padding thẻ. |
+| **30** | Chuẩn hóa Thẻ Danh bạ, Nâng cấp SVG Vector, Khóa Double-Click & Tối ưu Điều hướng Cuộc gọi | Yêu cầu cải tiến UI/UX & Chống click đè | **HOÀN THÀNH** ✅ | Bỏ duplicate icon điện thoại ở badge, triệt tiêu fallback "Khối Kỹ thuật", nâng cấp nút Gọi/Chat sang SVG vector 15x15px, khóa double-click `:disabled`, tối ưu `onDial` chuyển hướng `/calls` và loại bỏ fallback '1002' trong Tin nhắn. |
 
 ---
 
@@ -1741,6 +1745,47 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 ### 4. Kết quả Kiểm tra (Verification):
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 452ms).
 * `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 412ms).
+
+---
+
+## 30. CHUẨN HÓA GIAO DIỆN THẺ DANH BẠ, NÂNG CẤP ICON VECTOR SVG, KHÓA CHỐNG DOUBLE-CLICK & TỐI ƯU ĐIỀU HƯỚNG CUỘC GỌI TOÀN HỆ THỐNG
+
+### 1. Động lực & Phân tích Tối ưu:
+* **Khắc phục lỗi trùng lặp icon điện thoại:**
+  - Ở thẻ liên hệ (Cột 3 `CallsView.vue`), badge máy lẻ mang icon điện thoại (`📞 1002`) nằm ngay cạnh nút thao tác gọi `📞`, gây lặp lại vô nghĩa. Đã chuẩn hóa sang định dạng `Máy lẻ 1002` (hoặc `Máy lẻ ---`), đồng bộ 100% với `HistoryView` và `AppHeader`.
+* **Triệt tiêu tàn dư fake data "Khối Kỹ thuật":**
+  - Trước đây, nếu liên hệ từ tổng đài Wazo không có thông tin phòng ban, hệ thống tự động gán fallback `'Khối Kỹ thuật'`. Đã loại bỏ fallback này trong `contactService.js` (kiểm tra đầy đủ `item.department || item.society || item.title || item.userfield || item.description || ''`) và ẩn nhãn phòng ban trên giao diện nếu tổng đài không có dữ liệu (`v-if="c.dept"`).
+* **Nâng cấp nút Gọi và Chat sang SVG Vector chuẩn:**
+  - Thay thế emoji thô `📞` và `💬` bằng icon SVG vector chuẩn $15 \times 15\text{ px}$ với nét vẽ mượt mà, màu sắc chuẩn xác (`#10b981` cho Call, `#3b82f6` cho Chat) và hỗ trợ hover hiệu ứng scale mượt mà.
+* **Khóa chống click đè (Double-Click Lock & Anti-Collision):**
+  - Bổ sung `:disabled="isCalling || isDialing || !c.number"` trên nút Gọi ở thẻ danh bạ, ngăn chặn hoàn toàn việc click nhanh 2 lần liên tiếp gây xung đột luồng SIP WebRTC.
+* **Tối ưu điều hướng cuộc gọi toàn hệ thống (`App.vue` & `MessagesView.vue`):**
+  - Cập nhật hàm `onDial` tại `App.vue`: Khi bấm nút Gọi từ màn hình Tin nhắn (`MessagesView`) hoặc bất kỳ đâu, hệ thống tự động điều hướng sang `/calls?number={ext}&autocall=true` để người dùng được đưa sang đúng giao diện cuộc gọi có đầy đủ thời gian đàm thoại, phím tắt mic và nút cúp máy.
+  - Xóa bỏ fallback số giả lập `|| '1002'` tại `startVoiceCall` và `startVideoCall` trong `MessagesView.vue`. Nếu phòng chat chưa có số máy lẻ, hiển thị thông báo toast cảnh báo thay vì gọi nhầm số giả lập.
+
+### 2. Các file đã chỉnh sửa:
+1. `src/views/CallsView.vue`:
+   - Chuẩn hóa text máy lẻ: `Máy lẻ {{ c.number || '---' }}`.
+   - Thêm điều kiện `v-if="c.dept"` cho text phòng ban.
+   - Nâng cấp 2 nút hành động sang SVG vector $15 \times 15\text{ px}$.
+   - Khóa nút gọi khi đang gọi/đang quay số/chưa có số: `:disabled="isCalling || isDialing || !c.number"`.
+   - Cập nhật CSS cho `.action-svg` và trạng thái hover/disabled.
+2. `src/services/contactService.js`:
+   - Loại bỏ fallback `'Khối Kỹ thuật'` tại cả 2 nhánh mapping (object `items` và bảng `column_types`), trả về chuỗi rỗng `''` nếu Wazo không có thông tin phòng ban.
+3. `src/App.vue`:
+   - Cập nhật `onDial` sang `router.push({ path: '/calls', query: { number: extension, autocall: 'true' } })`.
+4. `src/views/MessagesView.vue`:
+   - Loại bỏ fallback `'1002'` tại `startVoiceCall` và `startVideoCall`.
+   - Bổ sung cảnh báo toast nếu phòng chat 1-1 chưa được gán số máy lẻ.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Đồng bộ 100% các cập nhật logic trên sang `Smart_Call_Web_Mock`.
+* Bảo toàn nguyên vẹn mọi logic mock data và cơ chế kiểm thử offline theo quy tắc GEMINI.md.
+
+### 4. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 429ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 461ms).
+
 
 
 
