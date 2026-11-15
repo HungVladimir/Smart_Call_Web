@@ -39,6 +39,7 @@
 | **23** | Chuẩn hóa Toàn diện Phân hệ Tin nhắn (Messages), SSOT WebSocket & Tích hợp Wazo Chatd API | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Mã tham chiếu chuẩn | **HOÀN THÀNH** ✅ | Phân tách kho lưu trữ tin nhắn theo từng User UUID tránh rò rỉ chéo; Hợp nhất xử lý WebSocket tin nhắn tập trung tại `chatService.js` (SSOT); Dọn sạch cache tin nhắn khi Logout; Tích hợp tạo phòng 1-1 qua Wazo Chatd API (`/users/me/rooms`). |
 | **24** | Khắc phục Triệt để Lỗi Nhân đôi Tin nhắn, Khựng 1s Chuyển phòng, Múi giờ UTC & Rò rỉ CDR | Kiểm toán toàn diện & Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Dedup tin nhắn cmsg- và serverMsg; UTC sang local time; 0ms direct room switch; smartcall-call-ended cleanup; Phân tách cache theo User UUID; Động hóa SIP URI. |
 | **25** | Khắc phục Triệt để Vòng lặp Vô tận (Infinite Event Loop) & Nã Request CDR trên Dashboard | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Vòng đời khép kín | **HOÀN THÀNH** ✅ | Bổ sung cờ silent cho saveRooms(); Cắt đứt vòng lặp smartcall-rooms-updated; Thêm in-flight lock isLoadingDashboard & debounce 400ms; Quản lý KeepAlive active/deactivated; In-flight Promise Sharing cho CDR và Chat Rooms. |
+| **26** | Gộp Toàn diện Danh bạ vào Gọi điện & Xóa bỏ Tab Tổng quan (Dashboard) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Tái cấu trúc Adaptive 3-Tier Grid (max-width 1360px), tích hợp Danh bạ vào tab Gọi điện, tìm kiếm tiếng Việt không dấu, xóa DashboardView & ContactsView, bổ sung redirect chống trắng màn hình, đồng bộ song song. |
 
 ---
 
@@ -1547,6 +1548,62 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 ### 3. Đồng bộ Song song & Kiểm tra:
 * Cập nhật đồng bộ toàn bộ logic trên sang cả `Smart_Call_Web` và `Smart_Call_Web_Mock` (bảo toàn toàn bộ khối mock data và kịch bản thử nghiệm ngoại tuyến).
 * Chạy kiểm tra biên dịch `npm run build` trên cả 2 dự án: Hoàn thành 100% với 0 lỗi.
+
+---
+
+## 26. GỘP TOÀN DIỆN DANH BẠ VÀO TAB GỌI ĐIỆN & XÓA BỎ TAB TỔNG QUAN (DASHBOARD)
+
+### 1. Động lực & Cơ sở Kiến trúc:
+* **Chuẩn hóa theo mã nguồn tham chiếu mẫu:** Đối chiếu mã nguồn tham chiếu mẫu Wazo (`FileQuest/codeAnhHai.txt`), giao diện tổng đài tiêu chuẩn bao gồm 2 phân khu chủ đạo đặt song song: `CallPanel` (Bàn phím + Trạng thái đàm thoại) và `ContactList` (Danh bạ + Trạng thái hiện diện Presence).
+* **Loại bỏ phân hệ trung gian thừa:** Màn hình Tổng quan (`DashboardView`) không mang lại giá trị vận hành trực tổng đài nội bộ, ngược lại gây phát sinh lưu lượng polling ngầm định kỳ.
+* **Tối ưu trải nghiệm (UX):** Người dùng có thể vừa xem danh bạ, trạng thái hiện diện (online/busy/dnd/offline) và bấm gọi/nhắn tin ngay tại chỗ mà không cần phải chuyển đổi qua lại giữa các tab.
+
+### 2. Các nội dung kỹ thuật đã triển khai:
+1. **`src/config/features.js`:**
+   - Xóa bỏ 2 cờ `dashboard` và `contacts` khỏi `DEFAULT_FEATURES`.
+   - Giữ lại 3 cờ phân hệ: `calls` (Gọi điện & Danh bạ), `messages` (Tin nhắn), `history` (Lịch sử cuộc gọi).
+   - Thêm cơ chế auto-migration trong `getFeatures()` để tự động dọn sạch các khóa cũ trong `localStorage` của trình duyệt.
+2. **`src/router/index.js`:**
+   - Xóa bỏ 2 route `/dashboard` và `/contacts`, gỡ bỏ import `DashboardView.vue` và `ContactsView.vue`.
+   - Cập nhật `getFirstAvailableRoute()` ưu tiên: `/calls` $\rightarrow$ `/messages` $\rightarrow$ `/history`.
+   - Bổ sung 3 route Redirects chống trắng màn hình:
+     - `/dashboard` $\rightarrow$ `/calls`
+     - `/contacts` $\rightarrow$ `/calls`
+     - `/:pathMatch(.*)*` $\rightarrow$ `/calls`
+3. **`src/views/LoginView.vue`:**
+   - Chuyển hướng sau đăng nhập thành công sang `/calls` (cả luồng đăng nhập thật và đăng nhập ngoại tuyến Offline).
+4. **`src/components/layout/AppHeader.vue`:**
+   - Sửa `goHome()` (bấm Logo SmartCall) chuyển sang `/calls`.
+   - Sửa `handleSearch()` (bấm Enter tìm kiếm hoặc click footer dropdown) chuyển sang `/calls?q=...`.
+5. **`src/components/layout/AppSidebar.vue`:**
+   - Xóa bỏ 2 tab Tổng quan và Danh bạ trên Sidebar menu.
+   - Đổi nhãn tab Gọi điện thành `📞 Gọi điện & Danh bạ`.
+   - Gỡ biến đếm `contactsCount`, gỡ tác vụ nạp danh bạ trong `updateSidebarCounts` và gỡ listener `smartcall-contacts-updated` (triệt tiêu polling ngầm 10s).
+6. **`src/components/common/SettingsModal.vue`:**
+   - Xóa bỏ 2 checkbox cấu hình phân hệ cũ (`dashboard` và `contacts`) tại Tab Cài đặt phân hệ.
+7. **`src/views/CallsView.vue` (Tái cấu trúc Toàn diện Adaptive 3-Tier Grid):**
+   - **Màn hình rộng (Desktop $\ge$ 1200px):** Bố cục 3 cột cân đối (max-width: 1360px): Cột 1 Bàn phím số (~310px), Cột 2 Trạng thái đàm thoại (1fr), Cột 3 Danh bạ nhân viên (~410px).
+   - **Màn hình trung bình (Tablet 768px - 1199px):** Bố cục 2 cột tích hợp: Cột trái gồm Trạng thái cuộc gọi (Collapsible: gọn ~64px khi Idle, mở rộng ~280px khi Active) + Bàn phím số; Cột phải là Danh bạ nhân viên hiển thị đầy đủ (không bị ẩn `display: none`).
+   - **Màn hình di động (< 768px):** Thanh chuyển đổi phân đoạn Segmented Control (`📞 Bàn phím & Đàm thoại` / `👥 Danh bạ`) kèm dải Mini Active Call Bar ghim nổi trên đầu khi đang đàm thoại mà xem tab Danh bạ.
+   - **Tích hợp Danh bạ đầy đủ:** Tìm kiếm realtime, nút làm mới ↻, bộ lọc Tất cả / ⭐ Yêu thích, avatar hiển thị trạng thái hiện diện Presence (online, busy, ringing, dnd, away, offline).
+   - **Nghiệp vụ gọi chuẩn `GEMINI.md`:**
+     - Gọi từ danh bạ: Chặn máy bận/talking/holding/ringing/dnd; Nếu số offline $\rightarrow$ hiển thị popup confirm chuyển sang nhắn tin 1-1; Nếu khả dụng $\rightarrow$ gọi trực tiếp tại chỗ không redirect router.
+     - Gọi từ bàn phím số: Nếu số đối phương offline $\rightarrow$ toast cảnh báo `📴 Người này hiện đang ngoại tuyến, xin vui lòng gọi lại lúc khác!`.
+     - Kiểm tra thiết bị âm thanh Microphone trước khi gọi (`wazoService.validateAndMakeCall`).
+   - **Hỗ trợ tìm kiếm tiếng Việt không dấu (`removeVietnameseTones`):** Gõ "hai", "dung", "an" đều khớp chính xác "Hải", "Dũng", "An".
+   - **Bảo toàn từ khóa tìm kiếm (`q`):** Hàm `cleanCallQueryParams()` khi cúp máy chỉ xóa các param cuộc gọi (`number`, `autocall`, `active`, `direction`), giữ nguyên param `q`.
+8. **Xóa bỏ 2 file component cũ:**
+   - Xóa `src/views/DashboardView.vue`
+   - Xóa `src/views/ContactsView.vue`
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Đồng bộ 100% các thay đổi trên sang `Smart_Call_Web_Mock`.
+* Bảo toàn nguyên vẹn toàn bộ các khối mock data (`MOCK_FALLBACK_CONTACTS`, `mockData: true`, tab "🚩 Phân hệ & Mock Data" trong `SettingsModal.vue`, nút "Chạy chế độ thử nghiệm Offline" ở `LoginView.vue`).
+
+### 4. Kết quả Kiểm tra (Verification):
+* Biên dịch `npm run build` trên `Smart_Call_Web`: Thành công 100% với 0 lỗi (321 modules transformed, built in 504ms).
+* Biên dịch `npm run build` trên `Smart_Call_Web_Mock`: Thành công 100% với 0 lỗi (321 modules transformed, built in 475ms).
+
 
 
 

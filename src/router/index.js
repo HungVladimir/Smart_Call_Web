@@ -1,7 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
-import DashboardView from '../views/DashboardView.vue'
-import ContactsView from '../views/ContactsView.vue'
 import HistoryView from '../views/HistoryView.vue'
 import CallsView from '../views/CallsView.vue'
 import MessagesView from '../views/MessagesView.vue'
@@ -10,9 +8,7 @@ import { isFeatureEnabled, getFeatures } from '../config/features'
 
 const getFirstAvailableRoute = () => {
   const f = getFeatures()
-  if (f.dashboard) return '/dashboard'
   if (f.calls) return '/calls'
-  if (f.contacts) return '/contacts'
   if (f.messages) return '/messages'
   if (f.history) return '/history'
   return '/login'
@@ -33,21 +29,17 @@ const router = createRouter({
     },
     {
       path: '/dashboard',
-      name: 'Dashboard',
-      component: DashboardView,
-      meta: { requiresAuth: true, title: 'Tổng quan', featureKey: 'dashboard' },
+      redirect: '/calls',
+    },
+    {
+      path: '/contacts',
+      redirect: '/calls',
     },
     {
       path: '/calls',
       name: 'Calls',
       component: CallsView,
-      meta: { requiresAuth: true, title: 'Gọi thoại & Bàn phím', featureKey: 'calls' },
-    },
-    {
-      path: '/contacts',
-      name: 'Contacts',
-      component: ContactsView,
-      meta: { requiresAuth: true, title: 'Danh bạ', featureKey: 'contacts' },
+      meta: { requiresAuth: true, title: 'Gọi điện & Danh bạ', featureKey: 'calls' },
     },
     {
       path: '/messages',
@@ -60,6 +52,10 @@ const router = createRouter({
       name: 'History',
       component: HistoryView,
       meta: { requiresAuth: true, title: 'Lịch sử gọi', featureKey: 'history' },
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/calls',
     },
   ],
 })

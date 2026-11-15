@@ -236,7 +236,7 @@ const userInitials = computed(() => {
 })
 
 const goHome = () => {
-  router.push('/dashboard')
+  router.push('/calls')
 }
 
 const clearSearch = () => {
@@ -247,7 +247,7 @@ const clearSearch = () => {
 const handleSearch = () => {
   showDropdown.value = false
   if (searchQuery.value.trim()) {
-    router.push({ path: '/contacts', query: { q: searchQuery.value.trim() } })
+    router.push({ path: '/calls', query: { q: searchQuery.value.trim() } })
   }
 }
 

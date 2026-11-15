@@ -7,10 +7,8 @@ const STORAGE_KEY = 'smartcall_features_config'
 
 // Cấu hình mặc định của hệ thống
 export const DEFAULT_FEATURES = {
-  // 5 cờ phân hệ chức năng (Screens / Features)
-  dashboard: true, // Màn hình Tổng quan (/dashboard)
-  calls: true, // Màn hình Gọi điện và bàn phím (/calls)
-  contacts: true, // Màn hình Danh bạ (/contacts)
+  // Các cờ phân hệ chức năng (Screens / Features)
+  calls: true, // Màn hình Gọi điện & Danh bạ (/calls)
   messages: true, // Màn hình Tin nhắn (/messages)
   history: true, // Màn hình Lịch sử cuộc gọi (/history)
 
@@ -25,7 +23,14 @@ export function getFeatures() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
-      return { ...DEFAULT_FEATURES, ...JSON.parse(saved) }
+      const parsed = JSON.parse(saved)
+      // Auto-migration: dọn sạch các cờ phân hệ cũ không còn tồn tại (dashboard, contacts)
+      if ('dashboard' in parsed || 'contacts' in parsed) {
+        delete parsed.dashboard
+        delete parsed.contacts
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...DEFAULT_FEATURES, ...parsed }))
+      }
+      return { ...DEFAULT_FEATURES, ...parsed }
     }
   } catch (e) {
     console.warn('Lỗi đọc cấu hình features:', e)
@@ -62,4 +67,3 @@ export function isFeatureEnabled(key) {
 export function resetFeatures() {
   return saveFeatures(DEFAULT_FEATURES)
 }
-

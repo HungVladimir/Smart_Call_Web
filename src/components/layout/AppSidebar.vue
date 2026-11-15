@@ -1,24 +1,10 @@
 <template>
   <aside class="app-sidebar">
     <ul class="sidebar-menu">
-      <li v-if="features.dashboard">
-        <router-link to="/dashboard" class="nav-btn" active-class="active">
-          <span class="icon">📊</span>
-          <span>Tổng quan</span>
-        </router-link>
-      </li>
-
       <li v-if="features.calls">
         <router-link to="/calls" class="nav-btn" active-class="active">
           <span class="icon">📞</span>
-          <span>Gọi điện & Bàn phím</span>
-        </router-link>
-      </li>
-
-      <li v-if="features.contacts">
-        <router-link to="/contacts" class="nav-btn" active-class="active">
-          <span class="icon">📇</span>
-          <span>Danh bạ</span>
+          <span>Gọi điện & Danh bạ</span>
         </router-link>
       </li>
 
@@ -51,7 +37,6 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { contactService } from '@/services/contactService'
 import { chatService } from '@/services/chatService'
 import { historyService } from '@/services/historyService'
 import { wazoService, callStore } from '@/services/wazo'
@@ -72,7 +57,6 @@ const onFeaturesChanged = (e) => {
   features.value = e.detail || getFeatures()
 }
 
-const contactsCount = ref(0)
 const unreadMessagesCount = ref(0)
 const missedCallsCount = ref(0)
 
@@ -84,17 +68,7 @@ const updateSidebarCounts = async () => {
   isUpdatingSidebar = true
 
   try {
-    // 1. Thống kê tổng số danh bạ
-    try {
-      const contacts = await contactService.getContacts()
-      if (Array.isArray(contacts)) {
-        contactsCount.value = contacts.length
-      }
-    } catch (e) {
-      /* ignore */
-    }
-
-    // 2. Thống kê tin nhắn chưa đọc
+    // 1. Thống kê tin nhắn chưa đọc
     try {
       const rooms = await chatService.getRooms()
       if (Array.isArray(rooms)) {
@@ -104,7 +78,7 @@ const updateSidebarCounts = async () => {
       /* ignore */
     }
 
-    // 3. Thống kê cuộc gọi nhỡ
+    // 2. Thống kê cuộc gọi nhỡ
     try {
       const history = await historyService.getHistory()
       if (Array.isArray(history)) {
@@ -131,7 +105,6 @@ onMounted(() => {
   debouncedUpdateSidebarCounts()
   window.addEventListener('app-login-success', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
-  window.addEventListener('smartcall-contacts-updated', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-cdr-updated', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
@@ -143,7 +116,6 @@ onUnmounted(() => {
   }
   window.removeEventListener('app-login-success', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
-  window.removeEventListener('smartcall-contacts-updated', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-cdr-updated', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
 })

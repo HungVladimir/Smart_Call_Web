@@ -180,22 +180,14 @@
       <!-- Tab 5: Cấu hình Phân hệ tính năng -->
       <div v-show="activeTab === 'features'" class="st-panel">
         <div class="features-intro">
-          <strong>Cấu hình Bật / Tắt 5 phân hệ màn hình (Feature Flags):</strong>
-          <small>Ẩn/hiện linh hoạt từng màn hình trên Sidebar và Menu để phục vụ báo cáo tiến độ giai đoạn.</small>
+          <strong>Cấu hình Bật / Tắt 3 phân hệ màn hình (Feature Flags):</strong>
+          <small>Ẩn/hiện linh hoạt từng màn hình trên Sidebar và Menu để phục vụ quản trị ứng dụng.</small>
         </div>
 
         <div class="features-grid">
           <label class="feature-item">
-            <input type="checkbox" v-model="featureConfig.dashboard" />
-            <span class="feature-name">📊 Tổng quan (/dashboard)</span>
-          </label>
-          <label class="feature-item">
             <input type="checkbox" v-model="featureConfig.calls" />
-            <span class="feature-name">📞 Gọi điện & Bàn phím (/calls)</span>
-          </label>
-          <label class="feature-item">
-            <input type="checkbox" v-model="featureConfig.contacts" />
-            <span class="feature-name">📇 Danh bạ nội bộ (/contacts)</span>
+            <span class="feature-name">📞 Gọi điện & Danh bạ (/calls)</span>
           </label>
           <label class="feature-item">
             <input type="checkbox" v-model="featureConfig.messages" />

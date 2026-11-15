@@ -263,7 +263,7 @@ const handleLogin = async () => {
       window.dispatchEvent(new CustomEvent('wazo-registered'))
     }
     loading.value = false
-    router.push('/dashboard')
+    router.push('/calls')
   } catch (err) {
     loading.value = false
     console.error('Lỗi đăng nhập:', err)
@@ -318,7 +318,7 @@ const enterOfflineMode = () => {
   )
 
   window.dispatchEvent(new CustomEvent('app-login-success'))
-  router.push('/dashboard')
+  router.push('/calls')
 }
 </script>
 
