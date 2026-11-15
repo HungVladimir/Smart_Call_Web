@@ -113,11 +113,11 @@
 
       <!-- Nút Cài đặt hệ thống -->
       <button class="btn-settings-header" title="Cài đặt hệ thống" @click="$emit('open-settings')">
-        ⚙️ SETTINGS
+        ⚙️ <span class="header-btn-text">SETTINGS</span>
       </button>
 
       <button class="btn-logout-header" title="Đăng xuất khỏi hệ thống" @click="$emit('logout')">
-        🚪 Thoát
+        🚪 <span class="header-btn-text">Thoát</span>
       </button>
     </div>
 
@@ -921,5 +921,44 @@ const updatePresence = async () => {
 
 .btn-sip-modal-close:hover {
   background: #0369a1;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    height: 50px;
+    padding: 0 10px;
+  }
+
+  .header-left .sip-status-badge .sip-status-text {
+    display: none;
+  }
+
+  .header-center {
+    display: none;
+  }
+
+  .header-right {
+    gap: 8px;
+  }
+
+  .user-info {
+    display: none;
+  }
+
+  .status-select {
+    font-size: 0.72rem;
+    padding: 2px 4px;
+    max-width: 90px;
+  }
+
+  .header-btn-text {
+    display: none;
+  }
+
+  .btn-settings-header,
+  .btn-logout-header {
+    padding: 5px 8px;
+    font-size: 0.9rem;
+  }
 }
 </style>

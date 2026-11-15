@@ -1607,6 +1607,46 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 * Biên dịch `npm run build` trên `Smart_Call_Web`: Thành công 100% với 0 lỗi (321 modules transformed, built in 504ms).
 * Biên dịch `npm run build` trên `Smart_Call_Web_Mock`: Thành công 100% với 0 lỗi (321 modules transformed, built in 475ms).
 
+---
+
+## 27. TỐI ƯU HÓA GIAO DIỆN DI ĐỘNG RESPONSIVE (MOBILE BOTTOM NAVIGATION & COMPACT HEADER)
+
+### 1. Vấn đề Phát hiện qua Kiểm thử Trực quan (Browser Visual Inspection):
+* Khi kiểm tra giao diện bằng công cụ chụp ảnh màn hình tự động ở 3 độ phân giải (Desktop 1440px, Tablet 1024px, Mobile 375px):
+  - Desktop (1440px) và Tablet (1024px) hiển thị chuẩn mực và cân đối 100%.
+  - Trên màn hình di động (Mobile $\le 768px$), thanh Sidebar bên trái (`AppSidebar.vue`) chiếm cố định 220px và đệm container `app-content` chiếm 48px, khiến không gian hiển thị của nội dung chính (`CallsView.vue`) bị ép nghẹt chỉ còn ~107px.
+
+### 2. Các giải pháp & Nội dung kỹ thuật đã triển khai:
+1. **`src/components/layout/AppSidebar.vue` (Chuyển đổi thành Bottom Navigation Bar):**
+   - Áp dụng `@media (max-width: 768px)`:
+     - Biến Sidebar cố định dọc 220px thành thanh điều hướng dưới đáy màn hình (Bottom Navigation Bar) cao 56px, `width: 100%`, `position: fixed/flex`, `z-index: 100`.
+     - Phân bổ 3 nút chuyển tab (Gọi điện & Danh bạ, Tin nhắn, Lịch sử cuộc gọi) theo chiều ngang (`flex-direction: row; justify-content: space-around`).
+     - Thu gọn kích thước icon và hiển thị badge số đếm tin nhắn chưa đọc nổi bật trên thanh tab di động.
+     - Ẩn phần chân trang `sidebar-footer` (phiên bản và trạng thái SIP footer) trên màn hình nhỏ để tiết kiệm tối đa diện tích.
+2. **`src/App.vue` (Đảo chiều luồng bố cục & Tối ưu đệm):**
+   - Áp dụng `@media (max-width: 768px)`:
+     - `.app-body`: Đổi hướng sang `flex-direction: column-reverse`, tính toán lại chiều cao `height: calc(100vh - 50px)` để thanh Bottom Navigation Bar tự nhiên nằm dưới đáy mà không che khuất nội dung.
+     - `.app-content`: Giảm khoảng đệm (`padding`) từ 24px xuống còn `12px 10px`, giải phóng toàn bộ chiều rộng màn hình cho nội dung view.
+3. **`src/components/layout/AppHeader.vue` (Tối ưu Compact Header di động):**
+   - Áp dụng `@media (max-width: 768px)`:
+     - Giảm chiều cao header xuống 50px, padding 0 10px.
+     - Ẩn thanh tìm kiếm dài ở giữa (`header-center`) vì trên trang Calls đã có thanh tìm kiếm danh bạ chuyên dụng.
+     - Thu gọn huy hiệu trạng thái SIP (chỉ hiển thị chấm tròn màu và tên máy lẻ gọn gàng).
+     - Ẩn chữ tên người dùng và mã máy lẻ dài trong profile (`user-info`), chỉ giữ avatar tròn.
+     - Nút **Cài đặt** và **Thoát**: Bọc nhãn văn bản trong `<span class="header-btn-text">` và ẩn đi trên mobile, chỉ hiển thị biểu tượng icon tiện lợi (`⚙️`, `🚪`).
+4. **`src/views/CallsView.vue`:**
+   - Chuẩn hóa đồng bộ breakpoint di động thành `@media (max-width: 768px)` ăn khớp hoàn toàn với `App.vue` và `AppSidebar.vue`.
+   - Kết hợp hoàn hảo với thanh chuyển đổi Segmented Control (`📞 Bàn phím & Đàm thoại` / `👥 Danh bạ`) giúp người dùng thao tác một tay mượt mà như app native di động.
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Đồng bộ toàn bộ các điều chỉnh responsive trên sang `Smart_Call_Web_Mock` (`App.vue`, `AppSidebar.vue`, `AppHeader.vue`, `CallsView.vue`).
+* Bảo toàn nguyên vẹn mọi logic mock data và cơ chế kiểm thử offline.
+
+### 4. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 415ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 467ms).
+
+
 
 
 

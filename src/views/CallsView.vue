@@ -1854,7 +1854,7 @@ onUnmounted(() => {
 /* =========================================================================
    3. MÀN HÌNH DI ĐỘNG (< 768px): Thanh chuyển đổi phân đoạn Segmented
    ========================================================================= */
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .mobile-segmented-bar {
     display: flex;
   }

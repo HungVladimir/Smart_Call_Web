@@ -243,6 +243,17 @@ body {
   padding: 24px;
 }
 
+@media (max-width: 768px) {
+  .app-body {
+    flex-direction: column-reverse;
+    height: calc(100vh - 50px);
+  }
+
+  .app-content {
+    padding: 12px 10px;
+  }
+}
+
 .login-fullscreen {
   height: 100vh;
   width: 100vw;

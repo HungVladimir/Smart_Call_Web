@@ -222,5 +222,48 @@ onUnmounted(() => {
 .webrtc-status.status-offline {
   color: #94a3b8;
 }
+
+@media (max-width: 768px) {
+  .app-sidebar {
+    width: 100%;
+    height: 56px;
+    flex-direction: row;
+    border-right: none;
+    border-top: 1px solid #1a1e24;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.2);
+    z-index: 100;
+  }
+
+  .sidebar-menu {
+    flex-direction: row;
+    padding: 4px 6px;
+    align-items: center;
+    justify-content: space-around;
+    gap: 4px;
+  }
+
+  .nav-btn {
+    padding: 6px 8px;
+    font-size: 0.76rem;
+    gap: 6px;
+    flex: 1;
+    justify-content: center;
+  }
+
+  .nav-btn .icon {
+    font-size: 1rem;
+    width: auto;
+  }
+
+  .badge-count {
+    padding: 1px 5px;
+    font-size: 0.65rem;
+    margin-left: 2px;
+  }
+
+  .sidebar-footer {
+    display: none;
+  }
+}
 </style>
 
