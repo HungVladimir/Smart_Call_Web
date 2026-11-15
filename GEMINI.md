@@ -151,6 +151,17 @@ Trước khi báo cáo giải pháp cho người dùng, AI phải tự kiểm tr
 ### 7.5. Sửa lỗi từ gốc rễ (Root-Cause Architecture Fix)
 - Khi phát hiện lỗi, phải truy nguyên nhân về tận gốc rễ luồng dữ liệu (Tầng Service / Store / WebSocket). Cấm viết thêm các câu lệnh `if/else` chữa cháy tạm thời tại tầng View làm rối mã nguồn và phát sinh lỗi dây chuyền.
 
+---
+
+## 8. QUY TẮC RÀ SOÁT & BẢO VỆ KHO LƯU TRỮ GIT (POST-CODE GIT HYGIENE & GITIGNORE RULE)
+
+1. **Rà soát tự động sau mỗi bước code (Post-Code Review)**:
+   - Sau mỗi bước viết code, sửa lỗi, chạy công cụ phân tích hoặc cài đặt tiện ích, AI **bắt buộc phải chạy `git status`** để kiểm tra danh sách toàn bộ các file/thư mục mới phát sinh (untracked files).
+2. **Chủ động đưa file không cần thiết vào `.gitignore`**:
+   - Xác định rõ mục đích của từng file mới sinh ra. Nếu đó là tệp cấu hình cục bộ, bộ nhớ tạm, dữ liệu sinh tự động từ công cụ phân tích hoặc AI agents (ví dụ: `.ua/`, `.understand-anything/`, `.specify/`, file tạm của IDE, OS, logs...), AI phải **chủ động cập nhật ngay đường dẫn đó vào file `.gitignore`**.
+3. **Mục tiêu bất biến**:
+   - Giữ cho kho lưu trữ Git công ty (`Smart_Call_Web`) luôn tinh gọn, sạch sẽ, bảo mật, chỉ chứa mã nguồn chính thức và tài liệu quy chuẩn; tuyệt đối không để rò rỉ dữ liệu môi trường (`.env`), thư viện (`node_modules`), hay rác sinh ra trong quá trình phát triển.
+
 
 
 

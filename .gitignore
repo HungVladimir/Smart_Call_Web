@@ -50,3 +50,9 @@ Thumbs.db
 FileQuest/fileLogin*
 FileQuest/wazo_api_reference*.txt
 FileQuest/wazo_api_reference.md
+
+# 8. Dữ liệu sinh tự động từ công cụ phân tích & AI (Understand-Anything, Spec-Kit, Scratch)
+.ua/
+.understand-anything/
+.specify/
+specs/

@@ -44,6 +44,10 @@
 | **28** | Loại bỏ Ô tìm kiếm Header & Chuẩn hóa Dấu chấm trạng thái Presence (Status Dots) | Bám sát mã nguồn tham chiếu chuẩn Wazo & GEMINI.md | **HOÀN THÀNH** ✅ | Gỡ bỏ ô tìm kiếm header trùng lặp, chuẩn hóa chấm trạng thái presence góc avatar và dòng phụ dưới tên, mở rộng kích thước nút đạt chuẩn WCAG AA. |
 | **29** | Tái cân đối Tỷ lệ Bố cục 3 Cột & Chuẩn hóa Chấm trạng thái trước Tên nhân viên | Thiết kế mẫu danh bạ chuẩn Wazo | **HOÀN THÀNH** ✅ | Điều chỉnh lưới 3 cột (300px 420px 1fr), đặt chấm trạng thái inline ngay trước tên nhân viên, mở rộng chiều rộng danh bạ và tối ưu padding thẻ. |
 | **30** | Chuẩn hóa Thẻ Danh bạ, Nâng cấp SVG Vector, Khóa Double-Click & Tối ưu Điều hướng Cuộc gọi | Yêu cầu cải tiến UI/UX & Chống click đè | **HOÀN THÀNH** ✅ | Bỏ duplicate icon điện thoại ở badge, triệt tiêu fallback "Khối Kỹ thuật", nâng cấp nút Gọi/Chat sang SVG vector 15x15px, khóa double-click `:disabled`, tối ưu `onDial` chuyển hướng `/calls` và loại bỏ fallback '1002' trong Tin nhắn. |
+| **31** | Làm sạch 100% Dữ liệu Giả lập Phòng ban & Cảnh báo Số máy lẻ Không tồn tại trong CSDL | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Loại bỏ hardcode 'Khối Kỹ thuật', bổ sung hàm kiểm tra số máy lẻ tồn tại trong danh bạ Wazo, hiển thị cảnh báo rõ ràng khi gọi số chưa khai báo. |
+| **32** | Khắc phục Nhấp nháy Dòng trạng thái Tín hiệu Micro (VAD Hangover Smoothing) | Tối ưu UI/UX Web Audio API | **HOÀN THÀNH** ✅ | Bổ sung thuật toán VAD Hangover (1000ms delay), ngưỡng threshold 10, CSS transition mượt mà, triệt tiêu hiện tượng nhảy chữ liên tục khi nói. |
+| **33** | Chuẩn hóa `.gitignore`, Hủy Theo dõi Thư viện `node_modules` & Biến Môi trường `.env` | An toàn bảo mật & Tinh gọn Git | **HOÀN THÀNH** ✅ | Dọn sạch 5.849 file node_modules và .env khỏi git cache bằng `git rm --cached`, tạo .env.example mẫu, bảo toàn nguyên vẹn tệp cục bộ. |
+| **34** | Thiết lập Quy tắc Rà soát Bảo vệ Git (Mục 8 GEMINI.md) & Loại trừ Dữ liệu Phân tích AI | Tiêu chuẩn vệ sinh Git & Quy chuẩn dự án | **HOÀN THÀNH** ✅ | Bổ sung Mục 8 vào GEMINI.md, tự động rà soát `git status` sau mỗi bước code, đưa `.ua/`, `.understand-anything/`, `.specify/`, `specs/` vào `.gitignore`. |
 
 ---
 
@@ -1894,3 +1898,34 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 * Toàn bộ tệp thư viện `node_modules/`, biến môi trường `.env` và thư mục `dist/` trên máy tính cục bộ vẫn được bảo toàn nguyên vẹn 100%.
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 597ms).
 * `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 520ms).
+
+
+## 34. THIẾT LẬP QUY TẮC RÀ SOÁT BẢO VỆ KHO LƯU TRỮ GIT (POST-CODE GIT HYGIENE) & LOẠI TRỪ DỮ LIỆU CÔNG CỤ AI/PHÂN TÍCH
+
+### 1. Động lực & Yêu cầu Kỹ thuật:
+* **Yêu cầu người dùng:** Sau mỗi bước viết code hoặc chạy công cụ phân tích, kiểm tra xem có tệp/thư mục mới nào phát sinh mà không cần đẩy lên Git công ty thì chủ động đưa ngay vào `.gitignore`.
+* **Phân tích thực tế:**
+  - Khi thực hiện phân tích kiến trúc với *Understand-Anything* (`understand`) và lập kế hoạch với *GitHub Spec Kit* (`speckit-plan`), hệ thống tự động sinh ra thư mục `.ua/` (chứa đồ thị tri thức `knowledge-graph.json`) và thư mục `specs/` (chứa `plan.md`).
+  - Các tệp này phục vụ cho việc hỗ trợ phân tích nội bộ của AI và quản lý tài liệu cục bộ, không phải là mã nguồn triển khai chính thức của ứng dụng tổng đài công ty.
+  - Cần đưa toàn bộ các mẫu đường dẫn này vào `.gitignore` để tránh gây rối chỉ mục Git và giữ kho lưu trữ luôn tinh gọn, sạch sẽ.
+
+### 2. Các nội dung đã thực hiện:
+1. **Bổ sung Mục 8 vào `GEMINI.md` trên cả 2 dự án (`Smart_Call_Web` và `Smart_Call_Web_Mock`):**
+   - Đặt tên mục: `8. QUY TẮC RÀ SOÁT & BẢO VỆ KHO LƯU TRỮ GIT (POST-CODE GIT HYGIENE & GITIGNORE RULE)`.
+   - Quy định bắt buộc: Chạy `git status` tự động sau mỗi bước can thiệp mã nguồn để rà soát các tệp `untracked`. Nếu là file cấu hình cục bộ, bộ nhớ tạm, hoặc công cụ sinh tự động, AI chủ động bổ sung ngay vào `.gitignore`.
+2. **Cập nhật `.gitignore` trên cả 2 dự án:**
+   - Thêm Mục 8:
+     ```gitignore
+     # 8. Dữ liệu sinh tự động từ công cụ phân tích & AI (Understand-Anything, Spec-Kit, Scratch)
+     .ua/
+     .understand-anything/
+     .specify/
+     specs/
+     ```
+3. **Kiểm tra trạng thái Git:**
+   - Cả `.ua/` và `specs/` đã được ẩn hoàn toàn khỏi danh sách chờ commit của Git.
+   - Thư viện mã nguồn chuẩn giữ nguyên trạng thái biên dịch sạch sẽ.
+
+### 3. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% trong `477ms`.
+* `Smart_Call_Web_Mock`: Đồng bộ nguyên vẹn cấu hình `.gitignore` và quy tắc `GEMINI.md`.
