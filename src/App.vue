@@ -189,10 +189,11 @@ const handleLogout = () => {
 }
 
 const onDial = (extension) => {
-  if (!extension) return
+  const cleanExt = String(extension || '').trim()
+  if (!cleanExt) return
   router.push({
     path: '/calls',
-    query: { number: extension, autocall: 'true' },
+    query: { number: cleanExt, autocall: 'true' },
   })
 }
 

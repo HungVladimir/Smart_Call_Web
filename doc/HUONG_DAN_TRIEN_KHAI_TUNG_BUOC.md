@@ -1768,23 +1768,25 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
    - Chuẩn hóa text máy lẻ: `Máy lẻ {{ c.number || '---' }}`.
    - Thêm điều kiện `v-if="c.dept"` cho text phòng ban.
    - Nâng cấp 2 nút hành động sang SVG vector $15 \times 15\text{ px}$.
-   - Khóa nút gọi khi đang gọi/đang quay số/chưa có số: `:disabled="isCalling || isDialing || !c.number"`.
-   - Cập nhật CSS cho `.action-svg` và trạng thái hover/disabled.
+   - Khóa nút gọi khi đang gọi/đang quay số/chưa có số: `:disabled="isCalling || isDialing || !c.number || !c.number.trim()"`, bổ sung dynamic `:title` thông báo rõ nguyên nhân khóa.
+   - Bổ sung dọn dẹp an toàn tham số URL query (`cleanCallQueryParams()`) khi `validateAndMakeCall` bị từ chối (cuộc gọi nội bộ tự gọi chính mình, không có micro, máy bận/ngoại tuyến) hoặc khi có cuộc gọi đang hoạt động.
+   - Bổ sung khóa chống va chạm đồng thời `wazoService._isDialing` tại `handleCallFromPanel`.
+   - Cập nhật CSS cho `.action-svg` (đổi màu mượt mà khi hover `#059669` / `#2563eb`), thêm `pointer-events: none` cho phần tử con khi nút bị vô hiệu hóa để đảm bảo con trỏ `not-allowed` hiển thị chuẩn xác trên mọi trình duyệt.
 2. `src/services/contactService.js`:
    - Loại bỏ fallback `'Khối Kỹ thuật'` tại cả 2 nhánh mapping (object `items` và bảng `column_types`), trả về chuỗi rỗng `''` nếu Wazo không có thông tin phòng ban.
 3. `src/App.vue`:
-   - Cập nhật `onDial` sang `router.push({ path: '/calls', query: { number: extension, autocall: 'true' } })`.
+   - Cập nhật `onDial` sang `router.push({ path: '/calls', query: { number: cleanExt, autocall: 'true' } })` kết hợp chuẩn hóa chuỗi `cleanExt`.
 4. `src/views/MessagesView.vue`:
    - Loại bỏ fallback `'1002'` tại `startVoiceCall` và `startVideoCall`.
-   - Bổ sung cảnh báo toast nếu phòng chat 1-1 chưa được gán số máy lẻ.
+   - Bổ sung chuẩn hóa khoảng trắng và cảnh báo toast nếu phòng chat 1-1 chưa được gán số máy lẻ.
 
 ### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
 * Đồng bộ 100% các cập nhật logic trên sang `Smart_Call_Web_Mock`.
 * Bảo toàn nguyên vẹn mọi logic mock data và cơ chế kiểm thử offline theo quy tắc GEMINI.md.
 
 ### 4. Kết quả Kiểm tra (Verification):
-* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 429ms).
-* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 461ms).
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 407ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 410ms).
 
 
 

@@ -396,9 +396,9 @@
                 <div class="contact-actions">
                   <button
                     class="btn-action-icon call"
-                    :title="`Gọi máy lẻ ${c.number || ''}`"
+                    :title="!c.number || !c.number.trim() ? 'Chưa có số máy lẻ' : (isCalling || isDialing ? 'Đang bận cuộc gọi' : `Gọi máy lẻ ${c.number}`)"
                     :aria-label="`Gọi cho ${c.name}`"
-                    :disabled="isCalling || isDialing || !c.number"
+                    :disabled="isCalling || isDialing || !c.number || !c.number.trim()"
                     @click.stop="handleCallFromPanel(c)"
                   >
                     <svg
@@ -666,10 +666,17 @@ const handleDial = async () => {
     }
   }
 
-  await wazoService.validateAndMakeCall(ext, {
-    name: target?.name || route.query?.name,
-    dept: target?.dept || route.query?.dept,
-  })
+  try {
+    const res = await wazoService.validateAndMakeCall(ext, {
+      name: target?.name || route.query?.name,
+      dept: target?.dept || route.query?.dept,
+    })
+    if (res && !res.success) {
+      cleanCallQueryParams()
+    }
+  } catch (err) {
+    cleanCallQueryParams()
+  }
 }
 
 // Bấm nút Gọi thoại trực tiếp từ Danh bạ (Rule 3.1 & 3.2 GEMINI.md)
@@ -686,12 +693,12 @@ const handleCallFromPanel = async (contact) => {
     return
   }
 
-  if (wazoService.hasActiveCall() || callStore.activeCall) {
+  if (wazoService._isDialing || wazoService.hasActiveCall() || callStore.activeCall) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
           message:
-            '⚠️ Bạn đang có một cuộc gọi khác đang hoạt động. Vui lòng kết thúc cuộc gọi trước khi gọi số mới!',
+            '⚠️ Bạn đang có một cuộc gọi khác đang hoạt động hoặc đang kết nối. Vui lòng thử lại sau!',
           type: 'warning',
         },
       }),
@@ -750,9 +757,10 @@ const handleCallFromPanel = async (contact) => {
   }
 
   // 5. Khả dụng -> Thiết lập số, chuyển tab di động sang dialer và gọi trực tiếp
-  extension.value = contact.number
+  const cleanExt = String(contact.number || '').trim()
+  extension.value = cleanExt
   mobileTab.value = 'dialer'
-  await wazoService.validateAndMakeCall(contact.number, {
+  await wazoService.validateAndMakeCall(cleanExt, {
     name: contact.name,
     dept: contact.dept,
   })
@@ -905,10 +913,14 @@ watch(
   (newNum) => {
     if (newNum) {
       extension.value = String(newNum)
-      if (route.query.autocall === 'true' && !callStore.activeCall) {
-        setTimeout(() => {
-          handleDial()
-        }, 150)
+      if (route.query.autocall === 'true') {
+        if (!callStore.activeCall && !wazoService.hasActiveCall()) {
+          setTimeout(() => {
+            handleDial()
+          }, 150)
+        } else {
+          cleanCallQueryParams()
+        }
       }
     }
   },
@@ -1742,7 +1754,7 @@ onUnmounted(() => {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
-  transition: transform 0.15s ease;
+  transition: transform 0.15s ease, color 0.15s ease;
 }
 
 .btn-action-icon:hover:not(:disabled) {
@@ -1761,6 +1773,7 @@ onUnmounted(() => {
 .btn-action-icon.call:hover:not(:disabled) {
   background: #ecfdf5;
   border-color: #10b981;
+  color: #059669;
 }
 
 .btn-action-icon.chat {
@@ -1770,6 +1783,7 @@ onUnmounted(() => {
 .btn-action-icon.chat:hover:not(:disabled) {
   background: #eff6ff;
   border-color: #3b82f6;
+  color: #2563eb;
 }
 
 .btn-action-icon:disabled {
@@ -1777,6 +1791,10 @@ onUnmounted(() => {
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.btn-action-icon:disabled * {
+  pointer-events: none;
 }
 
 .badge-unread {

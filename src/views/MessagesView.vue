@@ -562,7 +562,8 @@ const openReadIdModal = (msg) => {
 const startVoiceCall = () => {
   if (!currentRoom.value) return
   if (currentRoom.value.isDirect) {
-    if (!currentRoom.value.ext) {
+    const targetExt = String(currentRoom.value.ext || '').trim()
+    if (!targetExt) {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -573,7 +574,6 @@ const startVoiceCall = () => {
       )
       return
     }
-    const targetExt = currentRoom.value.ext
     window.dispatchEvent(
       new CustomEvent('app-action', {
         detail: { type: 'dial', value: targetExt },
@@ -615,7 +615,8 @@ const startVoiceCall = () => {
 const startVideoCall = () => {
   if (!currentRoom.value) return
   if (currentRoom.value.isDirect) {
-    if (!currentRoom.value.ext) {
+    const targetExt = String(currentRoom.value.ext || '').trim()
+    if (!targetExt) {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -629,14 +630,14 @@ const startVideoCall = () => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `Khởi tạo cuộc gọi Video 1-1 tới máy lẻ ${currentRoom.value.ext}...`,
+          message: `Khởi tạo cuộc gọi Video 1-1 tới máy lẻ ${targetExt}...`,
           type: 'info',
         },
       }),
     )
     window.dispatchEvent(
       new CustomEvent('app-action', {
-        detail: { type: 'dial', value: currentRoom.value.ext },
+        detail: { type: 'dial', value: targetExt },
       }),
     )
   } else {
