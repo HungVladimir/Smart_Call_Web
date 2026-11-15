@@ -356,7 +356,7 @@ class ChatService {
       memberCount: 2,
       updatedAt: Date.now(),
       members: [
-        { id: myUuid, name: currentUserName, dept: 'Khối Kỹ thuật', ext: myExt, isAdmin: true },
+        { id: myUuid, name: currentUserName, dept: '', ext: myExt, isAdmin: true },
         { id: targetUuid || `emp-${cleanExt}`, name: name, dept: 'Nội bộ', ext: cleanExt, isAdmin: false },
       ],
       messages: [],
@@ -379,7 +379,7 @@ class ChatService {
       id: tempId,
       sender: 'mine',
       senderName: userAlias,
-      dept: 'Khối Kỹ thuật',
+      dept: '',
       text,
       time: timeStr,
       readStatus: 'Read (0)',

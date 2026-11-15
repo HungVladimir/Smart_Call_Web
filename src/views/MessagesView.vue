@@ -385,7 +385,7 @@ const checkDirectChatRoute = () => {
         memberCount: 2,
         updatedAt: Date.now(),
         members: [
-          { id: 'me', name: currentUserName.value, dept: 'Khối Kỹ thuật', ext: '', isAdmin: true },
+          { id: 'me', name: currentUserName.value, dept: '', ext: '', isAdmin: true },
           { id: `emp-${ext}`, name: name, dept: 'Nội bộ', ext: ext, isAdmin: false },
         ],
         messages: [],
@@ -518,7 +518,7 @@ const searchAndAdd = async () => {
     const newEmp = {
       id: `emp-${q}-${Date.now()}`,
       name: `Nhân viên ${q}`,
-      dept: 'Khối Kỹ thuật',
+      dept: '',
       ext: q,
       isAdmin: false,
     }

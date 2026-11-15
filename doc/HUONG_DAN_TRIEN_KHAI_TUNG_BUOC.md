@@ -1788,6 +1788,41 @@ Dựa trên kết quả kiểm toán toàn diện mã nguồn (`audit_report_ful
 * `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 407ms).
 * `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 410ms).
 
+---
+
+## 31. LÀM SẠCH 100% DỮ LIỆU GIẢ LẬP PHÒNG BAN & BỔ SUNG ĐIỀU KIỆN CẢNH BÁO SỐ MÁY LẺ KHÔNG TỒN TẠI TRONG DANH BẠ HỆ THỐNG
+
+### 1. Động lực & Phân tích Tối ưu:
+* **Kiểm tra và ngăn chặn quay số không tồn tại trong danh bạ (Validate Unknown Extension):**
+  - Trước đây, khi người dùng nhập một số máy lẻ trên bàn phím số (Dialpad) mà số đó hoàn toàn không có trong danh bạ nội bộ (ví dụ: `8888`, `9999`), hệ thống không có bất kỳ điều kiện cảnh báo nào mà vẫn âm thầm phát lệnh WebRTC SIP INVITE lên tổng đài Asterisk.
+  - Sau đó, phải chờ $3 - 5\text{ giây}$ máy chủ Asterisk phản hồi lỗi (SIP 404 Not Found) thì mới báo lỗi kỹ thuật khó hiểu (`SDK_ERROR`).
+  - Đã bổ sung điều kiện kiểm tra sớm: Khi số máy lẻ nhập vào không có trong danh bạ hệ thống (và không phải số phòng họp nội bộ `8001`), hệ thống lập tức chặn không phát lệnh gọi, dọn dẹp URL query và hiển thị toast cảnh báo màu vàng trực quan: `⚠️ Số máy lẻ [XXXX] không tồn tại trong danh bạ hệ thống!`.
+* **Làm sạch triệt để 100% tàn dư fake data "Khối Kỹ thuật" (Tuân thủ Mục 2 GEMINI.md):**
+  - Rà soát và loại bỏ toàn bộ 10 vị trí fallback gán cứng `'Khối Kỹ thuật'` còn sót lại tại `wazo.js`, `historyService.js`, `chatService.js` và `MessagesView.vue`.
+  - Toàn bộ thông tin phòng ban được lấy từ dữ liệu thực tế của Wazo; nếu máy chủ không có thông tin thì để chuỗi rỗng `''` thay vì tự ý chèn dữ liệu giả lập.
+
+### 2. Các file đã chỉnh sửa:
+1. `src/views/CallsView.vue`:
+   - Bổ sung kiểm tra trong hàm `handleDial()`: Nếu `!target && ext !== '8001'`, dọn dẹp sạch URL query và hiển thị toast cảnh báo `⚠️ Số máy lẻ [${ext}] không tồn tại trong danh bạ hệ thống!`, ngăn chặn phát tín hiệu SIP rác.
+2. `src/services/wazo.js`:
+   - Bổ sung kiểm tra tương tự ở tầng Service `validateAndMakeCall(rawExt, meta)` để bảo vệ toàn diện (Single Entry Point / SSOT).
+   - Loại bỏ chuỗi giả lập `'Khối Kỹ thuật'` tại các dòng 360, 374, 525, 726, 888 khi lưu CDR và khởi tạo `activeCall`.
+3. `src/services/historyService.js`:
+   - Đổi giá trị mặc định của tham số `dept` trong `addRecord` từ `'Khối Kỹ thuật'` sang `''`.
+4. `src/services/chatService.js`:
+   - Loại bỏ `'Khối Kỹ thuật'` khi tạo phòng chat 1-1 và gửi tin nhắn mới (dòng 359 & 382).
+5. `src/views/MessagesView.vue`:
+   - Loại bỏ `'Khối Kỹ thuật'` khi khởi tạo thành viên phòng chat hoặc thêm thành viên vào nhóm (dòng 388 & 521).
+
+### 3. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+* Đồng bộ 100% các cập nhật logic trên sang `Smart_Call_Web_Mock` (`CallsView.vue`, `wazo.js`, `historyService.js`, `chatService.js`, `MessagesView.vue`).
+* Bảo toàn nguyên vẹn mọi logic mock data và cơ chế kiểm thử offline theo quy tắc GEMINI.md.
+
+### 4. Kết quả Kiểm tra (Verification):
+* `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 452ms).
+* `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (321 modules transformed, built in 446ms).
+
+
 
 
 

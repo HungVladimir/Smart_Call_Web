@@ -611,10 +611,25 @@ const handleDial = async () => {
     return
   }
 
-  // Kiểm tra trạng thái máy lẻ nếu đã có trong danh bạ (Rule 3.1 & 3.3 GEMINI.md)
+  // Kiểm tra trạng thái máy lẻ trong danh bạ hệ thống (Rule 3.1 & 3.3 GEMINI.md)
   const target =
-    contacts.value.find((c) => c.number === ext) ||
-    contactService.currentContacts?.find((c) => c.number === ext)
+    contacts.value.find((c) => String(c.number || '').trim() === ext) ||
+    contactService.findContactByExtension(ext)
+
+  // Nếu số máy lẻ không tồn tại trong danh bạ và không phải số phòng họp hệ thống (8001)
+  if (!target && ext !== '8001') {
+    cleanCallQueryParams()
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `⚠️ Số máy lẻ [${ext}] không tồn tại trong danh bạ hệ thống!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
   if (target) {
     if (target.status === 'busy' || target.status === 'talking' || target.status === 'holding') {
       cleanCallQueryParams()

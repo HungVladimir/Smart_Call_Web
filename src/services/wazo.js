@@ -357,7 +357,7 @@ class WazoService {
         historyService.addRecord({
           name: active.name || (active.number ? `Máy lẻ ${active.number}` : 'Đồng nghiệp'),
           extension: active.number || '',
-          dept: active.dept || 'Khối Kỹ thuật',
+          dept: active.dept || '',
           duration: wasConnected ? (active.duration || 0) : 0,
           direction: active.direction || 'outbound',
           status: status,
@@ -371,7 +371,7 @@ class WazoService {
         historyService.addRecord({
           name: incoming.name || (incoming.extension || incoming.number ? `Máy lẻ ${incoming.extension || incoming.number}` : 'Đồng nghiệp'),
           extension: incoming.extension || incoming.number || '',
-          dept: incoming.dept || 'Khối Kỹ thuật',
+          dept: incoming.dept || '',
           duration: 0,
           direction: 'inbound',
           status: 'missed',
@@ -522,7 +522,7 @@ class WazoService {
           session: callSession,
           number: ext,
           name: contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp'),
-          dept: contact?.dept || 'Khối Kỹ thuật',
+          dept: contact?.dept || '',
           direction: 'inbound',
           status: 'connected',
           startTime: Date.now(),
@@ -723,7 +723,7 @@ class WazoService {
       historyService.addRecord({
         name: incoming.name || `Máy lẻ ${incoming.extension || incoming.number}`,
         extension: incoming.extension || incoming.number || '',
-        dept: incoming.dept || 'Khối Kỹ thuật',
+        dept: incoming.dept || '',
         duration: 0,
         direction: 'inbound',
         status: 'missed',
@@ -787,8 +787,24 @@ class WazoService {
       return { success: false, reason: 'SELF_CALL' }
     }
 
-    // 4. Kiểm tra trạng thái máy lẻ trong danh bạ (Non-blocking)
+    // 4. Kiểm tra trạng thái máy lẻ trong danh bạ
     const targetContact = contactService.findContactByExtension(cleanExt)
+    if (!targetContact && cleanExt !== '8001' && !meta.allowUnknown) {
+      if (contactService.currentContacts && contactService.currentContacts.length > 0) {
+        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} không tồn tại trong danh bạ hệ thống.`)
+        this._isDialing = false
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: {
+              message: `⚠️ Số máy lẻ [${cleanExt}] không tồn tại trong danh bạ hệ thống!`,
+              type: 'warning',
+            },
+          }),
+        )
+        return { success: false, reason: 'TARGET_NOT_FOUND' }
+      }
+    }
+
     if (targetContact) {
       if (targetContact.status === 'busy') {
         logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} đang bận trong cuộc gọi khác.`)
@@ -885,7 +901,7 @@ class WazoService {
 
     // 7. Khởi tạo trạng thái activeCall trên reactive callStore
     const targetName = meta.name || targetContact?.name || `Máy lẻ ${cleanExt}`
-    const targetDept = meta.dept || targetContact?.dept || 'Khối Kỹ thuật'
+    const targetDept = meta.dept || targetContact?.dept || ''
 
     callStore.activeCall = {
       session: null,

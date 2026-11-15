@@ -47,7 +47,7 @@ class HistoryService {
   addRecord({
     name = 'Ẩn danh',
     extension = '',
-    dept = 'Khối Kỹ thuật',
+    dept = '',
     duration = 0,
     direction = 'outbound',
     status = 'success',
