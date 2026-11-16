@@ -17,22 +17,54 @@ class ContactService {
     }
   }
 
-  // Khóa danh sách yêu thích phân tách theo User UUID (dự phòng)
+  // Khóa danh sách yêu thích phân tách theo User UUID
   getFavoritesKey() {
     const userUuid = wazoService?.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'default'
     return `smartcall_favorites_${userUuid}`
   }
 
+  // Tải mảng ID yêu thích từ localStorage (0ms instant)
+  getSavedFavoriteIds() {
+    try {
+      const key = this.getFavoritesKey()
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) return parsed.map(String)
+      }
+    } catch (e) {
+      console.warn('Lỗi đọc favorites từ localStorage:', e)
+    }
+    return []
+  }
+
+  // Lưu bền vững vào localStorage theo User UUID
+  saveFavorites(ids) {
+    try {
+      const key = this.getFavoritesKey()
+      localStorage.setItem(key, JSON.stringify(ids || []))
+    } catch (e) {
+      console.warn('Lỗi ghi favorites vào localStorage:', e)
+    }
+  }
+
   /**
-   * Tải danh sách liên hệ yêu thích từ máy chủ Wazo Dird API
+   * Tải danh sách liên hệ yêu thích:
+   * 1. Nạp tức thời từ localStorage (0ms, F5 không mất)
+   * 2. Gọi Wazo Dird API để đồng bộ với server
    * GET /api/dird/0.1/directories/favorites/default
    */
   async fetchFavorites() {
+    // 1. Luôn nạp cache local trước để UI hiển thị ngay lập tức
+    const saved = this.getSavedFavoriteIds()
+    if (saved && saved.length > 0) {
+      this.favoriteIds = Array.from(new Set([...(this.favoriteIds || []), ...saved]))
+    }
+
     try {
       const token = wazoService.getToken()
       if (!token) {
-        this.favoriteIds = []
-        return []
+        return this.favoriteIds || []
       }
       const host = wazoService.host.startsWith('http')
         ? wazoService.host
@@ -43,7 +75,7 @@ class ContactService {
           'X-Auth-Token': token,
           Accept: 'application/json',
         },
-        signal: AbortSignal.timeout(4000),
+        signal: AbortSignal.timeout(3500),
       })
 
       if (res.ok) {
@@ -68,11 +100,16 @@ class ContactService {
             if (cid) ids.push(String(cid))
           })
         }
-        this.favoriteIds = Array.from(new Set(ids))
+        // Hợp nhất server favorites với local favorites
+        this.favoriteIds = Array.from(new Set([...(this.favoriteIds || []), ...ids]))
+        this.saveFavorites(this.favoriteIds)
+        logger.info('API', `Đồng bộ Wazo Dird favorites thành công (${this.favoriteIds.length} mục)`)
         return this.favoriteIds
+      } else {
+        logger.warn('API', `Wazo Dird favorites trả về mã ${res.status}, duy trì danh sách yêu thích cục bộ (${(this.favoriteIds || []).length} mục)`)
       }
     } catch (err) {
-      console.warn('Lỗi lấy danh sách yêu thích từ Wazo Dird:', err)
+      logger.warn('API', 'Không thể kết nối Wazo Dird favorites (dùng bộ nhớ đệm cục bộ):', err.message)
     }
     return this.favoriteIds || []
   }
@@ -81,6 +118,7 @@ class ContactService {
    * Bật/Tắt trạng thái yêu thích trên máy chủ Wazo Dird REST API
    * PUT /api/dird/0.1/directories/favorites/{directory}/{contact}
    * DELETE /api/dird/0.1/directories/favorites/{directory}/{contact}
+   * Áp dụng mô hình Write-Through Cache: Ghi ngay lập tức xuống localStorage theo User UUID
    */
   async toggleFavorite(contactOrId) {
     let contact = null
@@ -98,7 +136,7 @@ class ContactService {
     if (!contactId) return false
     const willBeFavorite = contact ? !contact.isFavorite : !this.isFavorite(contactId)
 
-    // Cập nhật trạng thái tức thời
+    // Cập nhật trạng thái tức thời trên đối tượng contact
     if (contact) {
       contact.isFavorite = willBeFavorite
     }
@@ -116,6 +154,10 @@ class ContactService {
       this.favoriteIds = this.favoriteIds.filter((id) => !idList.includes(id))
     }
 
+    // Write-Through: Ghi NGAY LẬP TỨC xuống localStorage theo User UUID (F5 không mất)
+    this.saveFavorites(this.favoriteIds)
+
+    // Gọi API Wazo Dird bất đồng bộ dưới nền
     try {
       const token = wazoService.getToken()
       if (token) {
@@ -126,6 +168,7 @@ class ContactService {
         const method = willBeFavorite ? 'PUT' : 'DELETE'
         const targetId = contact?.rawId || contact?.id || contact?.uuid || contactId
 
+        logger.info('API', `Gửi yêu cầu ${method} favorite tới Wazo Dird: /directories/favorites/${directory}/${targetId}`)
         let res = await fetch(
           `${host}/api/dird/0.1/directories/favorites/${directory}/${encodeURIComponent(targetId)}`,
           {
@@ -134,7 +177,7 @@ class ContactService {
               'X-Auth-Token': token,
               Accept: 'application/json',
             },
-            signal: AbortSignal.timeout(4000),
+            signal: AbortSignal.timeout(3500),
           },
         )
 
@@ -148,13 +191,19 @@ class ContactService {
                 'X-Auth-Token': token,
                 Accept: 'application/json',
               },
-              signal: AbortSignal.timeout(4000),
+              signal: AbortSignal.timeout(3500),
             },
           )
         }
+
+        if (res.ok) {
+          logger.success('API', `Đã đồng bộ trạng thái favorite lên máy chủ Wazo Dird (${willBeFavorite ? 'ADD' : 'REMOVE'})`)
+        } else {
+          logger.warn('API', `Máy chủ Wazo Dird trả về status ${res.status} cho favorite (đã bảo toàn cục bộ)`)
+        }
       }
     } catch (e) {
-      console.warn('Lỗi gọi API favorites Wazo:', e)
+      logger.warn('API', 'Lỗi gọi API favorites Wazo Dird (đã bảo toàn cục bộ):', e.message)
     }
 
     return willBeFavorite
@@ -322,6 +371,7 @@ class ContactService {
             isFavorite: isFav,
           }
         })
+        this.saveFavorites(this.favoriteIds)
         const finalContacts = await this.loadPresencesForContacts(mappedList)
         this.startPresencePolling()
         return this._filterContacts(finalContacts)
@@ -373,6 +423,7 @@ class ContactService {
             isFavorite: isFav,
           }
         })
+        this.saveFavorites(this.favoriteIds)
         const finalContacts = await this.loadPresencesForContacts(mappedList)
         this.startPresencePolling()
         return this._filterContacts(finalContacts)

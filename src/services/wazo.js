@@ -176,7 +176,7 @@ class WazoService {
     // Xóa tất cả các cache phòng chat cục bộ để không rò rỉ sang tài khoản khác
     try {
       Object.keys(localStorage).forEach((k) => {
-        if (k.startsWith('smartcall_chat_rooms_') || k.startsWith('smartcall_favorites_')) {
+        if (k.startsWith('smartcall_chat_rooms_')) {
           localStorage.removeItem(k)
         }
       })

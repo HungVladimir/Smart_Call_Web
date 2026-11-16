@@ -105,14 +105,30 @@ class HistoryService {
   }
 
   /**
-   * Lấy lịch sử cuộc gọi:
-   * 1. Thử gọi Wazo Call-Logd API (hoặc API Backend tổng đài):
-   *    GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
-   * 2. Nếu không có kết nối -> Sử dụng dữ liệu dự phòng.
-   * Hỗ trợ In-flight Promise Sharing để chống nã request trùng lặp từ nhiều component.
+   * Nạp nhanh lịch sử cuộc gọi cục bộ (0ms instant, không chờ mạng)
    */
-  async getHistory({ tab = 'all', limit = 50 } = {}) {
+  getLocalHistory({ tab = 'all' } = {}) {
     if (!this.localHistory || this.localHistory.length === 0) {
+      this.localHistory = this.loadSavedHistory()
+    }
+    return this._filterList(this.localHistory, tab)
+  }
+
+  /**
+   * Lấy lịch sử cuộc gọi:
+   * 1. Thử gọi Wazo Call-Logd API:
+   *    GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
+   * 2. Nếu không có kết nối hoặc timeout -> Sử dụng dữ liệu cục bộ bảo toàn.
+   * Hỗ trợ In-flight Promise Sharing và Force Refresh khi bấm nút Làm mới.
+   */
+  async getHistory({ tab = 'all', limit = 50, forceRefresh = false } = {}) {
+    if (!this.localHistory || this.localHistory.length === 0) {
+      this.localHistory = this.loadSavedHistory()
+    }
+
+    // Nếu người dùng chủ động bấm "Làm mới": Hủy Promise đang treo và nạp lại từ localStorage
+    if (forceRefresh) {
+      this._fetchingHistoryPromise = null
       this.localHistory = this.loadSavedHistory()
     }
 
@@ -137,7 +153,7 @@ class HistoryService {
             'X-Auth-Token': token,
             Accept: 'application/json',
           },
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(3500),
         })
 
         if (!res.ok) throw new Error(`HTTP error ${res.status}`)
@@ -216,12 +232,8 @@ class HistoryService {
         merged.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
         return merged
       } catch (err) {
-        if (!isFeatureEnabled('mockData')) {
-          logger.warn('API', 'Cờ mockData=false: Lỗi lấy CDR từ Wazo, trả về danh sách rỗng hoặc chỉ cuộc gọi phiên hiện tại', err.message)
-          return this.localHistory.filter((r) => !String(r.id).startsWith('cdr-00'))
-        }
-        // Offline fallback: Dùng dữ liệu mock nội bộ để UI luôn chạy mượt
-        return this.localHistory
+        logger.warn('API', 'Không thể nạp CDR từ Wazo call-logd (fallback sang lịch sử cục bộ):', err.message)
+        return this.localHistory.filter((r) => !String(r.id).startsWith('cdr-00'))
       } finally {
         this._fetchingHistoryPromise = null
       }

@@ -2383,5 +2383,45 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
   7. Ghim độc lập theo phòng & nhãn Read: Ghim theo `currentRoom.pinned`, nhãn Read chỉ hiện ở tin của mình, modal Read ID hiển thị rõ trạng thái và người đọc.
   8. 100% Real API: Loại bỏ toàn bộ fake data / stale localStorage trong production, trang bị loading spinners.
 
+---
+
+## BƯỚC 42: XỬ LÝ DỨT ĐIỂM FAVORITES F5, LỊCH SỬ TREO LOADING & CHUẨN HÓA LOCAL STORAGE KHI LOGOUT
+
+### 1. Bối cảnh & Yêu cầu:
+1. **Lỗi Danh bạ Yêu thích (Favorite ⭐):** Vừa thêm yêu thích xong ấn F5 bị mất ngay lập tức do chưa ghi xuống `localStorage` và API Wazo Dird trả về 404/403.
+2. **Lỗi Lịch sử cuộc gọi (History):** Đăng nhập vào bấm sang Lịch sử thì bị treo loading xoay tít (timeout 8s), bấm nút "🔄 Làm mới" hoàn toàn không có phản ứng (do In-flight Promise Sharing tái sử dụng Promise cũ), phải ấn F5 mới hiện ra.
+3. **Rà soát Local Storage khi Logout:** Phân loại rõ ràng các khóa lưu trữ cần giữ lại (cài đặt thiết bị mic/loa, tài khoản ghi nhớ, cờ cấu hình hệ thống, dữ liệu phân tách theo User UUID) và các khóa cần xóa sạch (token, session, chat rooms).
+
+### 2. Các Giải pháp Kỹ thuật Đã Triển khai:
+1. **Write-Through Cache 2 Lớp cho Danh bạ Yêu thích (`src/services/contactService.js`):**
+   - Bổ sung `getSavedFavoriteIds()` và `saveFavorites()` gắn chặt theo `smartcall_favorites_${userUuid}`.
+   - Khi bấm ⭐ trong `toggleFavorite()`: Cập nhật RAM $\rightarrow$ Ghi ngay lập tức xuống `localStorage` (0ms, bảo toàn trạng thái) $\rightarrow$ Gọi API Wazo Dird `PUT/DELETE /api/dird/0.1/directories/favorites/default/${targetId}` trong nền với timeout an toàn 3.5s.
+   - Khi F5 hoặc mở trang trong `fetchFavorites()`: Nạp ngay lập tức từ `localStorage` hiển thị 0ms, sau đó đồng bộ với máy chủ Wazo Dird; nếu server 404/403, giữ nguyên danh bạ yêu thích của người dùng.
+   - Khi mapping `getContacts()`: Tự động ghi lại `saveFavorites()` để bảo toàn cả các mục được đánh dấu từ server.
+
+2. **Khắc phục Triệt để Treo Lịch sử & Nút Làm mới (`src/services/historyService.js` & `HistoryView.vue`):**
+   - Hỗ trợ tham số `forceRefresh = false` trong `historyService.getHistory({ tab, limit, forceRefresh })`. Khi người dùng bấm "🔄 Làm mới", gán ngay `this._fetchingHistoryPromise = null` để hủy Promise cũ và nạp lại từ `localStorage`.
+   - Giảm timeout kết nối Wazo Call-Logd từ 8s xuống **3.5s** (`AbortSignal.timeout(3500)`).
+   - Bổ sung hàm `getLocalHistory({ tab })` nạp tức thời 0ms không chờ mạng.
+   - Cơ chế **Optimistic Rendering** trong `HistoryView.vue`: Khi vào trang, gán ngay `calls.value = historyService.getLocalHistory({ tab: 'all' })` để người dùng thấy ngay lịch sử cuộc gọi trước đó mà không phải nhìn spinner xoay vô tận. Sau đó đồng bộ mạng trong nền.
+   - Nút "🔄 Làm mới" gọi `fetchHistory(true)` truyền cờ `forceRefresh: true`.
+
+3. **Chuẩn hóa Local Storage khi Logout (`src/services/wazo.js`):**
+   - Loại bỏ việc xóa wildcard `smartcall_favorites_*` trong `wazo.js` khi logout.
+   - Bảo toàn các dữ liệu đã phân tách theo User UUID (`smartcall_favorites_${userUuid}` và `smartcall_call_history_${userUuid}`) để tài khoản đăng nhập lại không bị mất danh bạ yêu thích hay lịch sử.
+   - Xóa sạch 100% Token, Refresh Token, User UUID, Extension, Username, Phiên làm việc và Cache phòng chat `smartcall_chat_rooms_*`.
+
+### 3. Danh sách File Đã Chỉnh Sửa:
+- `src/services/contactService.js`: Thiết lập Write-Through Cache cho favorites per-user.
+- `src/services/historyService.js`: Bổ sung `getLocalHistory`, `forceRefresh`, giảm timeout Call-Logd xuống 3.5s.
+- `src/views/HistoryView.vue`: Áp dụng Optimistic Rendering và kích hoạt `forceRefresh` khi bấm Làm mới.
+- `src/services/wazo.js`: Chuẩn hóa dọn dẹp local storage khi logout, bảo toàn favorites per-user.
+- Đồng bộ toàn bộ sang `D:\Project\Smart_Call_Web_Mock\`.
+
+### 4. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (440ms).
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (596ms).
+
+
 
 

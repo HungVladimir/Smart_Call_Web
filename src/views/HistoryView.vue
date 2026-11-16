@@ -28,7 +28,7 @@
         </div>
 
         <!-- Nút làm mới -->
-        <button class="btn-refresh" title="Làm mới danh sách" @click="fetchHistory">
+        <button class="btn-refresh" title="Làm mới danh sách" @click="fetchHistory(true)">
           🔄 Làm mới
         </button>
       </div>
@@ -200,11 +200,19 @@ const showConfirmDeleteAll = ref(false)
 
 const calls = ref([])
 
-// Nạp dữ liệu từ historyService
-const fetchHistory = async () => {
-  loading.value = true
+// Nạp dữ liệu từ historyService (hỗ trợ Optimistic Rendering & Force Refresh)
+const fetchHistory = async (force = false) => {
+  // Optimistic rendering: nạp ngay dữ liệu cục bộ nếu calls chưa có
+  if (calls.value.length === 0) {
+    calls.value = historyService.getLocalHistory({ tab: 'all' })
+  }
+  // Bật spinner khi người dùng bấm làm mới hoặc chưa có dữ liệu nào
+  if (force || calls.value.length === 0) {
+    loading.value = true
+  }
   try {
-    calls.value = await historyService.getHistory({ tab: 'all', limit: 100 })
+    const list = await historyService.getHistory({ tab: 'all', limit: 100, forceRefresh: force })
+    calls.value = [...list]
   } catch (err) {
     console.error('Lỗi khi tải lịch sử cuộc gọi:', err)
   } finally {
@@ -212,17 +220,21 @@ const fetchHistory = async () => {
   }
 }
 
+const onCdrUpdated = () => {
+  fetchHistory(false)
+}
+
 onMounted(() => {
-  fetchHistory()
-  window.addEventListener('smartcall-cdr-updated', fetchHistory)
+  fetchHistory(false)
+  window.addEventListener('smartcall-cdr-updated', onCdrUpdated)
 })
 
 onActivated(() => {
-  fetchHistory()
+  fetchHistory(false)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('smartcall-cdr-updated', fetchHistory)
+  window.removeEventListener('smartcall-cdr-updated', onCdrUpdated)
 })
 
 // Đếm số lượng cuộc gọi theo từng tab
