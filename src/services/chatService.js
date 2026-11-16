@@ -179,6 +179,16 @@ class ChatService {
       user_uuid: senderUuid,
       alias: alias,
     }
+
+    if (!isMine) {
+      // Khi đối phương gửi tin nhắn phản hồi, chuyển tất cả tin trước đó của mình sang Đã xem
+      targetRoom.messages.forEach((m) => {
+        if (m.sender === 'mine') {
+          m.readStatus = 'Đã xem'
+        }
+      })
+    }
+
     targetRoom.messages.push(newMsg)
     targetRoom.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
     targetRoom.preview = content
@@ -437,15 +447,54 @@ class ChatService {
                 text: m.content || '',
                 time: formatMessageDateTime(m.created_at || msgTimestamp),
                 timestamp: msgTimestamp,
-                readStatus: isMine ? 'Đã xem' : 'Read',
+                readStatus: isMine ? 'Đã gửi' : 'Read',
                 readers: [],
                 user_uuid: senderUuid,
                 alias: senderAlias,
               }
             })
 
-            // Sắp xếp tăng dần theo thời gian (cũ ở trên, mới ở dưới) - Issue 5
+            // Sắp xếp tăng dần theo thời gian (cũ ở trên, mới ở dưới)
             mapped.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+
+            // Chuẩn hóa trạng thái: Đang gửi... -> Đã gửi -> Đã nhận -> Đã xem
+            let lastTheirsIndex = -1
+            for (let idx = mapped.length - 1; idx >= 0; idx--) {
+              if (mapped[idx].sender === 'theirs') {
+                lastTheirsIndex = idx
+                break
+              }
+            }
+
+            let isRecipientOnline = false
+            if (localRoom?.isDirect) {
+              const myExt = wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
+              const otherMember = (localRoom.members || []).find((mem) => {
+                const isMe =
+                  (myUserUuid && (mem.id === myUserUuid || mem.uuid === myUserUuid)) ||
+                  (myExt && (mem.ext === myExt || mem.number === myExt))
+                return !isMe
+              })
+              const targetExt = otherMember?.ext || (localRoom.ext ? String(localRoom.ext).split('@')[0] : '')
+              const targetUuid = otherMember?.id || otherMember?.uuid || localRoom.peerUuid || ''
+              const targetContact = (targetExt && contactService.findContactByExtension(targetExt)) ||
+                                    (targetUuid && contactService.findContactByUuid(targetUuid))
+              if (targetContact && targetContact.status && targetContact.status !== 'offline' && targetContact.status !== 'unavailable') {
+                isRecipientOnline = true
+              }
+            }
+
+            mapped.forEach((msg, idx) => {
+              if (msg.sender === 'mine') {
+                if (lastTheirsIndex !== -1 && idx < lastTheirsIndex) {
+                  msg.readStatus = 'Đã xem'
+                } else if (isRecipientOnline) {
+                  msg.readStatus = 'Đã nhận'
+                } else {
+                  msg.readStatus = 'Đã gửi'
+                }
+              }
+            })
 
             if (localRoom) {
               localRoom.messages = mapped
@@ -702,7 +751,7 @@ class ChatService {
       text,
       time: timeStr,
       timestamp: msgTimestamp,
-      readStatus: 'Đã gửi',
+      readStatus: 'Đang gửi...',
       readers: [],
     }
 
@@ -748,11 +797,35 @@ class ChatService {
                 room.updatedAt = newMsg.timestamp
               }
             }
-            this.saveRooms()
           }
+          newMsg.readStatus = 'Đã gửi'
+
+          // Kiểm tra xem đối phương có trực tuyến không để chuyển sang 'Đã nhận'
+          if (room?.isDirect) {
+            const myExt = wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
+            const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
+            const otherMember = (room.members || []).find((mem) => {
+              const isMe =
+                (myUserUuid && (mem.id === myUserUuid || mem.uuid === myUserUuid)) ||
+                (myExt && (mem.ext === myExt || mem.number === myExt))
+              return !isMe
+            })
+            const targetExt = otherMember?.ext || (room.ext ? String(room.ext).split('@')[0] : '')
+            const targetUuid = otherMember?.id || otherMember?.uuid || room.peerUuid || ''
+            const targetContact = (targetExt && contactService.findContactByExtension(targetExt)) ||
+                                  (targetUuid && contactService.findContactByUuid(targetUuid))
+            if (targetContact && targetContact.status && targetContact.status !== 'offline' && targetContact.status !== 'unavailable') {
+              setTimeout(() => {
+                newMsg.readStatus = 'Đã nhận'
+                this.saveRooms()
+              }, 600)
+            }
+          }
+          this.saveRooms()
         }
       }
     } catch (e) {
+      newMsg.readStatus = 'Đã gửi'
       // Giữ ID tạm khi chạy ngoại tuyến hoặc timeout mạng
       logger.warn('CHAT', `Gửi tin nhắn ngoại tuyến hoặc timeout: ${e.message}`)
     }

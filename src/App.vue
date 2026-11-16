@@ -48,6 +48,18 @@
 
     <!-- 6. Bảng Nhật ký Debug thao tác & Sự kiện WebRTC thời gian thực -->
     <DebugLogDrawer />
+
+    <!-- 7. Modal Cảnh báo Đăng nhập 1 Thiết bị (Single Device Login - Mục 9) -->
+    <div v-if="showKickedModal" class="kicked-modal-overlay">
+      <div class="kicked-modal-card">
+        <div class="kicked-modal-icon">⚠️</div>
+        <h3 class="kicked-modal-title">Tài Khoản Đã Đăng Nhập Nơi Khác</h3>
+        <p class="kicked-modal-desc">
+          Phiên làm việc của bạn đã kết thúc vì tài khoản vừa được đăng nhập trên một thiết bị khác (ứng dụng di động hoặc trình duyệt khác).
+        </p>
+        <button class="btn-relogin-submit" @click="handleRelogin">Đăng nhập lại</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -67,6 +79,16 @@ const route = useRoute()
 // --- State Management ---
 const isLoggedIn = ref(false)
 const showSettings = ref(false)
+const showKickedModal = ref(false)
+
+const handleSessionKicked = () => {
+  showKickedModal.value = true
+}
+
+const handleRelogin = () => {
+  showKickedModal.value = false
+  handleLogout()
+}
 
 // Trạng thái cuộc gọi đến reactive từ callStore (SSOT)
 const showIncomingModal = computed(() => Boolean(callStore.incomingCall))
@@ -101,6 +123,7 @@ onMounted(async () => {
   window.addEventListener('app-action', handleAppAction)
   window.addEventListener('app-toast', handleToastEvent)
   window.addEventListener('app-login-success', handleLoginSuccess)
+  window.addEventListener('smartcall-session-kicked', handleSessionKicked)
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
@@ -108,6 +131,7 @@ onUnmounted(() => {
   window.removeEventListener('app-action', handleAppAction)
   window.removeEventListener('app-toast', handleToastEvent)
   window.removeEventListener('app-login-success', handleLoginSuccess)
+  window.removeEventListener('smartcall-session-kicked', handleSessionKicked)
   window.removeEventListener('beforeunload', handleBeforeUnload)
   wazoService.disconnectPhone()
 })
@@ -307,5 +331,73 @@ body {
 .slide-fade-leave-to {
   transform: translateX(20px);
   opacity: 0;
+}
+
+/* Modal Single Device Login Kicked */
+.kicked-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(6px);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.kicked-modal-card {
+  background: white;
+  width: 100%;
+  max-width: 440px;
+  border-radius: 16px;
+  padding: 32px 28px;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: modal-pop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.kicked-modal-icon {
+  font-size: 3rem;
+  margin-bottom: 12px;
+}
+
+.kicked-modal-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 10px 0;
+}
+
+.kicked-modal-desc {
+  font-size: 0.88rem;
+  color: #475569;
+  line-height: 1.5;
+  margin: 0 0 24px 0;
+}
+
+.btn-relogin-submit {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.btn-relogin-submit:hover {
+  background: linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%);
+  transform: translateY(-1px);
 }
 </style>

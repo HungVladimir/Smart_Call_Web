@@ -28,14 +28,6 @@ const router = createRouter({
       redirect: () => getFirstAvailableRoute(),
     },
     {
-      path: '/dashboard',
-      redirect: (to) => ({ path: '/calls', query: to.query }),
-    },
-    {
-      path: '/contacts',
-      redirect: (to) => ({ path: '/calls', query: to.query }),
-    },
-    {
       path: '/calls',
       name: 'Calls',
       component: CallsView,

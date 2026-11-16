@@ -34,7 +34,7 @@
       </div>
     </div>
 
-    <!-- Navigation Tabs chuẩn web1.webp & Nút Xóa lịch sử -->
+    <!-- Navigation Tabs & Bộ lọc trạng thái -->
     <div class="tabs-toolbar">
       <div class="tabs-group">
         <button
@@ -65,15 +65,6 @@
           MISSED <span class="tab-badge danger">{{ counts.missed }}</span>
         </button>
       </div>
-
-      <!-- Nút DELETE HISTORY theo đúng giao diện web1.webp -->
-      <button
-        class="btn-delete-history"
-        :disabled="calls.length === 0"
-        @click="showConfirmDeleteAll = true"
-      >
-        🗑️ DELETE HISTORY
-      </button>
     </div>
 
     <!-- Trạng thái Loading -->
@@ -88,7 +79,7 @@
       <p>Không có bản ghi cuộc gọi nào phù hợp với bộ lọc.</p>
     </div>
 
-    <!-- Danh sách cuộc gọi theo chuẩn web1.webp -->
+    <!-- Danh sách cuộc gọi -->
     <div v-else class="history-list">
       <div
         v-for="call in filteredCalls"
@@ -96,14 +87,14 @@
         class="history-card"
         :class="{ missed: call.status === 'missed' }"
       >
-        <!-- Khối Avatar người gọi (Hình hộp vuông/tròn theo web1.webp) -->
+        <!-- Khối Avatar người gọi -->
         <div class="avatar-box" :class="call.direction">
           <span v-if="call.direction === 'inbound'" class="direction-arrow inbound">↙</span>
           <span v-else class="direction-arrow outbound">↗</span>
           <div class="avatar-initials">{{ getInitials(call.name) }}</div>
         </div>
 
-        <!-- Khối Thông tin chi tiết cuộc gọi (Theo mẫu chuẩn web1.webp) -->
+        <!-- Khối Thông tin chi tiết cuộc gọi -->
         <div class="history-meta">
           <div class="meta-line">
             <span class="meta-label">Date:</span>
@@ -156,28 +147,6 @@
           >
             <span class="action-icon">💬</span>
           </button>
-
-          <!-- ❌ Nút Xóa bản ghi này -->
-          <button
-            class="btn-action btn-delete-item"
-            title="Xóa bản ghi này"
-            @click="handleDeleteItem(call)"
-          >
-            <span class="action-icon">✖</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modal Xác nhận Xóa toàn bộ lịch sử -->
-    <div v-if="showConfirmDeleteAll" class="modal-backdrop" @click.self="showConfirmDeleteAll = false">
-      <div class="confirm-modal">
-        <div class="modal-icon danger">⚠️</div>
-        <h3>Xác nhận xóa lịch sử cuộc gọi</h3>
-        <p>Bạn có chắc chắn muốn xóa toàn bộ lịch sử cuộc gọi không? Thao tác này sẽ xóa sạch nhật ký cuộc gọi khỏi hệ thống và không thể hoàn tác.</p>
-        <div class="modal-actions">
-          <button class="btn-cancel" @click="showConfirmDeleteAll = false">Hủy bỏ</button>
-          <button class="btn-confirm-delete" @click="confirmDeleteAll">Xác nhận xóa hết</button>
         </div>
       </div>
     </div>
@@ -196,7 +165,6 @@ const loading = ref(false)
 const currentTab = ref('all') // 'all' | 'incomings' | 'outgoings' | 'missed'
 const searchQuery = ref('')
 const filterDate = ref('')
-const showConfirmDeleteAll = ref(false)
 
 const calls = ref([])
 
@@ -237,31 +205,12 @@ onUnmounted(() => {
   window.removeEventListener('smartcall-cdr-updated', onCdrUpdated)
 })
 
-// Đếm số lượng cuộc gọi theo từng tab
-const counts = computed(() => {
-  const all = calls.value.length
-  const incomings = calls.value.filter((c) => c.direction === 'inbound').length
-  const outgoings = calls.value.filter((c) => c.direction === 'outbound').length
-  const missed = calls.value.filter(
-    (c) => c.status === 'missed' || (c.direction === 'inbound' && !c.answered),
-  ).length
-  return { all, incomings, outgoings, missed }
-})
-
-// Lọc dữ liệu theo tab, từ khóa tìm kiếm và ngày tháng
-const filteredCalls = computed(() => {
+// Danh sách cuộc gọi đã lọc theo ngày và tìm kiếm (để số đếm counts phản ánh đúng theo ngày lọc - Mục 5)
+const dateFilteredCalls = computed(() => {
   let list = calls.value
-
-  // 1. Lọc theo Tab
-  if (currentTab.value === 'incomings') {
-    list = list.filter((c) => c.direction === 'inbound')
-  } else if (currentTab.value === 'outgoings') {
-    list = list.filter((c) => c.direction === 'outbound')
-  } else if (currentTab.value === 'missed') {
-    list = list.filter((c) => c.status === 'missed' || !c.answered)
+  if (filterDate.value) {
+    list = list.filter((c) => c.date && c.date.startsWith(filterDate.value))
   }
-
-  // 2. Lọc theo từ khóa tìm kiếm (tên, số máy, phòng ban)
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase().trim()
     list = list.filter(
@@ -271,12 +220,31 @@ const filteredCalls = computed(() => {
         (c.dept && c.dept.toLowerCase().includes(q)),
     )
   }
+  return list
+})
 
-  // 3. Lọc theo ngày (Từ ngày)
-  if (filterDate.value) {
-    list = list.filter((c) => c.date && c.date.startsWith(filterDate.value))
+// Đếm số lượng cuộc gọi theo từng tab theo đúng ngày được chọn
+const counts = computed(() => {
+  const list = dateFilteredCalls.value
+  const all = list.length
+  const incomings = list.filter((c) => c.direction === 'inbound').length
+  const outgoings = list.filter((c) => c.direction === 'outbound').length
+  const missed = list.filter(
+    (c) => c.status === 'missed' || (c.direction === 'inbound' && !c.answered),
+  ).length
+  return { all, incomings, outgoings, missed }
+})
+
+// Lọc dữ liệu hiển thị theo tab
+const filteredCalls = computed(() => {
+  let list = dateFilteredCalls.value
+  if (currentTab.value === 'incomings') {
+    list = list.filter((c) => c.direction === 'inbound')
+  } else if (currentTab.value === 'outgoings') {
+    list = list.filter((c) => c.direction === 'outbound')
+  } else if (currentTab.value === 'missed') {
+    list = list.filter((c) => c.status === 'missed' || !c.answered)
   }
-
   return list
 })
 
@@ -330,20 +298,7 @@ const handleChat = (call) => {
   })
 }
 
-// Thao tác Xóa 1 bản ghi
-const handleDeleteItem = async (call) => {
-  const ok = confirm(`Bạn có chắc chắn muốn xóa bản ghi cuộc gọi của ${call.name || call.extension}?`)
-  if (!ok) return
-  await historyService.deleteItem(call.id)
-  await fetchHistory()
-}
 
-// Thao tác Xóa toàn bộ lịch sử (DELETE HISTORY)
-const confirmDeleteAll = async () => {
-  await historyService.clearAllHistory()
-  showConfirmDeleteAll.value = false
-  await fetchHistory()
-}
 </script>
 
 <style scoped>
@@ -411,8 +366,7 @@ const confirmDeleteAll = async () => {
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
 }
 
-.btn-clear-search,
-.btn-clear-date {
+.btn-clear-search {
   position: absolute;
   right: 10px;
   background: none;
@@ -420,6 +374,28 @@ const confirmDeleteAll = async () => {
   color: #94a3b8;
   cursor: pointer;
   font-size: 0.8rem;
+}
+
+.btn-clear-date {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.75rem;
+  margin-left: 2px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-clear-date:hover {
+  background: #e2e8f0;
+  color: #0f172a;
 }
 
 .date-filter-box {
@@ -457,7 +433,7 @@ const confirmDeleteAll = async () => {
   border-color: #94a3b8;
 }
 
-/* Tabs Toolbar chuẩn web1.webp */
+/* Tabs Toolbar */
 .tabs-toolbar {
   display: flex;
   justify-content: space-between;
@@ -497,7 +473,7 @@ const confirmDeleteAll = async () => {
   color: #1e293b;
 }
 
-/* Nút tab Active có màu xanh đậm chuẩn web1.webp */
+/* Nút tab Active */
 .tab-btn.active {
   background-color: #0284c7;
   color: #ffffff;
@@ -525,33 +501,6 @@ const confirmDeleteAll = async () => {
 .tab-btn.active .tab-badge.danger {
   background: #ef4444;
   color: #fff;
-}
-
-/* Nút DELETE HISTORY chuẩn theo ảnh web1.webp */
-.btn-delete-history {
-  padding: 9px 18px;
-  background-color: #334155;
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.2s;
-}
-
-.btn-delete-history:hover:not(:disabled) {
-  background-color: #dc2626;
-  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
-}
-
-.btn-delete-history:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Danh sách cuộc gọi */
@@ -640,7 +589,7 @@ const confirmDeleteAll = async () => {
   color: #fff;
 }
 
-/* History Metadata theo chuẩn web1.webp */
+/* History Metadata */
 .history-meta {
   display: grid;
   grid-template-columns: auto 1fr;

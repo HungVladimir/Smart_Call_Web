@@ -146,7 +146,7 @@ class HistoryService {
           ? wazoService.host
           : `https://${wazoService.host}`
 
-        // Bám sát mục 4.3 trong dev_guide.md
+        // Gọi API Wazo Call-Logd lấy nhật ký cuộc gọi CDR
         const url = `${host}/api/call-logd/1.0/users/me/cdr?limit=${limit}&order=start&direction=desc`
         const res = await fetch(url, {
           headers: {
@@ -266,7 +266,7 @@ class HistoryService {
   }
 
   /**
-   * Xóa toàn bộ lịch sử cuộc gọi lưu trên client (tương ứng nút DELETE HISTORY trên web1.webp)
+   * Xóa toàn bộ lịch sử cuộc gọi lưu trên client
    */
   async clearAllHistory() {
     this.localHistory = []

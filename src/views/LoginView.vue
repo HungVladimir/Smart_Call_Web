@@ -94,13 +94,14 @@
             </div>
           </transition>
 
-          <!-- Ghi nhớ đăng nhập -->
+          <!-- Ghi nhớ đăng nhập & Quên mật khẩu -->
           <div class="options-row">
             <label class="remember-label">
               <input type="checkbox" v-model="rememberMe" />
               <span class="custom-checkbox"></span>
               <span class="label-text">Ghi nhớ đăng nhập trên thiết bị này</span>
             </label>
+            <a href="#" class="forgot-password-link" @click.prevent="openForgotModal">Quên mật khẩu?</a>
           </div>
 
           <!-- Nút Đăng nhập chính -->
@@ -146,6 +147,48 @@
           </div>
         </form>
       </div>
+
+      <!-- Modal Quên / Đặt lại mật khẩu qua Email (Wazo Auth API) -->
+      <div v-if="showForgotModal" class="forgot-modal-backdrop" @click.self="showForgotModal = false">
+        <div class="forgot-modal-card">
+          <div class="forgot-modal-header">
+            <h3>🔑 Lấy Lại Mật Khẩu</h3>
+            <button type="button" class="btn-close-modal" @click="showForgotModal = false">✕</button>
+          </div>
+          <div class="forgot-modal-body">
+            <p class="forgot-desc">
+              Nhập tên đăng nhập hoặc địa chỉ email tài khoản Wazo của bạn. Hệ thống sẽ phát liên kết đặt lại mật khẩu đến hòm thư email công ty.
+            </p>
+            <div class="form-group">
+              <label class="input-label" for="resetInput">Tên đăng nhập hoặc Email:</label>
+              <div class="input-box">
+                <input
+                  id="resetInput"
+                  v-model="resetIdentifier"
+                  type="text"
+                  class="input-field"
+                  placeholder="VD: user1 hoặc user@company.com"
+                  @keyup.enter="handleResetPassword"
+                />
+              </div>
+            </div>
+            <div v-if="resetMessage" class="reset-feedback" :class="resetSuccess ? 'success' : 'error'">
+              {{ resetMessage }}
+            </div>
+          </div>
+          <div class="forgot-modal-footer">
+            <button type="button" class="btn-modal-cancel" @click="showForgotModal = false">Hủy</button>
+            <button
+              type="button"
+              class="btn-modal-submit"
+              :disabled="resetLoading || !resetIdentifier.trim()"
+              @click="handleResetPassword"
+            >
+              {{ resetLoading ? 'Đang gửi...' : 'Gửi liên kết đặt lại' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 </template>
@@ -153,12 +196,53 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { wazoService } from '@/services/wazo'
+import { wazoService, callStore } from '@/services/wazo'
 import { getFeatures } from '@/config/features'
 import { logger } from '@/services/loggerService'
 
 const router = useRouter()
 const features = ref(getFeatures())
+
+const showForgotModal = ref(false)
+const resetIdentifier = ref('')
+const resetLoading = ref(false)
+const resetMessage = ref('')
+const resetSuccess = ref(false)
+
+const openForgotModal = () => {
+  resetIdentifier.value = username.value || ''
+  resetMessage.value = ''
+  resetSuccess.value = false
+  showForgotModal.value = true
+}
+
+const handleResetPassword = async () => {
+  const val = resetIdentifier.value.trim()
+  if (!val) return
+  resetLoading.value = true
+  resetMessage.value = ''
+  try {
+    const res = await wazoService.resetPassword(val)
+    if (res.ok || res.status === 204 || res.status === 200) {
+      resetSuccess.value = true
+      resetMessage.value = '📧 Đã gửi liên kết đặt lại mật khẩu! Vui lòng kiểm tra hộp thư email của bạn.'
+    } else if (res.status === 404) {
+      resetSuccess.value = false
+      resetMessage.value = '❌ Không tìm thấy tài khoản với tên đăng nhập hoặc email này.'
+    } else if (res.status === 503) {
+      resetSuccess.value = false
+      resetMessage.value = '⚠️ Dịch vụ thư điện tử (Mail Server) của tổng đài chưa được cấu hình. Vui lòng liên hệ Quản trị viên.'
+    } else {
+      resetSuccess.value = false
+      resetMessage.value = `❌ Yêu cầu thất bại (Mã lỗi: ${res.status}). Vui lòng thử lại sau!`
+    }
+  } catch (err) {
+    resetSuccess.value = false
+    resetMessage.value = `❌ Không thể kết nối tới máy chủ tổng đài: ${err.message}`
+  } finally {
+    resetLoading.value = false
+  }
+}
 
 const onFeaturesChanged = (e) => {
   features.value = e.detail || getFeatures()
@@ -210,25 +294,28 @@ const handleLogin = async () => {
     }
     realExtension = exten || (u === 'alice' ? '1001' : (u === 'bob' ? '1002' : '1001'))
 
+    let realDepartment = profile?.department || ''
+
     // 2. Dự phòng an toàn: nếu cần thêm dữ liệu từ confd/users/me thì thực hiện trong try/catch độc lập
     try {
-      if (!realExtension) {
-        const token = wazoService.getToken()
-        const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
-        const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
-          headers: { 'X-Auth-Token': token },
-        })
-        if (meRes.ok) {
-          const meData = await meRes.json()
-          if (meData.uuid) {
-            localStorage.setItem('smartcall_user_uuid', meData.uuid)
-          }
-          if (!realDisplayName) {
-            realDisplayName = [meData.firstname, meData.lastname].filter(Boolean).join(' ').trim()
-          }
-          if (!realExtension) {
-            realExtension = meData.lines?.[0]?.extensions?.[0]?.exten || ''
-          }
+      const token = wazoService.getToken()
+      const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
+      const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
+        headers: { 'X-Auth-Token': token },
+      })
+      if (meRes.ok) {
+        const meData = await meRes.json()
+        if (meData.uuid) {
+          localStorage.setItem('smartcall_user_uuid', meData.uuid)
+        }
+        if (!realDisplayName) {
+          realDisplayName = [meData.firstname, meData.lastname].filter(Boolean).join(' ').trim()
+        }
+        if (!realExtension) {
+          realExtension = meData.lines?.[0]?.extensions?.[0]?.exten || ''
+        }
+        if (!realDepartment) {
+          realDepartment = meData.department || meData.society || meData.title || meData.userfield || meData.description || ''
         }
       }
     } catch (confdErr) {
@@ -248,6 +335,11 @@ const handleLogin = async () => {
 
     localStorage.setItem('smartcall_username', finalName)
     localStorage.setItem('smartcall_extension', finalExt)
+    if (realDepartment) {
+      localStorage.setItem('smartcall_department', realDepartment)
+      localStorage.setItem('smartcall_user_department', realDepartment)
+      callStore.myDepartment = realDepartment
+    }
     localStorage.setItem('smartcall_role', 'user')
     localStorage.setItem('smartcall_is_admin', 'false')
     localStorage.setItem('smartcall_logged_in', 'true')
@@ -591,11 +683,144 @@ const enterOfflineMode = () => {
   transform: translateY(-6px);
 }
 
-/* --- Options: Remember Me --- */
+/* --- Options: Remember Me & Forgot Password --- */
 .options-row {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.forgot-password-link {
+  font-size: 0.82rem;
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.forgot-password-link:hover {
+  text-decoration: underline;
+  color: #1d4ed8;
+}
+
+/* Modal Quên mật khẩu */
+.forgot-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.forgot-modal-card {
+  background: white;
+  width: 100%;
+  max-width: 420px;
+  border-radius: 14px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.forgot-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.forgot-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.btn-close-modal {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.forgot-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.forgot-desc {
+  font-size: 0.85rem;
+  color: #475569;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.reset-feedback {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.reset-feedback.success {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.reset-feedback.error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.forgot-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+}
+
+.btn-modal-cancel {
+  padding: 8px 14px;
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.btn-modal-submit {
+  padding: 8px 16px;
+  background: #2563eb;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+}
+
+.btn-modal-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .remember-label {

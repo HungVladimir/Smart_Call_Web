@@ -91,7 +91,7 @@
         </div>
       </div>
 
-      <!-- Tab 2: Dịch vụ cuộc gọi (Theo dev_guide.md) -->
+      <!-- Tab 2: Dịch vụ cuộc gọi tổng đài Wazo Confd -->
       <div v-show="activeTab === 'calls'" class="st-panel">
         <div class="st-toggle-row">
           <div class="st-toggle-info">
@@ -133,17 +133,24 @@
 
         <div class="st-field-group">
           <label class="st-label">Mật khẩu hiện tại:</label>
-          <input type="password" class="st-input" placeholder="Nhập mật khẩu hiện tại..." />
+          <input v-model="oldPassword" type="password" class="st-input" placeholder="Nhập mật khẩu hiện tại..." />
         </div>
         <div class="st-field-group">
           <label class="st-label">Mật khẩu mới:</label>
-          <input type="password" class="st-input" placeholder="Tối thiểu 8 ký tự..." />
+          <input v-model="newPassword" type="password" class="st-input" placeholder="Tối thiểu 8 ký tự..." />
         </div>
         <div class="st-field-group">
           <label class="st-label">Nhập lại mật khẩu mới:</label>
-          <input type="password" class="st-input" placeholder="Xác nhận mật khẩu mới..." />
+          <input v-model="confirmPassword" type="password" class="st-input" placeholder="Xác nhận mật khẩu mới..." />
         </div>
-        <button class="btn-primary" @click="savePassword">Cập nhật mật khẩu</button>
+        <div class="password-action-row">
+          <button class="btn-primary" :disabled="passwordLoading" @click="savePassword">
+            {{ passwordLoading ? 'Đang cập nhật...' : 'Cập nhật mật khẩu' }}
+          </button>
+          <button type="button" class="btn-reset-email" :disabled="resetEmailLoading" @click="sendPasswordResetEmail">
+            {{ resetEmailLoading ? 'Đang gửi...' : '📧 Gửi liên kết đặt lại qua Email' }}
+          </button>
+        </div>
       </div>
 
       <!-- Tab 4: Ngôn ngữ & Tùy chọn -->
@@ -215,7 +222,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getFeatures, saveFeatures, resetFeatures } from '@/config/features'
-import { wazoService } from '@/services/wazo'
+import { wazoService, callStore } from '@/services/wazo'
 
 const props = defineProps({
   isOpen: Boolean,
@@ -390,6 +397,8 @@ watch(
       featureConfig.value = getFeatures()
       if (activeTab.value === 'audio') {
         loadAudioDevices().then(() => startMicMeter())
+      } else if (activeTab.value === 'calls') {
+        loadCallServices()
       }
     } else {
       stopMicMeter()
@@ -405,12 +414,19 @@ watch(
     } else {
       stopMicMeter()
     }
+    if (props.isOpen && tab === 'calls') {
+      loadCallServices()
+    }
   },
 )
 
 onMounted(() => {
-  if (props.isOpen && activeTab.value === 'audio') {
-    loadAudioDevices().then(() => startMicMeter())
+  if (props.isOpen) {
+    if (activeTab.value === 'audio') {
+      loadAudioDevices().then(() => startMicMeter())
+    } else if (activeTab.value === 'calls') {
+      loadCallServices()
+    }
   }
 })
 
@@ -428,9 +444,48 @@ const handleResetFeatures = () => {
 }
 
 const dndEnabled = ref(false)
-const forwardBusy = ref('1002')
-const forwardNoAnswer = ref('1003')
+const forwardBusy = ref('')
+const forwardNoAnswer = ref('')
 const forwardAll = ref('')
+
+const oldPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const passwordLoading = ref(false)
+const resetEmailLoading = ref(false)
+
+const loadCallServices = async () => {
+  const token = wazoService.getToken()
+  if (!token) return
+  const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
+  try {
+    const dndRes = await fetch(`${host}/api/confd/1.1/users/me/services/dnd`, {
+      headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+      signal: AbortSignal.timeout(3500),
+    })
+    if (dndRes.ok) {
+      const dndData = await dndRes.json()
+      dndEnabled.value = Boolean(dndData.enabled)
+    }
+  } catch (err) {
+    console.warn('Không thể nạp dịch vụ DND:', err)
+  }
+
+  try {
+    const fwdRes = await fetch(`${host}/api/confd/1.1/users/me/forwards`, {
+      headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+      signal: AbortSignal.timeout(3500),
+    })
+    if (fwdRes.ok) {
+      const fwdData = await fwdRes.json()
+      forwardBusy.value = fwdData.busy?.destination || ''
+      forwardNoAnswer.value = fwdData.noanswer?.destination || ''
+      forwardAll.value = fwdData.unconditional?.destination || ''
+    }
+  } catch (err) {
+    console.warn('Không thể nạp cấu hình forwards:', err)
+  }
+}
 
 const selectedLang = ref('vi')
 const notifyDesktop = ref(true)
@@ -468,23 +523,195 @@ const testSound = () => {
   }
 }
 
-const savePassword = () => {
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: '✅ Đã gửi yêu cầu đổi mật khẩu tới Wazo Auth!' },
-    }),
-  )
+const savePassword = async () => {
+  const oldP = oldPassword.value.trim()
+  const newP = newPassword.value.trim()
+  const confP = confirmPassword.value.trim()
+
+  if (!oldP || !newP || !confP) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: '⚠️ Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới!', type: 'warning' },
+      }),
+    )
+    return
+  }
+
+  if (newP.length < 8) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: '⚠️ Mật khẩu mới phải có tối thiểu 8 ký tự!', type: 'warning' },
+      }),
+    )
+    return
+  }
+
+  if (newP !== confP) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: '⚠️ Mật khẩu mới và xác nhận mật khẩu không khớp!', type: 'warning' },
+      }),
+    )
+    return
+  }
+
+  passwordLoading.value = true
+  try {
+    const res = await wazoService.changePassword(oldP, newP)
+
+    if (res.status === 204 || res.ok) {
+      oldPassword.value = ''
+      newPassword.value = ''
+      confirmPassword.value = ''
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: { message: '✅ Đổi mật khẩu thành công! Vui lòng ghi nhớ mật khẩu mới.', type: 'success' },
+        }),
+      )
+    } else {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '❌ Đổi mật khẩu thất bại: Mật khẩu hiện tại không chính xác hoặc không hợp lệ.',
+            type: 'error',
+          },
+        }),
+      )
+    }
+  } catch (err) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `❌ Lỗi khi gửi yêu cầu đổi mật khẩu: ${err.message}`, type: 'error' },
+      }),
+    )
+  } finally {
+    passwordLoading.value = false
+  }
 }
 
-const handleSave = () => {
+const sendPasswordResetEmail = async () => {
+  const username = currentUsername.value || localStorage.getItem('smartcall_username') || ''
+  if (!username) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: '⚠️ Không xác định được tên đăng nhập để gửi email đặt lại.', type: 'warning' },
+      }),
+    )
+    return
+  }
+  resetEmailLoading.value = true
+  try {
+    const res = await wazoService.resetPassword(username)
+    if (res.ok || res.status === 204 || res.status === 200) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '📧 Đã gửi liên kết đặt lại mật khẩu tới hòm thư email của bạn. Vui lòng kiểm tra hộp thư đến!',
+            type: 'success',
+          },
+        }),
+      )
+    } else if (res.status === 503) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '⚠️ Dịch vụ thư điện tử (Mail Server) của tổng đài chưa được cấu hình.',
+            type: 'warning',
+          },
+        }),
+      )
+    } else {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `❌ Không thể gửi yêu cầu đặt lại mật khẩu (Mã lỗi: ${res.status}).`,
+            type: 'error',
+          },
+        }),
+      )
+    }
+  } catch (e) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `❌ Lỗi khi kết nối tới máy chủ tổng đài: ${e.message}`,
+          type: 'error',
+        },
+      }),
+    )
+  } finally {
+    resetEmailLoading.value = false
+  }
+}
+
+const handleSave = async () => {
   localStorage.setItem('smartcall_selected_mic', selectedMic.value)
   localStorage.setItem('smartcall_selected_speaker', selectedSpeaker.value)
   saveFeatures(featureConfig.value)
   stopMicMeter()
+
+  // Lưu cấu hình DND và Chuyển tiếp cuộc gọi lên Wazo Confd (Mục 6)
+  const token = wazoService.getToken()
+  if (token) {
+    const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
+    try {
+      await fetch(`${host}/api/confd/1.1/users/me/services/dnd`, {
+        method: 'PUT',
+        headers: {
+          'X-Auth-Token': token,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ enabled: dndEnabled.value }),
+      })
+
+      await fetch(`${host}/api/confd/1.1/users/me/forwards/busy`, {
+        method: 'PUT',
+        headers: {
+          'X-Auth-Token': token,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: Boolean(forwardBusy.value.trim()),
+          destination: forwardBusy.value.trim() || null,
+        }),
+      })
+
+      await fetch(`${host}/api/confd/1.1/users/me/forwards/noanswer`, {
+        method: 'PUT',
+        headers: {
+          'X-Auth-Token': token,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: Boolean(forwardNoAnswer.value.trim()),
+          destination: forwardNoAnswer.value.trim() || null,
+        }),
+      })
+
+      await fetch(`${host}/api/confd/1.1/users/me/forwards/unconditional`, {
+        method: 'PUT',
+        headers: {
+          'X-Auth-Token': token,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: Boolean(forwardAll.value.trim()),
+          destination: forwardAll.value.trim() || null,
+        }),
+      })
+    } catch (e) {
+      console.warn('Lỗi lưu dịch vụ cuộc gọi lên Wazo Confd:', e)
+    }
+  }
+
   emit('close')
   window.dispatchEvent(
     new CustomEvent('app-toast', {
-      detail: { message: '✅ Đã lưu cấu hình Cài đặt, Thiết bị âm thanh và Phân hệ thành công!' },
+      detail: { message: '✅ Đã lưu cài đặt và cấu hình tổng đài thành công!', type: 'success' },
     }),
   )
 }
@@ -848,6 +1075,36 @@ const handleSave = () => {
   color: #ef4444;
   border-color: #fca5a5;
   background: #fef2f2;
+}
+
+.password-action-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-reset-email {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #2563eb;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-reset-email:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #1d4ed8;
+}
+
+.btn-reset-email:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>
 

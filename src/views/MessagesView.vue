@@ -30,6 +30,7 @@
               :style="{ backgroundColor: room.avatarBg }"
             >
               {{ room.icon || (!room.isDirect ? '👥' : room.title.slice(0, 2).toUpperCase()) }}
+              <span v-if="room.isDirect" class="status-badge-dot" :class="getRoomStatusClass(room)"></span>
             </div>
 
             <div class="room-info">
@@ -58,9 +59,12 @@
         <!-- Chat Header -->
         <div class="chat-header">
           <div class="chat-title-group">
-            <h3>{{ currentRoom.title }}</h3>
-            <span class="online-indicator">
-              ● Đang hoạt động ({{ currentRoom.isDirect ? 2 : currentRoomMembers.length }} thành viên)
+            <h3>
+              <span v-if="currentRoom.isDirect" class="status-dot-inline" :class="getRoomStatusClass(currentRoom)"></span>
+              {{ currentRoom.title }}
+            </h3>
+            <span v-if="!currentRoom.isDirect" class="online-indicator">
+              👥 {{ currentRoomMembers.length || currentRoom.memberCount || 2 }} thành viên
             </span>
           </div>
 
@@ -76,8 +80,8 @@
             </button>
             <button
               class="btn-action"
-              :title="currentRoom.isDirect ? 'Gọi video 1-1' : 'Hội nghị truyền hình nhóm'"
-              @click="startVideoCall"
+              title="Tính năng cuộc gọi video đang được phát triển"
+              @click="handleVideoCallClick"
             >
               <svg class="header-action-svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" />
@@ -121,10 +125,20 @@
                 <span
                   v-if="msg.sender === 'mine' || msg.sender === 'me'"
                   class="read-tag"
-                  title="Xem ai đã đọc"
+                  :class="{
+                    'sending': msg.readStatus === 'Đang gửi...',
+                    'sent': msg.readStatus === 'Đã gửi',
+                    'delivered': msg.readStatus === 'Đã nhận',
+                    'read': msg.readStatus === 'Đã xem'
+                  }"
+                  title="Trạng thái tin nhắn (Nhấp để xem chi tiết)"
                   @click="openReadIdModal(msg)"
                 >
-                  {{ msg.readStatus || 'Đã gửi' }}
+                  <span v-if="msg.readStatus === 'Đang gửi...'">⏳ Đang gửi...</span>
+                  <span v-else-if="msg.readStatus === 'Đã gửi'">✓ Đã gửi</span>
+                  <span v-else-if="msg.readStatus === 'Đã nhận'">✓✓ Đã nhận</span>
+                  <span v-else-if="msg.readStatus === 'Đã xem'">✓✓ Đã xem</span>
+                  <span v-else>{{ msg.readStatus || 'Đã gửi' }}</span>
                 </span>
                 <button
                   class="btn-pin-msg"
@@ -276,6 +290,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, on
 import { useRoute, useRouter } from 'vue-router'
 import { chatService, formatMessageDateTime } from '@/services/chatService'
 import { contactService } from '@/services/contactService'
+import { wazoService, callStore } from '@/services/wazo'
 
 const route = useRoute()
 const router = useRouter()
@@ -664,45 +679,38 @@ const startVoiceCall = () => {
   }
 }
 
-const startVideoCall = () => {
-  if (!currentRoom.value) return
-  if (currentRoom.value.isDirect) {
-    const targetExt = String(currentRoom.value.ext || '').trim()
-    if (!targetExt) {
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: {
-            message: 'Phòng chat này chưa được gán số máy lẻ nội bộ để thực hiện cuộc gọi',
-            type: 'warning',
-          },
-        }),
-      )
-      return
-    }
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: `Khởi tạo cuộc gọi Video 1-1 tới máy lẻ ${targetExt}...`,
-          type: 'info',
-        },
-      }),
-    )
-    window.dispatchEvent(
-      new CustomEvent('app-action', {
-        detail: { type: 'dial', value: targetExt },
-      }),
-    )
-  } else {
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message:
-            'Tính năng Video nhóm yêu cầu máy chủ Media SFU (Janus/Jitsi Gateway). Hiện tại hệ thống hỗ trợ họp thoại nhóm qua phòng hội nghị 8001.',
-          type: 'warning',
-        },
-      }),
-    )
+const handleVideoCallClick = () => {
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message:
+          '🎥 Tính năng Cuộc gọi Video hiện đang trong giai đoạn phát triển và sẽ sớm được ra mắt trong phiên bản tiếp theo!',
+        type: 'info',
+      },
+    }),
+  )
+}
+
+const getRoomStatusClass = (room) => {
+  if (!room || !room.isDirect) return 'online'
+  const myExt = callStore?.myExtension || localStorage.getItem('smartcall_extension') || ''
+  const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || ''
+  const otherMember = (room.members || []).find((mem) => {
+    const isMe =
+      (myUuid && (mem.id === myUuid || mem.uuid === myUuid)) ||
+      (myExt && (mem.ext === myExt || mem.number === myExt))
+    return !isMe
+  })
+  const targetExt = otherMember?.ext || (room.ext ? String(room.ext).split('@')[0] : '')
+  const targetUuid = otherMember?.id || otherMember?.uuid || room.peerUuid || ''
+  const contact =
+    (targetExt && contactService.findContactByExtension(targetExt)) ||
+    (targetUuid && contactService.findContactByUuid(targetUuid)) ||
+    null
+  if (contact) {
+    return contact.status || 'offline'
   }
+  return 'offline'
 }
 </script>
 
@@ -786,6 +794,60 @@ const startVideoCall = () => {
   font-weight: bold;
   font-size: 0.95rem;
   flex-shrink: 0;
+  position: relative;
+}
+
+.status-badge-dot {
+  position: absolute;
+  bottom: 0px;
+  right: 0px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+}
+
+.status-badge-dot.online,
+.status-dot-inline.online {
+  background: #10b981;
+}
+
+.status-badge-dot.busy,
+.status-badge-dot.talking,
+.status-badge-dot.holding,
+.status-dot-inline.busy,
+.status-dot-inline.talking,
+.status-dot-inline.holding {
+  background: #ef4444;
+}
+
+.status-badge-dot.away,
+.status-dot-inline.away {
+  background: #f59e0b;
+}
+
+.status-badge-dot.dnd,
+.status-dot-inline.dnd {
+  background: #8b5cf6;
+}
+
+.status-badge-dot.ringing,
+.status-dot-inline.ringing {
+  background: #3b82f6;
+}
+
+.status-badge-dot.offline,
+.status-dot-inline.offline {
+  background: #94a3b8;
+}
+
+.status-dot-inline {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 .avatar-sm.group-avatar {
@@ -1041,6 +1103,31 @@ const startVideoCall = () => {
 .read-tag {
   color: #0284c7;
   cursor: pointer;
+  font-weight: 500;
+  font-size: 0.68rem;
+  padding: 1px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.read-tag.sending {
+  color: #d97706;
+  font-style: italic;
+}
+
+.read-tag.sent {
+  color: #94a3b8;
+}
+
+.read-tag.delivered {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.read-tag.read {
+  color: #2563eb;
   font-weight: 600;
 }
 

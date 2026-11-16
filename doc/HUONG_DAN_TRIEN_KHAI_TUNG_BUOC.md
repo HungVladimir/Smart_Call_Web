@@ -54,6 +54,10 @@
 | **38** | Tổng hợp Toàn bộ 16 REST API & Kênh WebSocket Sử dụng Trong SmartCall Web | Khớp nối Wazo API Reference 841 API | **HOÀN THÀNH** ✅ | Hoàn thiện tài liệu danh mục 16 kết nối (`doc/TONG_HOP_TOAN_BO_API_DA_CALL.md`) phân định 14 REST API và 2 WebSocket channel thực tế sử dụng. |
 | **39** | Khắc phục Triệt để Lỗi Không Hiển thị Lịch sử Cuộc gọi (CDR), Chuẩn hóa Chiều Cuộc gọi Nội bộ & KeepAlive | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Wazo CDR | **HOÀN THÀNH** ✅ | Sửa lỗi ánh xạ `call_direction: 'internal'`; Chuẩn hóa HTTP headers và tăng timeout 8s; Đồng bộ vòng đời cache `historyService.reload()`; Bổ sung hook `onActivated` trong `HistoryView.vue`. |
 | **40** | Khắc phục Triệt để Luồng Tin nhắn Realtime (Wazo Chatd UUID), Đồng bộ 2 Chiều & Badge Thông báo | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Wazo Chatd | **HOÀN THÀNH** ✅ | Loại bỏ fake ID `direct-ext` gây HTTP 404; Tự động phân giải User UUID qua Dird lookup; Tạo & đồng bộ phòng thật qua `/users/me/rooms`; Lắng nghe sự kiện WebSocket `chatd_user_room_message_created` & `chatd_user_room_created`; Cập nhật tức thì badge Sidebar. |
+| **41** | Chuẩn hóa Toàn diện Favorites Wazo Dird, Dọn sạch Cache khi Logout & Tiêu đề Phòng Chat | Wazo Dird & Chatd API | **HOÀN THÀNH** ✅ | Tích hợp Wazo Dird Favorites REST API; Dọn sạch session storage khi logout; Phân giải động tiêu đề phòng 1-1; Chuẩn hóa ngày giờ & sắp xếp tin nhắn; Ghim độc lập theo phòng; Loading spinners. |
+| **42** | Xử lý Dứt điểm Favorites F5, Lịch sử Treo Loading & Chuẩn hóa Local Storage khi Logout | Tiêu chuẩn chất lượng Mục 7 GEMINI.md | **HOÀN THÀNH** ✅ | Write-Through Cache cho favorites; Hỗ trợ forceRefresh và giảm timeout Call-Logd xuống 3.5s; Optimistic Rendering cho Lịch sử; Bảo toàn dữ liệu phân tách theo User UUID khi logout. |
+| **43** | Chuẩn hóa Tham số Source/Directory cho Favorites & Triệt tiêu Lỗi 404 Wazo Dird | Wazo Dird Spec & Mã tham chiếu | **HOÀN THÀNH** ✅ | Tự động bóc tách Source Name (`wazo_user`); Cơ chế Candidate Directories Fallback; Nhận diện yêu thích theo số máy lẻ (Extension matching) đồng bộ đa nền tảng. |
+| **44** | Nâng cấp Toàn diện 13 Hạng mục Tính năng, Bảo mật & Chuẩn hóa Mã nguồn Hệ thống | Kế hoạch Nâng cấp Toàn diện & GEMINI.md | **HOÀN THÀNH** ✅ | Trực tuyến máy lẻ SIP & Profile User : Department; Danh bạ auto-refresh onActivated/focus; Trạng thái tin nhắn 4 cấp (Đang gửi -> Đã gửi -> Đã nhận -> Đã xem); Vô hiệu hóa video call kèm toast; Lọc lịch sử theo ngày & gỡ bỏ các nút xóa; Wazo Confd API thật cho DND & Call Forwards; Đổi/quên mật khẩu qua Auth API; Smart Softphone Dialer tự động tra cứu danh bạ; Single Device Login cảnh báo khi bị chiếm phiên; Realtime presence dot cho Messages; 100% Wazo Dird API cho Favorites; Xóa preview_smartcall.html & clean router redirects; Dọn sạch toàn bộ comment thừa. |
 
 ---
 
@@ -2468,6 +2472,63 @@ Qua đối chiếu kiến trúc Wazo Dird và mã nguồn tham chiếu Android:
 ### 5. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (419ms).
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (590ms).
+
+---
+
+## BƯỚC 44: NÂNG CẤP TOÀN DIỆN 13 HẠNG MỤC TÍNH NĂNG, BẢO MẬT & CHUẨN HÓA MÃ NGUỒN HỆ THỐNG
+
+### 1. Bối cảnh & Yêu cầu:
+Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn hóa hệ thống SmartCall Web:
+1. **AppHeader.vue**: Chuẩn hóa nhãn SIP kết nối thành `"Trực tuyến (máy lẻ: {ext})"`. Bên profile người dùng, bỏ nhãn `"Máy lẻ: {ext}"`, thay bằng định dạng `"{Tên} : {Phòng ban}"` (ví dụ `"Vladimir : AI Transformation Part"` hoặc `"Vladimir"` nếu chưa khai báo phòng ban). Lưu trữ và đồng bộ trường `department` qua `LoginView.vue`, `wazo.js`, `contactService.js`.
+2. **CallsView.vue**: Tự động làm mới danh bạ trong nền khi chuyển tab trở lại (`onActivated`) hoặc khi cửa sổ trình duyệt nhận lại tiêu điểm (`window.focus`).
+3. **chatService.js & MessagesView.vue**: Chuẩn hóa trạng thái tin nhắn 4 cấp thời gian thực: `Đang gửi...` $\rightarrow$ `Đã gửi` (server 201) $\rightarrow$ `Đã nhận` (đối phương trực tuyến) $\rightarrow$ `Đã xem` (khi đối phương có tin nhắn phản hồi tiếp theo). Loại bỏ việc tự động gán cứng `Đã xem` khi tải lại lịch sử tin nhắn.
+4. **MessagesView.vue**: Vô hiệu hóa nút gọi video, hiển thị thông báo toast `"Tính năng Gọi Video đang được phát triển"`, ngăn kích hoạt nhầm cuộc gọi thoại WebRTC.
+5. **HistoryView.vue**: Số đếm các tab (`ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`) tự động tính toán chính xác theo ngày lọc (`filterDate`). Xóa bỏ hoàn toàn nút `DELETE HISTORY`, nút ✖ xóa từng dòng cuộc gọi và modal xác nhận xóa. Đưa nút ✖ xóa bộ lọc ngày ra ngoài ô nhập liệu để không bị đè lên biểu tượng lịch của trình duyệt.
+6. **SettingsModal.vue**: Kết nối trực tiếp Wazo Confd REST API cho Không làm phiền (DND: `GET/PUT /api/confd/1.1/users/me/services/dnd`) và Chuyển tiếp cuộc gọi (Call Forwards: `GET/PUT /api/confd/1.1/users/me/forwards/{busy|noanswer|unconditional}`). Nạp cấu hình hiện tại từ máy chủ khi mở tab Cài đặt cuộc gọi.
+7. **SettingsModal.vue & LoginView.vue**: Tích hợp tính năng Đổi mật khẩu trong Settings (`PUT /api/auth/0.1/users/{user_uuid}/password` với `old_password` và `new_password`). Tích hợp tính năng Quên/Lấy lại mật khẩu qua email trong LoginView và Settings (`GET /api/auth/0.1/users/password/reset?username=...`).
+8. **CallsView.vue**: Tái thiết kế màn hình chờ gọi thoại thành Smart Softphone Dialer. Bỏ toàn bộ thông tin kỹ thuật khô khan (SIP URI, line, số máy lẻ). Trạng thái rảnh rỗi hiển thị biểu tượng 📞, tiêu đề `"Cuộc Gọi Thoại Nội Bộ"` và hướng dẫn sử dụng. Khi nhập số máy lẻ, tự động tra cứu danh bạ tức thời: nếu có hiển thị Avatar chữ cái đầu với màu sắc cá nhân, tên đầy đủ, huy hiệu phòng ban và chấm trạng thái trực tuyến/bận/ngoại tuyến thời gian thực; nếu là số lạ hiển thị nhãn `"Số nội bộ chưa có trong danh bạ"`.
+9. **wazo.js & App.vue**: Thiết lập kiến trúc Single Device Login: Lắng nghe tín hiệu WebSocket bị đóng với mã 401 hoặc lý do hết hạn phiên/bị chiếm quyền (`kicked`/`expired`), tự động phát sự kiện toàn cục và hiển thị hộp thoại cảnh báo tài khoản đã được đăng nhập từ một thiết bị khác, chuyển hướng về màn hình đăng nhập an toàn.
+10. **MessagesView.vue**: Gỡ bỏ nhãn chữ `"● Đang hoạt động (2 thành viên)"`. Bổ sung chấm tròn trạng thái thời gian thực trước tên người chat trong Header và ở góc dưới Avatar trong danh sách phòng chat.
+11. **contactService.js**: Loại bỏ hoàn toàn việc đọc/ghi `localStorage` của favorites (`getFavoritesKey`, `getSavedFavoriteIds`, `saveFavorites`), đồng bộ 100% qua Wazo Dird API.
+12. **Dọn dẹp tệp tin và Router**: Xóa vĩnh viễn tệp `preview_smartcall.html` ở thư mục gốc. Xóa các route redirect tạm `/dashboard` và `/contacts` trong `src/router/index.js`.
+13. **Vệ sinh mã nguồn**: Rà soát và loại bỏ toàn bộ các bình luận thừa, tham chiếu tên tệp ảnh hoặc mã nguồn mẫu, đảm bảo mã nguồn sạch sẽ, tinh gọn.
+
+### 2. Các Giải pháp Kỹ thuật Đã Triển khai:
+- **Tầng Trạng thái & Dịch vụ (`src/services/`):**
+  - `wazo.js`: Mở rộng `callStore` với `myDepartment`, bóc tách `user_profile.department` khi đăng nhập và lưu phiên; bổ sung phát hiện kết nối WebSocket bị đóng bởi máy chủ để phát hiện đăng nhập đè; tích hợp API đổi mật khẩu và khôi phục mật khẩu qua email.
+  - `contactService.js`: Đồng bộ trường `department` từ kết quả tra cứu Wazo Dird; loại bỏ hoàn toàn các hàm ghi nhận favorites vào `localStorage`, chuyển sang thuần 100% Wazo Dird API.
+  - `chatService.js`: Chuẩn hóa 4 trạng thái tin nhắn `sending` $\rightarrow$ `sent` $\rightarrow$ `delivered` $\rightarrow$ `read`. Tin nhắn gửi đi nhận HTTP 201 được gán `sent`. Nếu đối phương trực tuyến, chuyển thành `delivered`. Khi phát hiện tin nhắn đến từ đối phương trong cùng phòng, toàn bộ tin nhắn trước đó của mình được cập nhật sang `read`.
+
+- **Tầng Giao diện UI/UX (`src/views/` & `src/components/`):**
+  - `src/components/layout/AppHeader.vue`: Đổi nhãn SIP sang `"Trực tuyến (máy lẻ: {ext})"`, chuẩn hóa phần profile hiển thị `"{userName} : {userDepartment}"` (hoặc `"{userName}"`).
+  - `src/views/CallsView.vue`: Bổ sung hook `onActivated` và bộ lắng nghe `window.focus` để tự động làm mới danh bạ ngầm; xây dựng giao diện Smart Softphone Dialer tự động nhận diện danh bạ theo số phím bấm với đầy đủ Avatar màu, Tên, Phòng ban, Trạng thái presence thời gian thực.
+  - `src/views/MessagesView.vue`: Vô hiệu hóa nút gọi video kèm toast thông báo; gỡ bỏ nhãn cứng 2 thành viên; tích hợp chấm tròn trạng thái thời gian thực ở tiêu đề phòng và góc avatar danh sách phòng; hiển thị thẻ trạng thái tin nhắn 4 cấp (`Đang gửi...`, `Đã gửi`, `Đã nhận`, `Đã xem`).
+  - `src/views/HistoryView.vue`: Lọc động các số đếm `ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED` theo ngày đã chọn; gỡ bỏ hoàn toàn nút `DELETE HISTORY`, nút xóa từng dòng và modal xác nhận; bố trí nút xóa lọc ngày ra ngoài ô input.
+  - `src/components/common/SettingsModal.vue`: Đấu nối API Confd thật cho DND và Call Forwards; tích hợp biểu mẫu Đổi mật khẩu (`PUT /api/auth/0.1/users/{uuid}/password`) và nút Quên mật khẩu qua email; bảo toàn tab Mock Data trên bản thử nghiệm.
+  - `src/views/LoginView.vue`: Tích hợp modal Quên mật khẩu với Wazo Auth reset API.
+  - `src/App.vue`: Bổ sung modal cảnh báo phiên làm việc bị chiếm quyền (`smartcall-session-kicked`), tự động khóa thao tác và điều hướng về trang đăng nhập.
+  - `src/router/index.js`: Dọn sạch các route redirect dư thừa `/dashboard` và `/contacts`.
+
+### 3. Danh sách File Đã Chỉnh Sửa & Xóa:
+- Đã xóa: `preview_smartcall.html`
+- Đã chỉnh sửa:
+  - `src/services/wazo.js`
+  - `src/services/contactService.js`
+  - `src/services/chatService.js`
+  - `src/components/layout/AppHeader.vue`
+  - `src/components/common/SettingsModal.vue`
+  - `src/views/CallsView.vue`
+  - `src/views/MessagesView.vue`
+  - `src/views/HistoryView.vue`
+  - `src/views/LoginView.vue`
+  - `src/App.vue`
+  - `src/router/index.js`
+- Đồng bộ song song toàn bộ sang `D:\Project\Smart_Call_Web_Mock\`.
+
+### 4. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
+
 
 
 

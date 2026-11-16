@@ -10,6 +10,17 @@ class ContactService {
     this.defaultSourceName = 'wazo_user'
     this.wazoSourceUuid = ''
 
+    // Dọn dẹp triệt để các key favorites cũ trong localStorage (100% Wazo Dird API)
+    try {
+      if (typeof localStorage !== 'undefined') {
+        Object.keys(localStorage).forEach((k) => {
+          if (k.startsWith('smartcall_favorites_')) {
+            localStorage.removeItem(k)
+          }
+        })
+      }
+    } catch (e) {}
+
     if (typeof window !== 'undefined') {
       window.addEventListener('wazo-presence-updated', (ev) => {
         if (ev.detail) {
@@ -19,50 +30,11 @@ class ContactService {
     }
   }
 
-  // Khóa danh sách yêu thích phân tách theo User UUID
-  getFavoritesKey() {
-    const userUuid = wazoService?.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'default'
-    return `smartcall_favorites_${userUuid}`
-  }
-
-  // Tải mảng ID yêu thích từ localStorage (0ms instant)
-  getSavedFavoriteIds() {
-    try {
-      const key = this.getFavoritesKey()
-      const raw = localStorage.getItem(key)
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed)) return parsed.map(String)
-      }
-    } catch (e) {
-      console.warn('Lỗi đọc favorites từ localStorage:', e)
-    }
-    return []
-  }
-
-  // Lưu bền vững vào localStorage theo User UUID
-  saveFavorites(ids) {
-    try {
-      const key = this.getFavoritesKey()
-      localStorage.setItem(key, JSON.stringify(ids || []))
-    } catch (e) {
-      console.warn('Lỗi ghi favorites vào localStorage:', e)
-    }
-  }
-
   /**
-   * Tải danh sách liên hệ yêu thích:
-   * 1. Nạp tức thời từ localStorage (0ms, F5 không mất)
-   * 2. Gọi Wazo Dird API để đồng bộ với server
+   * Tải danh sách liên hệ yêu thích trực tiếp từ máy chủ Wazo Dird API:
    * GET /api/dird/0.1/directories/favorites/default
    */
   async fetchFavorites() {
-    // 1. Luôn nạp cache local trước để UI hiển thị ngay lập tức
-    const saved = this.getSavedFavoriteIds()
-    if (saved && saved.length > 0) {
-      this.favoriteIds = Array.from(new Set([...(this.favoriteIds || []), ...saved]))
-    }
-
     try {
       const token = wazoService.getToken()
       if (!token) {
@@ -114,16 +86,14 @@ class ContactService {
             if (item.exten || item.number) ids.push(String(item.exten || item.number))
           })
         }
-        // Hợp nhất server favorites với local favorites
-        this.favoriteIds = Array.from(new Set([...(this.favoriteIds || []), ...ids]))
-        this.saveFavorites(this.favoriteIds)
+        this.favoriteIds = Array.from(new Set(ids))
         logger.info('API', `Đồng bộ Wazo Dird favorites thành công (${this.favoriteIds.length} mục, Nguồn mặc định: "${this.defaultSourceName}")`)
         return this.favoriteIds
       } else {
-        logger.warn('API', `Wazo Dird favorites trả về mã ${res.status}, duy trì danh sách yêu thích cục bộ (${(this.favoriteIds || []).length} mục)`)
+        logger.warn('API', `Wazo Dird favorites trả về mã ${res.status}`)
       }
     } catch (err) {
-      logger.warn('API', 'Không thể kết nối Wazo Dird favorites (dùng bộ nhớ đệm cục bộ):', err.message)
+      logger.warn('API', 'Không thể kết nối Wazo Dird favorites:', err.message)
     }
     return this.favoriteIds || []
   }
@@ -132,8 +102,6 @@ class ContactService {
    * Bật/Tắt trạng thái yêu thích trên máy chủ Wazo Dird REST API
    * PUT /api/dird/0.1/directories/favorites/{directory}/{contact}
    * DELETE /api/dird/0.1/directories/favorites/{directory}/{contact}
-   * Áp dụng mô hình Write-Through Cache: Ghi ngay lập tức xuống localStorage theo User UUID
-   * Chuẩn hóa theo tham chiếu Android: Truyền đúng tên nguồn danh bạ vào {directory}
    */
   async toggleFavorite(contactOrId) {
     let contact = null
@@ -170,9 +138,6 @@ class ContactService {
     } else {
       this.favoriteIds = this.favoriteIds.filter((id) => !idList.includes(id))
     }
-
-    // Write-Through: Ghi NGAY LẬP TỨC xuống localStorage theo User UUID (F5 không mất)
-    this.saveFavorites(this.favoriteIds)
 
     // Gọi API Wazo Dird bất đồng bộ dưới nền theo tên nguồn chuẩn
     try {
@@ -411,7 +376,20 @@ class ContactService {
             isFavorite: isFav,
           }
         })
-        this.saveFavorites(this.favoriteIds)
+
+        // Đồng bộ phòng ban của chính người dùng đăng nhập từ danh bạ Wazo
+        const myUuid = callStore.myUserUuid || localStorage.getItem('smartcall_user_uuid')
+        const myExt = callStore.myExtension || localStorage.getItem('smartcall_extension')
+        const myName = callStore.myUserName || localStorage.getItem('smartcall_username')
+        const meContact = mappedList.find(
+          (c) => (myUuid && c.uuid === myUuid) || (myExt && c.number === myExt) || (myName && c.name === myName),
+        )
+        if (meContact?.dept && (!callStore.myDepartment || callStore.myDepartment !== meContact.dept)) {
+          callStore.myDepartment = meContact.dept
+          localStorage.setItem('smartcall_department', meContact.dept)
+          localStorage.setItem('smartcall_user_department', meContact.dept)
+        }
+
         const finalContacts = await this.loadPresencesForContacts(mappedList)
         this.startPresencePolling()
         return this._filterContacts(finalContacts)
@@ -465,7 +443,20 @@ class ContactService {
             isFavorite: isFav,
           }
         })
-        this.saveFavorites(this.favoriteIds)
+
+        // Đồng bộ phòng ban của chính người dùng đăng nhập từ danh bạ Wazo
+        const myUuid = callStore.myUserUuid || localStorage.getItem('smartcall_user_uuid')
+        const myExt = callStore.myExtension || localStorage.getItem('smartcall_extension')
+        const myName = callStore.myUserName || localStorage.getItem('smartcall_username')
+        const meContact = mappedList.find(
+          (c) => (myUuid && c.uuid === myUuid) || (myExt && c.number === myExt) || (myName && c.name === myName),
+        )
+        if (meContact?.dept && (!callStore.myDepartment || callStore.myDepartment !== meContact.dept)) {
+          callStore.myDepartment = meContact.dept
+          localStorage.setItem('smartcall_department', meContact.dept)
+          localStorage.setItem('smartcall_user_department', meContact.dept)
+        }
+
         const finalContacts = await this.loadPresencesForContacts(mappedList)
         this.startPresencePolling()
         return this._filterContacts(finalContacts)

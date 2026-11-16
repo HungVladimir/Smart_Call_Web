@@ -134,34 +134,71 @@
           <!-- Giao diện khi Rảnh (Idle) trên màn hình Tablet / Laptop nhỏ -->
           <div v-if="!isCalling" class="idle-collapsed-bar">
             <div class="idle-sip-badge">
-              <span class="sip-dot online"></span>
-              <span class="sip-text">{{ callerSip }}</span>
+              <span class="sip-dot" :class="isSipOnline ? 'online' : 'offline'"></span>
+              <span class="sip-text">{{ extension ? `Đang nhập số: ${extension}` : 'Cuộc Gọi Thoại Nội Bộ' }}</span>
             </div>
-            <div class="idle-note">Sẵn sàng thực hiện cuộc gọi</div>
+            <div class="idle-note">
+              {{ extension ? (matchedDialContact ? matchedDialContact.name : 'Số nội bộ') : 'Sẵn sàng gọi thoại' }}
+            </div>
           </div>
 
           <!-- Giao diện Đầy đủ khi Đang Gọi hoặc trên Desktop -->
           <div class="status-full-content" :class="{ 'hide-on-tablet-idle': !isCalling }">
-            <div
-              class="call-avatar"
-              :class="{ pulsing: isCalling, ringingPulse: callState === 'ringing' }"
-            >
-              <span>{{ callAvatarInitials }}</span>
-            </div>
-
-            <div class="caller-details">
-              <h2>{{ callerName }}</h2>
-              <p class="sip-uri">{{ callerSip }}</p>
-              <p
-                v-if="isCalling"
-                class="duration-text"
-                :class="{ ringingText: callState === 'ringing' }"
+            <!-- 1. Trạng thái Đang Gọi (Active Call / Ringing / Talking) -->
+            <template v-if="isCalling">
+              <div
+                class="call-avatar"
+                :class="{ pulsing: isCalling, ringingPulse: callState === 'ringing' }"
+                :style="{ backgroundColor: activeCallAvatarBg }"
               >
-                {{ durationText }}
-              </p>
-              <p v-if="isCalling && dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
-              <p v-else-if="!isCalling" class="idle-text">Tổng đài WebRTC SIP sẵn sàng</p>
-            </div>
+                <span>{{ activeCallAvatarText }}</span>
+              </div>
+
+              <div class="caller-details">
+                <h2 class="caller-title">{{ activeCallTitle }}</h2>
+                <div v-if="activeCallDept" class="caller-dept-badge">{{ activeCallDept }}</div>
+                <p class="duration-text" :class="{ ringingText: callState === 'ringing' }">
+                  {{ durationText }}
+                </p>
+                <p v-if="dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
+              </div>
+            </template>
+
+            <!-- 2. Trạng thái Đang Gõ Số Máy Lẻ (Dialing extension) -->
+            <template v-else-if="extension">
+              <div
+                class="call-avatar"
+                :style="{ backgroundColor: dialAvatarBg }"
+              >
+                <span>{{ dialAvatarText }}</span>
+              </div>
+
+              <div class="caller-details">
+                <h2 class="caller-title">{{ dialTitle }}</h2>
+                <div v-if="matchedDialContact?.dept" class="caller-dept-badge">
+                  {{ matchedDialContact.dept }}
+                </div>
+                <div v-if="matchedDialContact" class="dialer-status-row">
+                  <span class="status-dot-inline" :class="matchedDialContact.status || 'offline'"></span>
+                  <span class="status-label-text">{{ matchedDialContact.statusLabel || 'Ngoại tuyến' }}</span>
+                  <span class="status-sep">•</span>
+                  <span class="status-ext-text">Máy lẻ: {{ extension }}</span>
+                </div>
+                <p v-else class="idle-unknown-note">Số nội bộ chưa có trong danh bạ</p>
+              </div>
+            </template>
+
+            <!-- 3. Trạng thái Bàn Phím Trống (Idle) -->
+            <template v-else>
+              <div class="call-avatar idle-avatar">
+                <span>📞</span>
+              </div>
+
+              <div class="caller-details">
+                <h2 class="caller-title">Cuộc Gọi Thoại Nội Bộ</h2>
+                <p class="idle-guide-text">Bấm phím số bên dưới hoặc chọn nhanh từ danh bạ bên phải</p>
+              </div>
+            </template>
 
             <!-- Hàng 4 nút điều khiển cuộc gọi -->
             <div class="controls-row">
@@ -501,8 +538,84 @@ const keys = [
   { num: '#', sub: '' },
 ]
 
+const isSipOnline = computed(
+  () =>
+    callStore.isRegistered ||
+    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true'),
+)
+
+const matchedDialContact = computed(() => {
+  const ext = extension.value.trim()
+  if (!ext) return null
+  return (
+    contacts.value.find((c) => String(c.number || '').trim() === ext) ||
+    contactService.findContactByExtension(ext) ||
+    null
+  )
+})
+
+const activeCallContact = computed(() => {
+  const num = callStore.activeCall?.number || ''
+  if (!num) return null
+  return (
+    contacts.value.find((c) => String(c.number || '').trim() === String(num).trim()) ||
+    contactService.findContactByExtension(num) ||
+    null
+  )
+})
+
+const activeCallTitle = computed(() => {
+  if (!callStore.activeCall) return ''
+  const ext = callStore.activeCall.number || extension.value
+  if (callStore.activeCall.status === 'ringing') {
+    return `Đang đổ chuông: ${callStore.activeCall.name || activeCallContact.value?.name || `Máy lẻ ${ext}`}`
+  }
+  if (callStore.activeCall.isHeld) {
+    return `${callStore.activeCall.name || activeCallContact.value?.name || `Máy lẻ ${ext}`} (Tạm giữ)`
+  }
+  return callStore.activeCall.name || activeCallContact.value?.name || `Máy lẻ ${ext}`
+})
+
+const activeCallDept = computed(() => {
+  return callStore.activeCall?.dept || activeCallContact.value?.dept || ''
+})
+
+const activeCallAvatarText = computed(() => {
+  const name = callStore.activeCall?.name || activeCallContact.value?.name
+  if (name) return getInitials(name)
+  if (callStore.activeCall?.number) return callStore.activeCall.number.slice(-2)
+  return '📞'
+})
+
+const activeCallAvatarBg = computed(() => {
+  const name = callStore.activeCall?.name || activeCallContact.value?.name
+  if (name) return getAvatarColor(name)
+  return '#2563eb'
+})
+
+const dialTitle = computed(() => {
+  if (matchedDialContact.value) {
+    return matchedDialContact.value.name
+  }
+  return `Máy lẻ ${extension.value}`
+})
+
+const dialAvatarText = computed(() => {
+  if (matchedDialContact.value) {
+    return getInitials(matchedDialContact.value.name)
+  }
+  return '📞'
+})
+
+const dialAvatarBg = computed(() => {
+  if (matchedDialContact.value) {
+    return getAvatarColor(matchedDialContact.value.name)
+  }
+  return '#334155'
+})
+
 const callerName = computed(() => {
-  if (!callStore.activeCall) return 'Sẵn sàng kết nối cuộc gọi'
+  if (!callStore.activeCall) return 'Cuộc Gọi Thoại Nội Bộ'
   const ext = callStore.activeCall.number || extension.value
   if (callStore.activeCall.status === 'ringing') {
     return `Đang đổ chuông tới máy lẻ ${ext}...`
@@ -520,7 +633,7 @@ const callerSip = computed(() => {
     .split(':')[0]
   if (callStore.activeCall) return `sip:${callStore.activeCall.number}@${host || 'smartcall'}`
   const myExt = callStore.myExtension || wazoService.getMyExtension() || '1001'
-  return `WebRTC SIP Line ${myExt}`
+  return `Máy lẻ ${myExt}`
 })
 
 const callAvatarInitials = computed(() => {
@@ -949,9 +1062,14 @@ watch(
   { immediate: true },
 )
 
+const onWindowFocus = () => {
+  loadContacts(true)
+}
+
 onMounted(async () => {
   window.addEventListener('smartcall-call-ended', onCallEnded)
   window.addEventListener('smartcall-contacts-updated', onContactsUpdated)
+  window.addEventListener('focus', onWindowFocus)
 
   if (route.query.q) {
     searchTerm.value = String(route.query.q)
@@ -965,7 +1083,7 @@ onMounted(async () => {
   }
 })
 
-// Hỗ trợ KeepAlive mượt mà không delay khi chuyển tab
+// Hỗ trợ KeepAlive mượt mà không delay khi chuyển tab & tự động refresh ngầm
 onActivated(() => {
   if (route.query.q) {
     searchTerm.value = String(route.query.q)
@@ -973,11 +1091,13 @@ onActivated(() => {
   if (contactService.currentContacts && contactService.currentContacts.length > 0) {
     contacts.value = [...contactService.currentContacts]
   }
+  loadContacts(true)
 })
 
 onUnmounted(() => {
   window.removeEventListener('smartcall-call-ended', onCallEnded)
   window.removeEventListener('smartcall-contacts-updated', onContactsUpdated)
+  window.removeEventListener('focus', onWindowFocus)
   dtmfLog.value = ''
 })
 </script>
@@ -1346,19 +1466,102 @@ onUnmounted(() => {
   }
 }
 
-.caller-details h2,
-.caller-details h3 {
-  font-size: 1.25rem;
+.caller-title {
+  font-size: 1.35rem;
   font-weight: 700;
   margin: 0 0 6px 0;
   color: #f8fafc;
+  letter-spacing: -0.2px;
 }
 
-.sip-uri {
+.caller-dept-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.dialer-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+  margin-bottom: 16px;
+}
+
+.status-dot-inline {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot-inline.online {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+}
+
+.status-dot-inline.busy,
+.status-dot-inline.talking,
+.status-dot-inline.holding {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+}
+
+.status-dot-inline.away {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
+}
+
+.status-dot-inline.dnd {
+  background: #8b5cf6;
+  box-shadow: 0 0 6px rgba(139, 92, 246, 0.7);
+}
+
+.status-dot-inline.ringing {
+  background: #3b82f6;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.7);
+}
+
+.status-dot-inline.offline {
+  background: #94a3b8;
+}
+
+.status-sep {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.status-ext-text {
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.idle-unknown-note {
   font-size: 0.82rem;
   color: #94a3b8;
-  font-family: monospace;
-  margin: 0 0 10px 0;
+  margin: 6px 0 16px 0;
+}
+
+.idle-guide-text {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin: 8px 0 20px 0;
+  max-width: 280px;
+  line-height: 1.4;
+}
+
+.call-avatar.idle-avatar {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: #475569;
+  font-size: 2.2rem;
 }
 
 .duration-text {
@@ -1375,12 +1578,6 @@ onUnmounted(() => {
   font-size: 1.05rem;
   letter-spacing: 0.5px;
   animation: pulse-ring-amber 1.5s infinite;
-}
-
-.idle-text {
-  font-size: 0.88rem;
-  color: #64748b;
-  margin: 8px 0 20px 0;
 }
 
 .controls-row {

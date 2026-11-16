@@ -9,10 +9,10 @@
         class="sip-status-badge"
         :class="{ online: isSipOnline, offline: !isSipOnline }"
         @click="showSipHelp"
-        :title="isSipOnline ? `Tổng đài: Trực tuyến (${userExtension})` : 'Chế độ ngoại tuyến (Nhấp để xem thông tin)'"
+        :title="isSipOnline ? `Tổng đài: Trực tuyến (máy lẻ: ${userExtension})` : 'Chế độ ngoại tuyến (Nhấp để xem thông tin)'"
       >
         <span class="sip-dot"></span>
-        <span class="sip-status-text">{{ isSipOnline ? `Trực tuyến (${userExtension})` : 'Ngoại tuyến' }}</span>
+        <span class="sip-status-text">{{ isSipOnline ? `Trực tuyến (máy lẻ: ${userExtension})` : 'Ngoại tuyến' }}</span>
       </div>
     </div>
 
@@ -32,8 +32,7 @@
       <div class="user-profile">
         <div class="avatar-sm">{{ userInitials }}</div>
         <div class="user-info">
-          <span class="user-name">{{ userName }}</span>
-          <span class="user-ext">Máy lẻ: {{ userExtension }}</span>
+          <span class="user-name">{{ userDisplayName }}</span>
         </div>
       </div>
 
@@ -102,6 +101,19 @@ const presenceState = ref('available')
 // Lấy thông tin tài khoản đang đăng nhập đồng bộ từ callStore (SSOT)
 const userName = computed(() => callStore.myUserName || localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const userExtension = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '1001')
+const userDepartment = computed(
+  () =>
+    callStore.myDepartment ||
+    localStorage.getItem('smartcall_department') ||
+    localStorage.getItem('smartcall_user_department') ||
+    '',
+)
+const userDisplayName = computed(() => {
+  if (userDepartment.value) {
+    return `${userName.value} : ${userDepartment.value}`
+  }
+  return userName.value
+})
 const isSipOnline = computed(
   () =>
     callStore.isRegistered ||

@@ -16,6 +16,7 @@ export const callStore = reactive({
   myExtension: localStorage.getItem('smartcall_extension') || localStorage.getItem('smartcall_user_exten') || '',
   myUserUuid: localStorage.getItem('smartcall_user_uuid') || '',
   myUserName: localStorage.getItem('smartcall_username') || '',
+  myDepartment: localStorage.getItem('smartcall_department') || localStorage.getItem('smartcall_user_department') || '',
   // activeCall: { session, number, name, dept, direction: 'outbound'|'inbound', status: 'ringing'|'connected'|'held', startTime, duration, isMuted, isHeld, isSpeaker }
   activeCall: null,
   // incomingCall: { rawSession, session, number, extension, name, dept, sipUri }
@@ -65,6 +66,12 @@ class WazoService {
           localStorage.setItem('smartcall_user_exten', exten)
           localStorage.setItem('smartcall_extension', exten)
           callStore.myExtension = exten
+        }
+        if (this.session.profile?.department) {
+          const dept = this.session.profile.department
+          localStorage.setItem('smartcall_department', dept)
+          localStorage.setItem('smartcall_user_department', dept)
+          callStore.myDepartment = dept
         }
         callStore.myUserName = this.getMyUserName()
         historyService.reload()
@@ -117,6 +124,12 @@ class WazoService {
             localStorage.setItem('smartcall_extension', exten)
             callStore.myExtension = exten
           }
+          if (this.session.profile?.department) {
+            const dept = this.session.profile.department
+            localStorage.setItem('smartcall_department', dept)
+            localStorage.setItem('smartcall_user_department', dept)
+            callStore.myDepartment = dept
+          }
           callStore.myUserName = this.getMyUserName()
           historyService.reload()
           logger.success('AUTH', 'Đã khôi phục phiên đăng nhập Wazo từ Token thành công!')
@@ -165,6 +178,8 @@ class WazoService {
       'smartcall_user_exten',
       'smartcall_extension',
       'smartcall_username',
+      'smartcall_department',
+      'smartcall_user_department',
       'smartcall_role',
       'smartcall_is_admin',
       'smartcall_logged_in',
@@ -186,6 +201,7 @@ class WazoService {
     callStore.myExtension = ''
     callStore.myUserUuid = ''
     callStore.myUserName = ''
+    callStore.myDepartment = ''
     callStore.activeCall = null
     callStore.incomingCall = null
     contactService.reset()
@@ -217,6 +233,63 @@ class WazoService {
 
   getMyUserUuid() {
     return this.session?.uuid || localStorage.getItem('smartcall_user_uuid') || ''
+  }
+
+  handleSessionKicked() {
+    if (!this.isLogged()) return
+    logger.warn('AUTH', 'Phiên làm việc bị hủy hoặc tài khoản đăng nhập nơi khác.')
+    window.dispatchEvent(new CustomEvent('smartcall-session-kicked'))
+  }
+
+  async changePassword(oldPassword, newPassword) {
+    const token = this.getToken()
+    if (!token) throw new Error('Chưa đăng nhập hoặc phiên làm việc đã hết hạn.')
+    let userUuid = this.getMyUserUuid()
+    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+    if (!userUuid) {
+      try {
+        const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
+          headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+          signal: AbortSignal.timeout(4000),
+        })
+        if (meRes.ok) {
+          const meData = await meRes.json()
+          if (meData.uuid) {
+            userUuid = meData.uuid
+            localStorage.setItem('smartcall_user_uuid', meData.uuid)
+            callStore.myUserUuid = meData.uuid
+          }
+        }
+      } catch (e) {}
+    }
+    if (!userUuid) throw new Error('Không xác định được UUID người dùng trên tổng đài.')
+
+    const res = await fetch(`${host}/api/auth/0.1/users/${userUuid}/password`, {
+      method: 'PUT',
+      headers: {
+        'X-Auth-Token': token,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword,
+      }),
+    })
+    return res
+  }
+
+  async resetPassword(identifier) {
+    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+    const queryParam = identifier.includes('@')
+      ? `email=${encodeURIComponent(identifier)}`
+      : `username=${encodeURIComponent(identifier)}`
+    const res = await fetch(`${host}/api/auth/0.1/users/password/reset?${queryParam}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    })
+    return res
   }
 
   getMyUserName() {
@@ -281,7 +354,24 @@ class WazoService {
         }
       }
 
-      this.eventWs.onclose = () => {
+      this.eventWs.onclose = (ev) => {
+        const wasKicked =
+          ev?.code === 4001 ||
+          ev?.code === 4003 ||
+          ev?.code === 4401 ||
+          (ev?.reason &&
+            (ev.reason.includes('401') ||
+              ev.reason.toLowerCase().includes('expired') ||
+              ev.reason.toLowerCase().includes('invalid') ||
+              ev.reason.toLowerCase().includes('session') ||
+              ev.reason.toLowerCase().includes('kicked')))
+
+        if (wasKicked && this.isLogged()) {
+          this.handleSessionKicked()
+          this.eventWs = null
+          return
+        }
+
         this.eventWs = null
         if (this.isLogged()) {
           setTimeout(() => {
