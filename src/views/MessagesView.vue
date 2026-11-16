@@ -346,11 +346,15 @@ const sendMessage = async () => {
   }
   rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
-  // Lưu bền vững vào cơ sở dữ liệu chatService
-  await chatService.sendMessage(targetId, text, currentUserName.value)
+  // Lưu bền vững vào cơ sở dữ liệu chatService và đồng bộ Wazo Chatd
+  const sentMsg = await chatService.sendMessage(targetId, text, currentUserName.value)
   const freshRooms = await chatService.getRooms()
   rooms.value = [...freshRooms]
-  const updated = rooms.value.find((r) => r.id === targetId)
+  const updated = rooms.value.find(
+    (r) =>
+      r.id === targetId ||
+      (sentMsg && r.messages?.some((m) => m.id === sentMsg.id)),
+  )
   if (updated) currentRoom.value = updated
   scrollToBottom()
 }
@@ -364,7 +368,7 @@ const scrollToBottom = () => {
 }
 
 // Xử lý mở hội thoại 1-1 trực tiếp khi người dùng chuyển từ Danh bạ sang (Zero-ms switch)
-const checkDirectChatRoute = () => {
+const checkDirectChatRoute = async () => {
   if (route.query && route.query.ext) {
     const ext = String(route.query.ext).split('@')[0].trim()
     const isSelf = ext === currentUserExt.value
@@ -373,7 +377,10 @@ const checkDirectChatRoute = () => {
 
     // 1. Tìm ngay trong RAM (0ms)
     let target = chatService.rooms.find(
-      (r) => r.ext === ext || (r.members && r.members.some((m) => m.ext === ext)),
+      (r) =>
+        String(r.ext || '').split('@')[0].trim() === ext ||
+        (r.members &&
+          r.members.some((m) => String(m.ext || '').split('@')[0].trim() === ext)),
     )
 
     if (target) {
@@ -381,52 +388,35 @@ const checkDirectChatRoute = () => {
         target.title = `${target.title} (Bạn)`
       }
       currentRoom.value = target
-    } else {
-      // Tạo phòng tạm ngay tức thì để hiển thị mà không bị gián đoạn giao diện
-      target = {
-        id: `direct-${ext}`,
-        title: name,
-        preview: 'Bắt đầu cuộc trò chuyện...',
-        time: 'Mới',
-        unread: 0,
-        avatarBg: isSelf ? '#059669' : '#0284c7',
-        icon: (rawName || ext).slice(0, 2).toUpperCase(),
-        isDirect: true,
-        ext: ext,
-        memberCount: 2,
-        updatedAt: 0,
-        members: [
-          { id: 'me', name: currentUserName.value, dept: '', ext: currentUserExt.value, isAdmin: true },
-          { id: `emp-${ext}`, name: rawName, dept: 'Nội bộ', ext: ext, isAdmin: false },
-        ],
-        messages: [],
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('smartcall_active_room_id', target.id)
       }
-      chatService.rooms.unshift(target)
-      rooms.value = [...chatService.rooms]
-      currentRoom.value = target
     }
-
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('smartcall_active_room_id', target.id)
-    }
-    scrollToBottom()
 
     // Xóa sạch query URL ngay lập tức để tránh re-trigger khi switch tab
     router.replace({ path: '/messages', query: {} }).catch(() => {})
 
-    // 2. Đồng bộ ngầm với Wazo server (Background sync - không chặn UI thread)
-    chatService
-      .getDirectRoom(ext, name, currentUserName.value)
-      .then((serverRoom) => {
-        if (serverRoom && currentRoom.value && currentRoom.value.ext === ext) {
-          currentRoom.value = serverRoom
-          rooms.value = [...chatService.rooms]
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('smartcall_active_room_id', serverRoom.id)
+    // 2. Phân giải hoặc nâng cấp phòng Wazo Chatd server thật
+    try {
+      const serverRoom = await chatService.getDirectRoom(ext, name, currentUserName.value)
+      if (serverRoom) {
+        currentRoom.value = serverRoom
+        rooms.value = [...chatService.rooms]
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('smartcall_active_room_id', serverRoom.id)
+        }
+        if (!serverRoom.id.startsWith('direct-')) {
+          const msgs = await chatService.getRoomMessages(serverRoom.id)
+          if (msgs && msgs.length > 0) {
+            serverRoom.messages = msgs
           }
         }
-      })
-      .catch(() => {})
+      }
+    } catch (err) {
+      console.warn('Lỗi phân giải phòng chat direct:', err)
+    }
+
+    scrollToBottom()
   }
 }
 

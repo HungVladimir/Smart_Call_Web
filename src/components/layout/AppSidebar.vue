@@ -91,6 +91,7 @@ onMounted(() => {
   debouncedUpdateSidebarCounts()
   window.addEventListener('app-login-success', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
+  window.addEventListener('smartcall-message-received', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 
@@ -101,6 +102,7 @@ onUnmounted(() => {
   }
   window.removeEventListener('app-login-success', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
+  window.removeEventListener('smartcall-message-received', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 </script>

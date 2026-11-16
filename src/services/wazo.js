@@ -229,6 +229,7 @@ class WazoService {
             'call_ended',
             'chatd_user_room_message_created',
             'chatd_user_message_created',
+            'chatd_user_room_created',
             'chatd_presence_updated',
             'chatd_user_presence_updated',
           ]

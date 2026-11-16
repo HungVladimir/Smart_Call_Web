@@ -392,6 +392,61 @@ class ContactService {
       ) || null
     )
   }
+
+  /**
+   * Tìm kiếm thông tin liên hệ theo User UUID
+   */
+  findContactByUuid(uuid) {
+    if (!uuid) return null
+    const cleanUuid = String(uuid).trim()
+    const pool = Array.isArray(this.currentContacts) ? this.currentContacts : []
+    return (
+      pool.find((c) => c.uuid === cleanUuid || c.id === cleanUuid) || null
+    )
+  }
+
+  /**
+   * Phân giải User UUID từ số máy lẻ (tra cứu cache hoặc gọi Wazo Dird lookup nếu chưa có)
+   */
+  async resolveUserUuid(ext) {
+    if (!ext) return null
+    const cleanExt = String(ext).split('@')[0].trim()
+    const cached = this.findContactByExtension(cleanExt)
+    if (cached?.uuid) return cached.uuid
+
+    try {
+      const token = wazoService.getToken()
+      if (token) {
+        const host = wazoService.host.startsWith('http')
+          ? wazoService.host
+          : `https://${wazoService.host}`
+        const res = await fetch(
+          `${host}/api/dird/0.1/directories/lookup/default?term=${encodeURIComponent(cleanExt)}`,
+          {
+            headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+            signal: AbortSignal.timeout(4000),
+          },
+        )
+        if (res.ok) {
+          const data = await res.json()
+          const items = Array.isArray(data.items) ? data.items : []
+          for (const item of items) {
+            const num = item.exten || item.number || item.phone_number || ''
+            if (String(num).trim() === cleanExt) {
+              const uUuid =
+                item.uuid ||
+                item.user_uuid ||
+                (typeof item.relations === 'object' && item.relations?.user_uuid)
+              if (uUuid) return uUuid
+            }
+          }
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return cached?.uuid || null
+  }
 }
 
 export const contactService = new ContactService()

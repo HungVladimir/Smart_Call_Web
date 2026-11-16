@@ -53,6 +53,7 @@
 | **37** | Bóc tách Toàn diện Chi tiết 8 Tệp Services & 7 Màn hình Views Kèm Dẫn chứng Mã nguồn | Phân tích sâu Services & Views | **HOÀN THÀNH** ✅ | Tạo 2 bộ cẩm nang chuyên sâu 943 dòng (`doc/GIAI_THICH_CHI_TIET_SERVICES.md` & `doc/GIAI_THICH_CHI_TIET_VIEWS.md`) phân tích từng hàm, tham số và quan hệ gọi chéo. |
 | **38** | Tổng hợp Toàn bộ 16 REST API & Kênh WebSocket Sử dụng Trong SmartCall Web | Khớp nối Wazo API Reference 841 API | **HOÀN THÀNH** ✅ | Hoàn thiện tài liệu danh mục 16 kết nối (`doc/TONG_HOP_TOAN_BO_API_DA_CALL.md`) phân định 14 REST API và 2 WebSocket channel thực tế sử dụng. |
 | **39** | Khắc phục Triệt để Lỗi Không Hiển thị Lịch sử Cuộc gọi (CDR), Chuẩn hóa Chiều Cuộc gọi Nội bộ & KeepAlive | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Wazo CDR | **HOÀN THÀNH** ✅ | Sửa lỗi ánh xạ `call_direction: 'internal'`; Chuẩn hóa HTTP headers và tăng timeout 8s; Đồng bộ vòng đời cache `historyService.reload()`; Bổ sung hook `onActivated` trong `HistoryView.vue`. |
+| **40** | Khắc phục Triệt để Luồng Tin nhắn Realtime (Wazo Chatd UUID), Đồng bộ 2 Chiều & Badge Thông báo | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Wazo Chatd | **HOÀN THÀNH** ✅ | Loại bỏ fake ID `direct-ext` gây HTTP 404; Tự động phân giải User UUID qua Dird lookup; Tạo & đồng bộ phòng thật qua `/users/me/rooms`; Lắng nghe sự kiện WebSocket `chatd_user_room_message_created` & `chatd_user_room_created`; Cập nhật tức thì badge Sidebar. |
 
 ---
 
@@ -2231,6 +2232,68 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 ### 5. Kết quả Kiểm tra (Verification):
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (459ms).
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (613ms).
+
+---
+
+## 40. KHẮC PHỤC TRIỆT ĐỂ LUỒNG TIN NHẮN REALTIME (WAZO CHATD UUID), ĐỒNG BỘ PHÒNG 2 CHIỀU VÀ HUY HIỆU THÔNG BÁO
+
+### 1. Bối cảnh & Hiện trạng Sự cố:
+- **Triệu chứng:** Tài khoản A gửi tin nhắn cho Tài khoản B, trên màn hình tài khoản A hiển thị tin nhắn đã gửi đi (kèm trạng thái "Read (0)"), nhưng Tài khoản B hoàn toàn không nhận được tin nhắn, không có thông báo hay badge tin nhắn mới trên Sidebar, và không nhìn thấy phòng chat với A.
+- **Phạm vi ảnh hưởng:** Toàn bộ tính năng nhắn tin 1-1 giữa các máy lẻ nội bộ trên hệ thống SmartCall Web.
+
+### 2. Các Nguyên nhân Gốc rễ Được Khắc phục:
+1. **Vòng lặp Phòng tạm giả lập (`direct-ext`) gây nghẽn định tuyến Wazo Chatd API:**
+   - Trong `MessagesView.vue`, khi người dùng bấm chuyển sang chat với một máy lẻ (ví dụ: `1002`), hàm `checkDirectChatRoute()` tạo một object phòng tạm thời với ID mang tiền tố giả `direct-1002` và `chatService.rooms.unshift(target)` ngay vào RAM.
+   - Khi `chatService.getDirectRoom('1002')` được gọi, hàm này kiểm tra `this.rooms.find(r => r.ext === '1002')`. Do phòng tạm vừa được thêm vào, hàm lập tức trả về `found` mang ID `direct-1002` mà **không bao giờ gọi API Wazo Chatd** để phân giải hay tạo phòng thật trên server tổng đài.
+2. **Gửi tin nhắn vào Endpoint không tồn tại (HTTP 404 Not Found):**
+   - Khi tài khoản A gửi tin nhắn, hàm `chatService.sendMessage('direct-1002', text)` thực hiện gọi API:
+     `POST /api/chatd/1.0/users/me/rooms/direct-1002/messages`
+   - Máy chủ Wazo Chatd yêu cầu ID phòng phải là một UUID hợp lệ chuẩn 36 ký tự (ví dụ: `4c3b53f6-8c54-469b-...`). Do đó, Wazo server từ chối request với mã lỗi **HTTP 404 Not Found**.
+   - Phía người gửi A vẫn nhìn thấy tin nhắn do cơ chế Optimistic UI (chèn ngay tin nhắn vào RAM cục bộ), nhưng tin nhắn **chưa từng lên tới máy chủ Wazo**.
+3. **Mất tín hiệu WebSocket thông báo đến người nhận B:**
+   - Do Wazo Chatd server không tiếp nhận được tin nhắn (lỗi 404), dịch vụ `wazo-websocketd` không thể phát sự kiện `chatd_user_room_message_created` đến client của tài khoản B.
+   - Tài khoản B không nhận được bất kỳ payload sự kiện nào, dẫn đến badge thông báo tin nhắn chưa đọc trên Sidebar của B giữ nguyên số 0 và phòng chat không xuất hiện.
+4. **Lỗi nhận diện và phân giải phòng 1-1 trong `getRooms()`:**
+   - Dữ liệu trả về từ API `GET /api/chatd/1.0/users/me/rooms` của Wazo không có trường `room.isDirect`. Điều kiện cũ `!room.isDirect && (!room.uuid || !room.uuid.startsWith('direct-'))` luôn đánh giá là `true` cho mọi phòng server, khiến các phòng chat 1-1 thật bị gán nhầm thành "Phòng thảo luận" dạng nhóm với icon `👥` thay vì hiển thị tên và số máy lẻ của đối phương.
+
+### 3. Giải pháp Kỹ thuật Triển khai Chi tiết:
+1. **Bổ sung Phân giải User UUID trong `contactService.js`:**
+   - Bổ sung `findContactByUuid(uuid)`: Tìm kiếm thông tin liên hệ chính xác theo `uuid` từ danh bạ đã nạp.
+   - Bổ sung `resolveUserUuid(ext)`: Tra cứu User UUID từ số máy lẻ qua bộ nhớ đệm hoặc gọi API dự phòng `GET /api/dird/0.1/directories/lookup/default?term={ext}` khi chưa có trong cache.
+2. **Cơ chế Phân giải & Nâng cấp Phòng Thật trong `chatService.js`:**
+   - Trong `getDirectRoom(ext, name, currentUserName)`:
+     - Ưu tiên kiểm tra xem đã có phòng server thật (`!r.id.startsWith('direct-')`) hay chưa.
+     - Nếu chưa có, tra cứu `targetUuid` của đối phương và kiểm tra phòng 1-1 trên server: `GET /api/chatd/1.0/users/me/rooms?user_uuid=${targetUuid}`.
+     - Nếu chưa tồn tại phòng, thực hiện `POST /api/chatd/1.0/users/me/rooms` với payload `{ name, users: [{ uuid: myUuid }, { uuid: targetUuid }] }` để tạo phòng 1-1 thật chuẩn Wazo Chatd.
+     - Nâng cấp ID phòng tạm `direct-ext` cũ thành `realRoomUuid` (UUID 36 ký tự) và lưu bền vững vào `localStorage`.
+   - Trong `sendMessage(roomId, text, userAlias)`:
+     - Tự động kiểm tra nếu `roomId` mang tiền tố `direct-`, tự động gọi `getDirectRoom` để nâng cấp lên UUID thật trước khi bắn API `POST /messages`.
+     - Tăng timeout lên 8000ms và bổ sung header `Accept: 'application/json'`.
+   - Trong `getRooms()`:
+     - Chuẩn hóa điều kiện phòng 1-1: `serverUsers.length === 2 && (!room.name || !room.name.toLowerCase().includes('nhóm'))`.
+     - Phân giải đối phương bằng `contactService.findContactByUuid(otherUuid)` để hiển thị đúng tên, số máy lẻ và avatar cá nhân.
+     - Lọc bỏ phòng `direct-ext` rác cục bộ khi đã có phòng server tương ứng.
+3. **Đăng ký Lắng nghe Đầy đủ Sự kiện WebSocket & Tự động Cập nhật:**
+   - Trong `wazo.js`: Bổ sung đăng ký sự kiện `chatd_user_room_created` bên cạnh `chatd_user_room_message_created` và `chatd_user_message_created`.
+   - Trong `chatService.js`: Khi nhận sự kiện phòng mới hoặc tin nhắn mới từ phòng chưa có trong RAM, tự động kéo lại danh sách phòng từ server bằng `setTimeout(() => this.getRooms(), 500)`.
+   - Trong `AppSidebar.vue`: Bổ sung lắng nghe sự kiện `smartcall-message-received` để cập nhật tức thì badge số tin nhắn chưa đọc khi có tin mới tới.
+4. **Tối ưu Luồng Chuyển Tab trong `MessagesView.vue`:**
+   - Loại bỏ việc tự ý chèn phòng `direct-ext` giả vào RAM trước khi gọi API; thay vào đó hiển thị ngay phòng hiện có và đồng bộ `await chatService.getDirectRoom(ext, name, currentUserName.value)`.
+   - Tự động nạp lịch sử tin nhắn từ server thông qua `getRoomMessages(serverRoom.id)` khi mở phòng.
+
+### 4. Danh sách File Đã Chỉnh Sửa:
+- `src/services/contactService.js`: Bổ sung `findContactByUuid(uuid)` và `resolveUserUuid(ext)`.
+- `src/services/wazo.js`: Bổ sung đăng ký sự kiện `chatd_user_room_created` qua `wazo-websocketd`.
+- `src/services/chatService.js`: Tái cấu trúc `getRooms()`, `getRoomMessages()`, `getDirectRoom()`, `sendMessage()`, lắng nghe các sự kiện chatd qua WebSocket.
+- `src/views/MessagesView.vue`: Chuẩn hóa `sendMessage()` và `checkDirectChatRoute()`.
+- `src/components/layout/AppSidebar.vue`: Lắng nghe thêm sự kiện `smartcall-message-received` để cập nhật badge Sidebar.
+
+### 5. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Đồng bộ toàn bộ các cập nhật logic tương ứng sang `D:\Project\Smart_Call_Web_Mock\`.
+
+### 6. Kết quả Kiểm tra (Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (491ms).
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (443ms).
 
 
 
