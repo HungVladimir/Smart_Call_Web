@@ -31,6 +31,12 @@ class HistoryService {
     return []
   }
 
+  // Tải lại lịch sử tương ứng với User UUID hiện tại (gọi khi đăng nhập thành công)
+  reload() {
+    this.localHistory = this.loadSavedHistory()
+    return this.localHistory
+  }
+
   // Lưu bền vững vào localStorage
   saveHistory() {
     try {
@@ -53,6 +59,9 @@ class HistoryService {
     status = 'success',
     answered = true,
   } = {}) {
+    if (!this.localHistory || this.localHistory.length === 0) {
+      this.localHistory = this.loadSavedHistory()
+    }
     const now = new Date()
     const pad = (n) => String(n).padStart(2, '0')
     const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
@@ -103,6 +112,10 @@ class HistoryService {
    * Hỗ trợ In-flight Promise Sharing để chống nã request trùng lặp từ nhiều component.
    */
   async getHistory({ tab = 'all', limit = 50 } = {}) {
+    if (!this.localHistory || this.localHistory.length === 0) {
+      this.localHistory = this.loadSavedHistory()
+    }
+
     if (this._fetchingHistoryPromise) {
       const merged = await this._fetchingHistoryPromise
       return this._filterList(merged, tab)
@@ -122,9 +135,9 @@ class HistoryService {
         const res = await fetch(url, {
           headers: {
             'X-Auth-Token': token,
-            'Content-Type': 'application/json',
+            Accept: 'application/json',
           },
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(8000),
         })
 
         if (!res.ok) throw new Error(`HTTP error ${res.status}`)
@@ -132,15 +145,29 @@ class HistoryService {
         const data = await res.json()
         if (!data.items) return this.localHistory
 
+        const myExtension =
+          wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
+
         // Map trường dữ liệu từ Wazo CDR sang cấu trúc hiển thị của SmartCall Web
         const mapped = data.items.map((cdr, idx) => {
-          const isOutbound = cdr.call_direction === 'outbound'
+          let isOutbound = false
+          if (cdr.call_direction === 'outbound') {
+            isOutbound = true
+          } else if (cdr.call_direction === 'inbound') {
+            isOutbound = false
+          } else {
+            // Cuộc gọi nội bộ (call_direction === 'internal' hoặc không xác định):
+            // Nếu máy lẻ nguồn trùng với máy lẻ của tôi -> Cuộc gọi đi (outbound)
+            isOutbound =
+              String(cdr.source_extension || '').trim() === String(myExtension || '').trim()
+          }
+
           const isAnswered = Boolean(cdr.answered)
           const durationSec = cdr.duration || 0
 
           const name = isOutbound
-            ? cdr.destination_name || cdr.destination_extension || 'Số ngoài'
-            : cdr.source_name || cdr.source_extension || 'Số ngoài'
+            ? cdr.destination_name || (cdr.destination_extension ? `Máy lẻ ${cdr.destination_extension}` : 'Số ngoài')
+            : cdr.source_name || (cdr.source_extension ? `Máy lẻ ${cdr.source_extension}` : 'Số ngoài')
 
           const extension = isOutbound
             ? cdr.destination_extension || ''
@@ -251,15 +278,11 @@ class HistoryService {
   }
 
   /**
-   * Dọn dẹp sạch sẽ lịch sử cuộc gọi cục bộ khi đăng xuất (SSOT)
+   * Dọn dẹp bộ nhớ in-memory khi đăng xuất (SSOT)
+   * Lưu ý: Không xóa localStorage của tài khoản để bảo toàn lịch sử cho lần đăng nhập sau.
    */
   reset() {
     this.localHistory = []
-    try {
-      localStorage.removeItem(this.getStorageKey())
-    } catch {
-      /* ignore */
-    }
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
   }
 }

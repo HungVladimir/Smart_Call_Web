@@ -185,7 +185,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
@@ -215,6 +215,10 @@ const fetchHistory = async () => {
 onMounted(() => {
   fetchHistory()
   window.addEventListener('smartcall-cdr-updated', fetchHistory)
+})
+
+onActivated(() => {
+  fetchHistory()
 })
 
 onUnmounted(() => {

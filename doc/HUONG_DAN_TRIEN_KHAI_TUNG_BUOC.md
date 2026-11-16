@@ -49,6 +49,10 @@
 | **33** | Chuẩn hóa `.gitignore`, Hủy Theo dõi Thư viện `node_modules` & Biến Môi trường `.env` | An toàn bảo mật & Tinh gọn Git | **HOÀN THÀNH** ✅ | Dọn sạch 5.849 file node_modules và .env khỏi git cache bằng `git rm --cached`, tạo .env.example mẫu, bảo toàn nguyên vẹn tệp cục bộ. |
 | **34** | Thiết lập Quy tắc Rà soát Bảo vệ Git (Mục 8 GEMINI.md) & Loại trừ Dữ liệu Phân tích AI | Tiêu chuẩn vệ sinh Git & Quy chuẩn dự án | **HOÀN THÀNH** ✅ | Bổ sung Mục 8 vào GEMINI.md, tự động rà soát `git status` sau mỗi bước code, đưa `.ua/`, `.understand-anything/`, `.specify/`, `specs/` vào `.gitignore`. |
 | **35** | Khắc phục Triệt để Lỗi Sắp xếp Phòng Chat (Timestamp SSOT), Đếm Thành viên `(0)` & Tự Chat 1-1 | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Phân hệ Tin nhắn | **HOÀN THÀNH** ✅ | Chuẩn hóa `updatedAt` theo tin nhắn thực tế; Chặn đè `updatedAt` khi chỉ click mở phòng; Xử lý mảng rỗng `members` chống hiển thị `(0)`; Phân biệt avatar 👥 cho nhóm và nhãn `(Bạn)` cho chính mình. |
+| **36** | Xây dựng Tài liệu Kiến trúc Tổng thể & Toàn bộ Luồng Hoạt động Hệ thống | Kiến trúc tổng thể SmartCall Web | **HOÀN THÀNH** ✅ | Hoàn thiện tài liệu tổng thể 911 dòng (`doc/KIEN_TRUC_VA_LUONG_HOAT_DONG_CHI_TIET.md`) bóc tách 6 luồng hoạt động chính kèm trích dẫn mã nguồn thực tế. |
+| **37** | Bóc tách Toàn diện Chi tiết 8 Tệp Services & 7 Màn hình Views Kèm Dẫn chứng Mã nguồn | Phân tích sâu Services & Views | **HOÀN THÀNH** ✅ | Tạo 2 bộ cẩm nang chuyên sâu 943 dòng (`doc/GIAI_THICH_CHI_TIET_SERVICES.md` & `doc/GIAI_THICH_CHI_TIET_VIEWS.md`) phân tích từng hàm, tham số và quan hệ gọi chéo. |
+| **38** | Tổng hợp Toàn bộ 16 REST API & Kênh WebSocket Sử dụng Trong SmartCall Web | Khớp nối Wazo API Reference 841 API | **HOÀN THÀNH** ✅ | Hoàn thiện tài liệu danh mục 16 kết nối (`doc/TONG_HOP_TOAN_BO_API_DA_CALL.md`) phân định 14 REST API và 2 WebSocket channel thực tế sử dụng. |
+| **39** | Khắc phục Triệt để Lỗi Không Hiển thị Lịch sử Cuộc gọi (CDR), Chuẩn hóa Chiều Cuộc gọi Nội bộ & KeepAlive | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & Wazo CDR | **HOÀN THÀNH** ✅ | Sửa lỗi ánh xạ `call_direction: 'internal'`; Chuẩn hóa HTTP headers và tăng timeout 8s; Đồng bộ vòng đời cache `historyService.reload()`; Bổ sung hook `onActivated` trong `HistoryView.vue`. |
 
 ---
 
@@ -2076,7 +2080,6 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
 
-
 ---
 
 ## 37. BÓC TÁCH CHI TIẾT TOÀN BỘ TẦNG SERVICES & TẦNG VIEWS/COMPONENTS (CODE ENCYCLOPEDIA)
@@ -2188,6 +2191,46 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 ### 5. Kết quả Kiểm tra (Verification):
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+
+---
+
+## 39. KHẮC PHỤC TRIỆT ĐỂ LỖI KHÔNG HIỂN THỊ LỊCH SỬ CUỘC GỌI (CDR), CHUẨN HÓA CHIỀU CUỘC GỌI NỘI BỘ VÀ VÒNG ĐỜI KEEPALIVE
+
+### 1. Bối cảnh & Hiện trạng Sự cố:
+- Khi thực hiện cuộc gọi thực tế trên máy chủ tổng đài công ty (`107.126.11.126:9443`), cuộc gọi WebRTC đàm thoại 2 chiều diễn ra hoàn toàn bình thường, nhưng khi kết thúc và chuyển sang màn hình "Lịch sử" (`/history`), danh sách cuộc gọi trống trơn hoặc không tìm thấy cuộc gọi vừa thực hiện trên tab `OUTGOINGS`.
+
+### 2. Các Nguyên nhân Gốc rễ Được Khắc phục:
+1. **Lệch pha nhận diện chiều cuộc gọi `call_direction: 'internal'`:**
+   - Khi 2 máy lẻ nội bộ gọi cho nhau (ví dụ: 1001 gọi 1002), Wazo Call-Logd trả về `call_direction: 'internal'`.
+   - Code cũ dùng `isOutbound = cdr.call_direction === 'outbound'`, dẫn đến toàn bộ cuộc gọi nội bộ bị gán thành `inbound` (cuộc gọi đến). Khi người dùng bấm sang tab `OUTGOINGS`, bộ lọc `direction === 'outbound'` khiến danh sách bị rỗng 100%. Tên và số máy hiển thị cũng bị gán nhầm thành máy lẻ của chính mình.
+   - **Giải pháp:** Đối chiếu `cdr.source_extension` với số máy lẻ của chính mình (`myExtension`). Nếu trùng khớp thì xác định là `isOutbound = true`, hiển thị tên và số máy người nhận (`destination_name`/`destination_extension`).
+2. **Lỗi HTTP Header và Timeout quá ngắn trên API Call-Logd:**
+   - Request `GET /api/call-logd/1.0/users/me/cdr` trước đây gửi kèm `'Content-Type': 'application/json'`, vi phạm chuẩn HTTP GET (không có body) và kích hoạt CORS preflight bị Nginx máy chủ chặn.
+   - Timeout `3000ms` quá ngắn khiến truy vấn database CDR dễ bị `AbortError`.
+   - **Giải pháp:** Chuẩn hóa headers thành `{ 'X-Auth-Token': token, Accept: 'application/json' }` và nâng timeout lên `8000ms`.
+3. **Mất đồng bộ cache `localHistory` theo User UUID & Lệnh xóa nhầm cache khi Đăng xuất:**
+   - `HistoryService` ban đầu khởi tạo khi chưa login (trỏ về key `smartcall_call_history_default`). Khi user đăng nhập thành công, không có cơ chế nạp lại cache theo User UUID.
+   - Khi logout, hàm `reset()` cũ gọi `localStorage.removeItem(this.getStorageKey())`, vô tình xóa mất lịch sử đã lưu của tài khoản.
+   - **Giải pháp:** Bổ sung phương thức `historyService.reload()`, tự động gọi ngay sau khi `wazoService.login()` hoặc `restoreSession()` thành công; Sửa `reset()` chỉ dọn dẹp in-memory array, bảo toàn cache trên `localStorage`.
+4. **Thiếu Hook `onActivated` trong `HistoryView.vue` với `<keep-alive>`:**
+   - Do `App.vue` sử dụng `<keep-alive>`, khi người dùng chuyển từ tab `/history` sang `/calls` gọi điện rồi quay lại `/history`, hook `onMounted()` không chạy lại.
+   - **Giải pháp:** Bổ sung hook `onActivated(() => { fetchHistory() })` để tự động làm mới dữ liệu mỗi khi người dùng quay lại màn hình Lịch sử.
+5. **Tính toán chính xác thời lượng `finalDuration` khi cúp máy:**
+   - Tại `wazoService._finalizeCallTermination()`, thời lượng được tính fallback trực tiếp từ `active.startTime`:
+     `Math.max(0, Math.floor((Date.now() - active.startTime) / 1000))`
+     đảm bảo các cuộc gọi vừa kết nối dù cúp máy tức thì (< 1s) vẫn được ghi nhận là cuộc gọi thành công (`status: 'success'`).
+
+### 3. Danh sách File Đã Chỉnh Sửa:
+- `src/services/historyService.js`: Sửa ánh xạ `internal`, bỏ `Content-Type` thừa, tăng timeout 8s, bổ sung `reload()`, bảo toàn localStorage trong `reset()`.
+- `src/services/wazo.js`: Kích hoạt `historyService.reload()` khi login/restore, hoàn thiện tính toán `finalDuration`.
+- `src/views/HistoryView.vue`: Import và sử dụng `onActivated` để tự động fetch lịch sử khi chuyển tab.
+
+### 4. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Đồng bộ toàn bộ các cập nhật logic tương ứng sang `D:\Project\Smart_Call_Web_Mock\`.
+
+### 5. Kết quả Kiểm tra (Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (459ms).
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (613ms).
 
 
 

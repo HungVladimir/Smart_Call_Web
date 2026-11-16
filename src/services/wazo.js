@@ -66,6 +66,7 @@ class WazoService {
           callStore.myExtension = exten
         }
         callStore.myUserName = this.getMyUserName()
+        historyService.reload()
         logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
       }
 
@@ -116,6 +117,7 @@ class WazoService {
             callStore.myExtension = exten
           }
           callStore.myUserName = this.getMyUserName()
+          historyService.reload()
           logger.success('AUTH', 'Đã khôi phục phiên đăng nhập Wazo từ Token thành công!')
           this.openWebSocketEvents()
           try {
@@ -353,12 +355,18 @@ class WazoService {
         status = 'missed'
       }
 
+      const finalDuration = wasConnected
+        ? (active.startTime
+            ? Math.max(0, Math.floor((Date.now() - active.startTime) / 1000))
+            : (active.duration || 0))
+        : 0
+
       try {
         historyService.addRecord({
           name: active.name || (active.number ? `Máy lẻ ${active.number}` : 'Đồng nghiệp'),
           extension: active.number || '',
           dept: active.dept || '',
-          duration: wasConnected ? (active.duration || 0) : 0,
+          duration: finalDuration,
           direction: active.direction || 'outbound',
           status: status,
           answered: wasConnected,
