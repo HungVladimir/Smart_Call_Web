@@ -161,6 +161,9 @@
                   {{ durationText }}
                 </p>
                 <p v-if="dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
+                <div v-if="isRecording" class="recording-indicator-tag">
+                  <span class="rec-pulse-dot">●</span> {{ formattedRecordingDuration }} Đang ghi âm
+                </div>
               </div>
             </template>
 
@@ -291,6 +294,29 @@
                     stroke-linejoin="round"
                     d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"
                   />
+                </svg>
+              </button>
+
+              <!-- Nút Ghi âm (Record) -->
+              <button
+                class="control-btn btn-record"
+                :class="{ active: isRecording, recording: isRecording }"
+                :disabled="!isCalling"
+                :title="isRecording ? 'Dừng ghi âm cuộc gọi' : 'Bắt đầu ghi âm cuộc gọi'"
+                @click="toggleRecord"
+              >
+                <span v-if="isRecording" class="rec-dot-pulse">●</span>
+                <span v-if="isRecording" class="rec-label">{{ formattedRecordingDuration }}</span>
+                <svg
+                  v-else
+                  class="ctrl-svg-icon rec-svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="12" cy="12" r="5" fill="#ef4444" stroke="#ef4444" />
+                  <circle cx="12" cy="12" r="9" stroke="#ef4444" stroke-width="2" />
                 </svg>
               </button>
 
@@ -500,6 +526,7 @@ import { wazoService, callStore } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
 import { contactService } from '@/services/contactService'
 import { logger } from '@/services/loggerService'
+import { recordService, recordStore } from '@/services/recordService'
 
 const route = useRoute()
 const router = useRouter()
@@ -522,6 +549,15 @@ const isHeld = computed(() => Boolean(callStore.activeCall?.isHeld))
 const isMuted = computed(() => Boolean(callStore.activeCall?.isMuted))
 const isSpeaker = computed(() => Boolean(callStore.activeCall?.isSpeaker))
 const isDialing = computed(() => Boolean(wazoService._isDialing))
+
+const isRecording = computed(() => recordStore.isRecording)
+const recordingDuration = computed(() => recordStore.duration)
+const formattedRecordingDuration = computed(() => {
+  const s = recordStore.duration || 0
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
+})
 
 const keys = [
   { num: '1', sub: '' },
@@ -986,8 +1022,30 @@ const onCallEnded = () => {
 }
 
 const hangupCall = () => {
+  if (recordService.isRecording()) {
+    try {
+      recordService.stopRecording()
+    } catch (e) {}
+  }
   wazoService.hangup()
   cleanCallQueryParams()
+}
+
+const toggleRecord = async () => {
+  if (isRecording.value) {
+    await recordService.stopRecording()
+  } else if (callStore.activeCall) {
+    const callId = callStore.activeCall.callId || `rec-${Date.now()}`
+    callStore.activeCall.callId = callId
+    await recordService.startRecording(callId, {
+      name: callStore.activeCall.name,
+      number: callStore.activeCall.number,
+      extension: callStore.activeCall.number,
+      dept: callStore.activeCall.dept,
+      direction: callStore.activeCall.direction,
+    })
+    callStore.activeCall.isRecorded = true
+  }
 }
 
 const toggleMute = () => {
@@ -1582,8 +1640,10 @@ onUnmounted(() => {
 
 .controls-row {
   display: flex;
-  gap: 14px;
+  gap: 10px;
   justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
   margin-top: 6px;
 }
 
@@ -1641,6 +1701,81 @@ onUnmounted(() => {
 .control-btn.btn-hangup:hover:not(:disabled) {
   background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
   transform: scale(1.06);
+}
+
+.control-btn.btn-record {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.control-btn.btn-record:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+}
+
+.control-btn.btn-record.recording {
+  background: #dc2626;
+  border-color: #b91c1c;
+  width: auto;
+  min-width: 50px;
+  padding: 0 12px;
+  border-radius: 25px;
+  gap: 5px;
+  animation: pulse-rec-btn 1.4s infinite;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.6);
+}
+
+.rec-dot-pulse {
+  color: #ffffff;
+  font-size: 0.95rem;
+  line-height: 1;
+  animation: blink-rec-dot 1s infinite;
+}
+
+.rec-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  color: #ffffff;
+}
+
+.recording-indicator-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 12px;
+  color: #fca5a5;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 6px;
+  animation: pulse-rec-border 1.5s infinite;
+}
+
+.rec-pulse-dot {
+  color: #ef4444;
+  font-size: 0.85rem;
+  line-height: 1;
+  animation: blink-rec-dot 1s infinite;
+}
+
+@keyframes blink-rec-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes pulse-rec-btn {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  50% { transform: scale(1.04); box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+@keyframes pulse-rec-border {
+  0% { border-color: rgba(239, 68, 68, 0.5); }
+  50% { border-color: rgba(239, 68, 68, 0.9); }
+  100% { border-color: rgba(239, 68, 68, 0.5); }
 }
 
 .hangup-svg {

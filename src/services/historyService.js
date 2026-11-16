@@ -58,6 +58,8 @@ class HistoryService {
     direction = 'outbound',
     status = 'success',
     answered = true,
+    recordingId = null,
+    hasRecording = false,
   } = {}) {
     if (!this.localHistory || this.localHistory.length === 0) {
       this.localHistory = this.loadSavedHistory()
@@ -86,6 +88,8 @@ class HistoryService {
       status,
       statusLabel,
       answered: Boolean(answered),
+      recordingId: recordingId || null,
+      hasRecording: Boolean(hasRecording || recordingId),
     }
 
     this.localHistory.unshift(newCdr)
@@ -204,6 +208,9 @@ class HistoryService {
             return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
           }
 
+          const serverRecs = cdr.recordings || []
+          const hasServerRec = serverRecs.length > 0
+
           return {
             id: cdr.id || `cdr-${idx}`,
             date: formatCdrDate(cdr.start),
@@ -216,6 +223,8 @@ class HistoryService {
             status,
             statusLabel,
             answered: isAnswered,
+            recordings: serverRecs,
+            hasRecording: hasServerRec,
           }
         })
 

@@ -101,6 +101,14 @@
           <input v-model="dndEnabled" type="checkbox" class="toggle-cb" />
         </div>
 
+        <div class="st-toggle-row">
+          <div class="st-toggle-info">
+            <strong>Tự động ghi âm cuộc gọi (Auto Record Calls)</strong>
+            <small>Tự động kích hoạt ghi âm âm thanh 2 chiều ngay khi cuộc gọi thoại được kết nối.</small>
+          </div>
+          <input v-model="autoRecordCalls" type="checkbox" class="toggle-cb" @change="saveAutoRecord" />
+        </div>
+
         <div class="forwards-section">
           <strong>Chuyển tiếp cuộc gọi (Call Forwarding):</strong>
 
@@ -444,9 +452,24 @@ const handleResetFeatures = () => {
 }
 
 const dndEnabled = ref(false)
+const autoRecordCalls = ref(localStorage.getItem('smartcall_auto_record_calls') === 'true')
 const forwardBusy = ref('')
 const forwardNoAnswer = ref('')
 const forwardAll = ref('')
+
+const saveAutoRecord = () => {
+  localStorage.setItem('smartcall_auto_record_calls', autoRecordCalls.value ? 'true' : 'false')
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message: autoRecordCalls.value
+          ? '🔴 Đã bật tính năng Tự động ghi âm cuộc gọi'
+          : '⚪ Đã tắt tính năng Tự động ghi âm cuộc gọi',
+        type: 'info',
+      },
+    }),
+  )
+}
 
 const oldPassword = ref('')
 const newPassword = ref('')
@@ -708,6 +731,7 @@ const handleSave = async () => {
     }
   }
 
+  localStorage.setItem('smartcall_auto_record_calls', autoRecordCalls.value ? 'true' : 'false')
   emit('close')
   window.dispatchEvent(
     new CustomEvent('app-toast', {

@@ -6,6 +6,7 @@ import { historyService } from './historyService'
 import { contactService } from './contactService'
 import { chatService } from './chatService'
 import { websocketService } from './websocketService'
+import { recordService } from './recordService'
 
 /**
  * Single Source of Truth (SSOT) Reactive Call Store
@@ -472,6 +473,16 @@ class WazoService {
             : (active.duration || 0))
         : 0
 
+      const hadRecording = recordService.isRecording() || Boolean(active?.isRecorded)
+      const currentCallId = active?.callId || null
+      if (recordService.isRecording()) {
+        try {
+          recordService.stopRecording()
+        } catch (recErr) {
+          logger.warn('RECORD', 'Lỗi dừng ghi âm cuộc gọi:', recErr)
+        }
+      }
+
       try {
         historyService.addRecord({
           name: active.name || (active.number ? `Máy lẻ ${active.number}` : 'Đồng nghiệp'),
@@ -481,6 +492,8 @@ class WazoService {
           direction: active.direction || 'outbound',
           status: status,
           answered: wasConnected,
+          recordingId: currentCallId,
+          hasRecording: hadRecording,
         })
       } catch (cdrErr) {
         logger.warn('CALL', 'Không thể ghi nhận CDR cho cuộc gọi hoạt động:', cdrErr)
@@ -634,11 +647,15 @@ class WazoService {
         callStore.activeCall.status = 'connected'
         callStore.activeCall.startTime = Date.now()
         callStore.activeCall.duration = 0
+        if (!callStore.activeCall.callId) {
+          callStore.activeCall.callId = `rec-${Date.now()}`
+        }
       } else {
         const ext = callSession?.number || callSession?.callerNumber || callSession?.extension || ''
         const contact = contactService.findContactByExtension(ext)
         callStore.activeCall = {
           session: callSession,
+          callId: `rec-${Date.now()}`,
           number: ext,
           name: contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp'),
           dept: contact?.dept || '',
@@ -649,10 +666,27 @@ class WazoService {
           isMuted: false,
           isHeld: false,
           isSpeaker: false,
+          isRecorded: false,
         }
       }
 
       this.startCallDurationTimer()
+
+      // Tự động kích hoạt ghi âm nếu bật cấu hình autoRecordCalls
+      if (localStorage.getItem('smartcall_auto_record_calls') === 'true') {
+        setTimeout(() => {
+          if (callStore.activeCall && !recordService.isRecording()) {
+            recordService.startRecording(callStore.activeCall.callId, {
+              name: callStore.activeCall.name,
+              number: callStore.activeCall.number,
+              extension: callStore.activeCall.number,
+              dept: callStore.activeCall.dept,
+              direction: callStore.activeCall.direction,
+            })
+            callStore.activeCall.isRecorded = true
+          }
+        }, 800)
+      }
 
       // Gắn luồng âm thanh đàm thoại WebRTC
       try {
@@ -800,8 +834,10 @@ class WazoService {
     const session = incoming.rawSession || incoming.session || this.currentCallSession
     this.accept(session)
 
+    const recId = `rec-${Date.now()}`
     callStore.activeCall = {
       session: session,
+      callId: recId,
       number: incoming.extension || incoming.number || '',
       name: incoming.name || '',
       dept: incoming.dept || '',
@@ -812,9 +848,25 @@ class WazoService {
       isMuted: false,
       isHeld: false,
       isSpeaker: false,
+      isRecorded: false,
     }
     callStore.incomingCall = null
     this.startCallDurationTimer()
+
+    if (localStorage.getItem('smartcall_auto_record_calls') === 'true') {
+      setTimeout(() => {
+        if (callStore.activeCall && !recordService.isRecording()) {
+          recordService.startRecording(recId, {
+            name: callStore.activeCall.name,
+            number: callStore.activeCall.number,
+            extension: callStore.activeCall.number,
+            dept: callStore.activeCall.dept,
+            direction: callStore.activeCall.direction,
+          })
+          callStore.activeCall.isRecorded = true
+        }
+      }, 800)
+    }
   }
 
   rejectIncomingCall(callData = null) {
@@ -1022,8 +1074,10 @@ class WazoService {
     const targetName = meta.name || targetContact?.name || `Máy lẻ ${cleanExt}`
     const targetDept = meta.dept || targetContact?.dept || ''
 
+    const recCallId = `rec-${Date.now()}`
     callStore.activeCall = {
       session: null,
+      callId: recCallId,
       number: cleanExt,
       name: targetName,
       dept: targetDept,
@@ -1034,6 +1088,7 @@ class WazoService {
       isMuted: false,
       isHeld: false,
       isSpeaker: false,
+      isRecorded: false,
     }
 
     audioService.startRingbackTone()

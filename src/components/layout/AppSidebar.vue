@@ -27,9 +27,14 @@
     </ul>
 
     <div class="sidebar-footer">
-      <div>SIP: <code>{{ userExt }}@{{ sipDomain }}</code></div>
+      <div class="dev-credits">
+        <div class="dev-line">Nguyễn Văn Hùng - vhung99.nguyen</div>
+        <div class="dev-line">Lê Việt Dũng - vdung.le</div>
+        <div class="dept-line">AI Transformation Part</div>
+      </div>
       <div class="webrtc-status" :class="{ 'status-online': isWebRtcReady, 'status-offline': !isWebRtcReady }">
-        ● {{ isWebRtcReady ? 'WebRTC SIP Online' : 'WebRTC SIP Sẵn sàng' }}
+        <span class="status-indicator-dot">●</span>
+        <span class="status-label">{{ isWebRtcReady ? `Trực tuyến • Máy lẻ ${userExt}` : 'Ngoại tuyến' }}</span>
       </div>
     </div>
   </aside>
@@ -43,9 +48,6 @@ import { getFeatures } from '@/config/features'
 
 const features = ref(getFeatures())
 const userExt = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '1001')
-const sipDomain = computed(() =>
-  (wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').split(':')[0],
-)
 const isWebRtcReady = computed(
   () =>
     callStore.isRegistered ||
@@ -202,21 +204,50 @@ onUnmounted(() => {
 }
 
 .sidebar-footer {
-  padding: 12px 15px;
-  border-top: 1px solid #343a40;
-  font-size: 0.75rem;
-  color: #64748b;
-  background: #20252c;
+  padding: 10px 12px;
+  border-top: 1px solid #1a1e24;
+  font-size: 0.72rem;
+  background: #1e232a;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.sidebar-footer code {
+.dev-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dev-line {
   color: #cbd5e1;
-  font-family: monospace;
+  font-weight: 500;
+  font-size: 0.71rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dept-line {
+  color: #38bdf8;
+  font-size: 0.69rem;
+  font-weight: 600;
+  margin-top: 1px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .webrtc-status {
-  margin-top: 4px;
-  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.71rem;
+  font-weight: 600;
+  padding-top: 5px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
   transition: color 0.3s;
 }
 
@@ -226,6 +257,17 @@ onUnmounted(() => {
 
 .webrtc-status.status-offline {
   color: #94a3b8;
+}
+
+.status-indicator-dot {
+  font-size: 0.65rem;
+  line-height: 1;
+}
+
+.status-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 768px) {

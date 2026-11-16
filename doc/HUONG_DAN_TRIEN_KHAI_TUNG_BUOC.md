@@ -2529,6 +2529,59 @@ Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn 
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
 
+---
+
+## BƯỚC 45: TRIỂN KHAI TOÀN DIỆN TÍNH NĂNG GHI ÂM CUỘC GỌI, PLAYER PHÁT LẠI TRONG LỊCH SỬ & TINH CHỈNH CHÂN SIDEBAR
+
+### 1. Bối cảnh & Yêu cầu Kỹ thuật Đã Hoàn Thành:
+1. **Chân Sidebar (`AppSidebar.vue`):**
+   - Loại bỏ hoàn toàn thông tin kỹ thuật SIP khô khan (`SIP: 1001@...` và `WebRTC SIP Online`).
+   - Cập nhật thông tin đồng phát triển và phòng ban trang nhã, vừa vặn trong 220px:
+     - `Nguyễn Văn Hùng - vhung99.nguyen`
+     - `Lê Việt Dũng - vdung.le`
+     - `AI Transformation Part`
+     - Chấm trạng thái kết nối: `● Trực tuyến • Máy lẻ {ext}`.
+2. **Khảo sát & Tinh giản `localStorage`:**
+   - Phân định rõ ràng: Giữ nguyên các khóa phiên làm việc (Session/Token) và cài đặt thiết bị phần cứng (Mic/Loa) để đảm bảo F5 không bị văng đăng nhập và không mất thiết bị.
+   - Bản chính `Smart_Call_Web` loại bỏ hoàn toàn cờ `smartcall_offline_mode`, bản thử nghiệm `Smart_Call_Web_Mock` vẫn duy trì nút chạy ngoại tuyến và tab Mock Data.
+3. **Module Ghi âm Cuộc gọi Đa Tầng (`src/services/recordService.js`):**
+   - Sử dụng Web Audio API (`AudioContext`) kết hợp `MediaStreamDestinationNode` để gộp 2 luồng âm thanh đồng thời:
+     - Luồng 1: Microphone cục bộ của người dùng (`navigator.mediaDevices.getUserMedia`).
+     - Luồng 2: Âm thanh đối phương phát từ xa (từ thẻ `<audio id="wazo-remote-audio">` hoặc WebRTC remote stream).
+   - Sử dụng `MediaRecorder` xuất định dạng chuẩn `audio/webm;codecs=opus`.
+   - Lưu trữ bền vững dữ liệu âm thanh dạng `Blob` vào `IndexedDB` (`smartcall_recordings_db`) gắn với `callId`, không bị giới hạn 5MB như `localStorage`.
+   - Cung cấp các API: `startRecording()`, `stopRecording()`, `isRecording()`, `getRecordingDuration()`, `getRecordingAudioUrl()`, `downloadRecordingForCall()`.
+4. **Tích hợp Nút Ghi âm trên Thanh Điều Khiển Đàm thoại (`CallsView.vue`):**
+   - Bổ sung nút 🔴 Ghi âm trên `controls-row` khi cuộc gọi đang kết nối (`isCalling`).
+   - Khi đang ghi âm: Nút chuyển sang nền đỏ với hiệu ứng pulse nhấp nháy, hiển thị `● 00:35` và trên thông tin cuộc gọi có thẻ chỉ báo `● 00:35 Đang ghi âm`.
+   - Tự động kích hoạt ghi âm nếu người dùng bật cấu hình `autoRecordCalls === true`.
+   - Khi cúp máy (`hangup`): Tự động dừng ghi âm và lưu file vào `recordService`.
+5. **Tích hợp Audio Player Mini trong Lịch sử Cuộc gọi (`HistoryView.vue`):**
+   - Trên mỗi thẻ cuộc gọi có bản ghi âm: Hiển thị thanh Player mini gồm:
+     - Nút Phát/Tạm dừng `[ ▶️ / ⏸️ ]`.
+     - Thanh tiến trình tua `[ ───⚪────── ]`.
+     - Thời lượng phát `[ 00:15 / 02:40 ]`.
+     - Nút tải file `[ ⬇️ Tải file ]` để lưu file `.webm` về máy tính.
+   - Hỗ trợ nguồn âm thanh linh hoạt: File ghi âm từ client (`IndexedDB`) và file ghi âm từ máy chủ Wazo Call-Logd (`GET /api/call-logd/1.0/users/me/cdr/{id}/recordings/{rec_id}/media`).
+6. **Bổ sung Tùy chọn Tự động Ghi âm trong Cài đặt (`SettingsModal.vue`):**
+   - Trong Tab *Dịch vụ cuộc gọi (PBX)*: Bổ sung tùy chọn `[x] Tự động ghi âm cuộc gọi (Auto Record Calls)`.
+   - Lưu trạng thái vào `localStorage` (`smartcall_auto_record_calls`).
+
+### 2. Danh sách các File Đã Triển khai & Cập nhật:
+- `src/components/layout/AppSidebar.vue`: Cập nhật chân Sidebar theo thiết kế mới.
+- `src/services/recordService.js`: Module Web Audio API + MediaRecorder + IndexedDB.
+- `src/services/historyService.js`: Bổ sung quản lý trường `recordingId`, `hasRecording`, và ánh xạ `recordings` từ Wazo CDR.
+- `src/services/wazo.js`: Tự động gắn `callId`, kích hoạt auto-record khi kết nối và tự động dừng ghi âm khi cúp máy.
+- `src/views/CallsView.vue`: Nút 🔴 Ghi âm trên thanh điều khiển đàm thoại và hiệu ứng pulse.
+- `src/views/HistoryView.vue`: Audio Player mini và nút tải file `.webm`.
+- `src/components/common/SettingsModal.vue`: Tùy chọn tự động ghi âm trong tab Dịch vụ cuộc gọi.
+- Đồng bộ song song toàn bộ sang `D:\Project\Smart_Call_Web_Mock\`.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
+
+
 
 
 

@@ -85,68 +85,114 @@
         v-for="call in filteredCalls"
         :key="call.id"
         class="history-card"
-        :class="{ missed: call.status === 'missed' }"
+        :class="{ missed: call.status === 'missed', 'has-record': call.hasRecording || recordingsMap[call.id] }"
       >
-        <!-- Khối Avatar người gọi -->
-        <div class="avatar-box" :class="call.direction">
-          <span v-if="call.direction === 'inbound'" class="direction-arrow inbound">↙</span>
-          <span v-else class="direction-arrow outbound">↗</span>
-          <div class="avatar-initials">{{ getInitials(call.name) }}</div>
+        <div class="history-card-body">
+          <!-- Khối Avatar người gọi -->
+          <div class="avatar-box" :class="call.direction">
+            <span v-if="call.direction === 'inbound'" class="direction-arrow inbound">↙</span>
+            <span v-else class="direction-arrow outbound">↗</span>
+            <div class="avatar-initials">{{ getInitials(call.name) }}</div>
+          </div>
+
+          <!-- Khối Thông tin chi tiết cuộc gọi -->
+          <div class="history-meta">
+            <div class="meta-line">
+              <span class="meta-label">Date:</span>
+              <strong class="meta-value date-val">{{ call.date }}</strong>
+            </div>
+            <div class="meta-line">
+              <span class="meta-label">Duration:</span>
+              <span class="meta-value duration-val">{{ formatDuration(call.duration) }}</span>
+            </div>
+            <div class="meta-line">
+              <span class="meta-label">Direction:</span>
+              <span :class="['direction-tag', call.direction]">
+                {{ call.directionLabel || (call.direction === 'inbound' ? 'Incoming' : 'Outgoing') }}
+              </span>
+            </div>
+            <div class="meta-line">
+              <span class="meta-label">Status:</span>
+              <span :class="['status-tag', call.status]">
+                {{ call.statusLabel || (call.answered ? 'Success' : 'Missed') }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Khối Tên nhân viên & Máy lẻ nội bộ -->
+          <div class="contact-info">
+            <div class="contact-name">{{ call.name || 'Số ngoài mạng' }}</div>
+            <div class="contact-ext">
+              <span class="ext-badge">Máy lẻ {{ call.extension || '---' }}</span>
+            </div>
+            <div class="contact-dept">{{ call.dept || 'Nội bộ SDV LAN' }}</div>
+          </div>
+
+          <!-- Các nút thao tác nhanh -->
+          <div class="history-actions">
+            <!-- 📞 Nút Gọi lại nhanh -->
+            <button
+              class="btn-action btn-callback"
+              title="Gọi lại ngay"
+              @click="handleCallback(call)"
+            >
+              <span class="action-icon">📞</span>
+              <span class="action-text">Gọi lại</span>
+            </button>
+
+            <!-- 💬 Nút Nhắn tin -->
+            <button
+              class="btn-action btn-chat"
+              title="Nhắn tin với nhân viên này"
+              @click="handleChat(call)"
+            >
+              <span class="action-icon">💬</span>
+            </button>
+          </div>
         </div>
 
-        <!-- Khối Thông tin chi tiết cuộc gọi -->
-        <div class="history-meta">
-          <div class="meta-line">
-            <span class="meta-label">Date:</span>
-            <strong class="meta-value date-val">{{ call.date }}</strong>
+        <!-- Thanh Audio Player mini nếu cuộc gọi có ghi âm -->
+        <div v-if="call.hasRecording || recordingsMap[call.id]" class="history-player-wrapper">
+          <div class="rec-badge-title">
+            <span class="rec-icon">🎙️</span>
+            <span class="rec-label-text">Bản ghi âm</span>
           </div>
-          <div class="meta-line">
-            <span class="meta-label">Duration:</span>
-            <span class="meta-value duration-val">{{ formatDuration(call.duration) }}</span>
-          </div>
-          <div class="meta-line">
-            <span class="meta-label">Direction:</span>
-            <span :class="['direction-tag', call.direction]">
-              {{ call.directionLabel || (call.direction === 'inbound' ? 'Incoming' : 'Outgoing') }}
-            </span>
-          </div>
-          <div class="meta-line">
-            <span class="meta-label">Status:</span>
-            <span :class="['status-tag', call.status]">
-              {{ call.statusLabel || (call.answered ? 'Success' : 'Missed') }}
-            </span>
-          </div>
-        </div>
 
-        <!-- Khối Tên nhân viên & Máy lẻ nội bộ -->
-        <div class="contact-info">
-          <div class="contact-name">{{ call.name || 'Số ngoài mạng' }}</div>
-          <div class="contact-ext">
-            <span class="ext-badge">Máy lẻ {{ call.extension || '---' }}</span>
+          <div class="mini-player">
+            <button
+              class="player-btn-play"
+              :title="currentPlayingId === call.id && isPlaying ? 'Tạm dừng' : 'Nghe ghi âm'"
+              @click="togglePlayCall(call)"
+            >
+              <span v-if="currentPlayingId === call.id && isPlaying">⏸️</span>
+              <span v-else>▶️</span>
+            </button>
+
+            <div class="player-progress-track" @click="seekCallAudio(call, $event)">
+              <div
+                class="player-progress-fill"
+                :style="{ width: currentPlayingId === call.id ? `${playbackProgress}%` : '0%' }"
+              ></div>
+              <div
+                class="player-progress-thumb"
+                :style="{ left: currentPlayingId === call.id ? `${playbackProgress}%` : '0%' }"
+              ></div>
+            </div>
+
+            <div class="player-time-text">
+              {{ currentPlayingId === call.id ? formatTime(playbackCurrentTime) : '00:00' }} /
+              {{ formatTime(call.duration || (currentPlayingId === call.id ? playbackDuration : 0)) }}
+            </div>
+
+            <button
+              class="player-btn-download"
+              title="Tải file ghi âm (.webm) về máy"
+              @click="downloadCall(call)"
+            >
+              <span class="dl-icon">⬇️</span>
+              <span class="dl-text">Tải file</span>
+            </button>
           </div>
-          <div class="contact-dept">{{ call.dept || 'Nội bộ SDV LAN' }}</div>
-        </div>
-
-        <!-- Các nút thao tác nhanh -->
-        <div class="history-actions">
-          <!-- 📞 Nút Gọi lại nhanh -->
-          <button
-            class="btn-action btn-callback"
-            title="Gọi lại ngay"
-            @click="handleCallback(call)"
-          >
-            <span class="action-icon">📞</span>
-            <span class="action-text">Gọi lại</span>
-          </button>
-
-          <!-- 💬 Nút Nhắn tin -->
-          <button
-            class="btn-action btn-chat"
-            title="Nhắn tin với nhân viên này"
-            @click="handleChat(call)"
-          >
-            <span class="action-icon">💬</span>
-          </button>
         </div>
       </div>
     </div>
@@ -158,6 +204,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
+import { recordService } from '@/services/recordService'
 
 const router = useRouter()
 
@@ -167,6 +214,177 @@ const searchQuery = ref('')
 const filterDate = ref('')
 
 const calls = ref([])
+const recordingsMap = ref({})
+const currentPlayingId = ref(null)
+const isPlaying = ref(false)
+const playbackCurrentTime = ref(0)
+const playbackDuration = ref(0)
+const playbackProgress = computed(() => {
+  if (!playbackDuration.value) return 0
+  return Math.min(100, Math.max(0, (playbackCurrentTime.value / playbackDuration.value) * 100))
+})
+
+let globalAudio = null
+
+const stopCurrentAudio = () => {
+  if (globalAudio) {
+    globalAudio.pause()
+    globalAudio.removeAttribute('src')
+    globalAudio.load()
+    globalAudio = null
+  }
+  isPlaying.value = false
+  playbackCurrentTime.value = 0
+  playbackDuration.value = 0
+  currentPlayingId.value = null
+}
+
+const syncRecordingsAvailability = async () => {
+  try {
+    const all = await recordService.getAllRecordings()
+    const map = {}
+    all.forEach((r) => {
+      if (r.callId) map[r.callId] = true
+    })
+    calls.value.forEach((c) => {
+      if (c.recordingId && map[c.recordingId]) {
+        c.hasRecording = true
+      }
+      if (c.callId && map[c.callId]) {
+        c.hasRecording = true
+      }
+      if (c.recordings && c.recordings.length > 0) {
+        c.hasRecording = true
+      }
+      if (!c.hasRecording && c.extension && c.date) {
+        const matched = all.find(
+          (r) =>
+            r.extension === String(c.extension) &&
+            Math.abs(new Date(r.date || 0) - new Date(c.date || 0)) < 120000,
+        )
+        if (matched) {
+          c.hasRecording = true
+          c.recordingId = matched.callId
+          map[c.id] = true
+        }
+      }
+    })
+    recordingsMap.value = map
+  } catch (e) {}
+}
+
+const togglePlayCall = async (call) => {
+  if (currentPlayingId.value === call.id) {
+    if (isPlaying.value) {
+      globalAudio?.pause()
+      isPlaying.value = false
+    } else {
+      globalAudio?.play()
+      isPlaying.value = true
+    }
+    return
+  }
+
+  stopCurrentAudio()
+  currentPlayingId.value = call.id
+
+  try {
+    const audioUrl = await recordService.getAudioUrlForCall(call)
+    if (!audioUrl) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '⚠️ Không tìm thấy nguồn phát âm thanh ghi âm cho cuộc gọi này.',
+            type: 'warning',
+          },
+        }),
+      )
+      currentPlayingId.value = null
+      return
+    }
+
+    globalAudio = new Audio(audioUrl)
+    globalAudio.ontimeupdate = () => {
+      playbackCurrentTime.value = globalAudio.currentTime || 0
+      if (globalAudio.duration && isFinite(globalAudio.duration)) {
+        playbackDuration.value = globalAudio.duration
+      } else if (call.duration) {
+        playbackDuration.value = call.duration
+      }
+    }
+    globalAudio.onloadedmetadata = () => {
+      if (globalAudio.duration && isFinite(globalAudio.duration)) {
+        playbackDuration.value = globalAudio.duration
+      } else if (call.duration) {
+        playbackDuration.value = call.duration
+      }
+    }
+    globalAudio.onended = () => {
+      isPlaying.value = false
+      playbackCurrentTime.value = 0
+    }
+    globalAudio.onerror = (e) => {
+      console.warn('Lỗi phát âm thanh:', e)
+      isPlaying.value = false
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '❌ Không thể phát file âm thanh này.',
+            type: 'error',
+          },
+        }),
+      )
+    }
+
+    await globalAudio.play()
+    isPlaying.value = true
+  } catch (err) {
+    console.error('Không thể phát ghi âm:', err)
+    stopCurrentAudio()
+  }
+}
+
+const seekCallAudio = (call, event) => {
+  if (currentPlayingId.value !== call.id || !globalAudio) return
+  const track = event.currentTarget
+  const rect = track.getBoundingClientRect()
+  const clickX = event.clientX - rect.left
+  const ratio = Math.max(0, Math.min(1, clickX / rect.width))
+  const newTime = ratio * (playbackDuration.value || call.duration || 0)
+  globalAudio.currentTime = newTime
+  playbackCurrentTime.value = newTime
+}
+
+const downloadCall = async (call) => {
+  try {
+    await recordService.downloadRecordingForCall(call)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: '📥 Đang tải file ghi âm về máy tính...',
+          type: 'success',
+        },
+      }),
+    )
+  } catch (err) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `❌ ${err.message || 'Không thể tải file ghi âm'}`,
+          type: 'error',
+        },
+      }),
+    )
+  }
+}
+
+const formatTime = (seconds) => {
+  if (!seconds || seconds <= 0 || isNaN(seconds)) return '00:00'
+  const s = Math.floor(seconds)
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
+}
 
 // Nạp dữ liệu từ historyService (hỗ trợ Optimistic Rendering & Force Refresh)
 const fetchHistory = async (force = false) => {
@@ -181,6 +399,7 @@ const fetchHistory = async (force = false) => {
   try {
     const list = await historyService.getHistory({ tab: 'all', limit: 100, forceRefresh: force })
     calls.value = [...list]
+    await syncRecordingsAvailability()
   } catch (err) {
     console.error('Lỗi khi tải lịch sử cuộc gọi:', err)
   } finally {
@@ -195,6 +414,7 @@ const onCdrUpdated = () => {
 onMounted(() => {
   fetchHistory(false)
   window.addEventListener('smartcall-cdr-updated', onCdrUpdated)
+  window.addEventListener('smartcall-recording-saved', syncRecordingsAvailability)
 })
 
 onActivated(() => {
@@ -202,7 +422,9 @@ onActivated(() => {
 })
 
 onUnmounted(() => {
+  stopCurrentAudio()
   window.removeEventListener('smartcall-cdr-updated', onCdrUpdated)
+  window.removeEventListener('smartcall-recording-saved', syncRecordingsAvailability)
 })
 
 // Danh sách cuộc gọi đã lọc theo ngày và tìm kiếm (để số đếm counts phản ánh đúng theo ngày lọc - Mục 5)
@@ -512,14 +734,26 @@ const handleChat = (call) => {
 
 .history-card {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   padding: 14px 20px;
-  gap: 20px;
+  gap: 12px;
   transition: all 0.2s;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.history-card.has-record {
+  border-color: #cbd5e1;
+}
+
+.history-card-body {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
 }
 
 .history-card:hover {
@@ -530,6 +764,126 @@ const handleChat = (call) => {
 
 .history-card.missed {
   border-left: 4px solid #ef4444;
+}
+
+/* Mini Audio Player Bar */
+.history-player-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rec-badge-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #ef4444;
+  white-space: nowrap;
+}
+
+.rec-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.mini-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.player-btn-play {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.player-btn-play:hover {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+  transform: scale(1.05);
+}
+
+.player-progress-track {
+  flex: 1;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  position: relative;
+  cursor: pointer;
+  min-width: 80px;
+}
+
+.player-progress-fill {
+  height: 100%;
+  background: #0284c7;
+  border-radius: 3px;
+  transition: width 0.08s linear;
+}
+
+.player-progress-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  background: #0284c7;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: left 0.08s linear;
+}
+
+.player-time-text {
+  font-size: 0.75rem;
+  font-family: monospace;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+  min-width: 90px;
+  text-align: center;
+}
+
+.player-btn-download {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.player-btn-download:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
 }
 
 /* Avatar Box */
@@ -850,5 +1204,23 @@ const handleChat = (call) => {
 
 .btn-confirm-delete:hover {
   background-color: #b91c1c;
+}
+
+@media (max-width: 768px) {
+  .history-card-body {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .history-player-wrapper {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .mini-player {
+    width: 100%;
+  }
 }
 </style>
