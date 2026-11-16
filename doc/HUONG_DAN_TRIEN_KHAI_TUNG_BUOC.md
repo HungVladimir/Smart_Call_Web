@@ -2038,6 +2038,47 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 
 ---
 
+## 38. TỔNG HỢP TOÀN BỘ CÁC API & KẾT NỐI MÁY CHỦ SỬ DỤNG TRONG SMARTCALL WEB
+
+### 1. Bối cảnh & Phân định Kiến trúc:
+- Trong tổng số hơn 840 API endpoint của tài liệu kỹ thuật tổng đài Wazo, có hơn 95% là các API dành riêng cho quản trị hạ tầng (SysAdmin/DevOps: SIP Trunk, Queues, IVR, Tenant, Provisioning).
+- Phía Client SmartCall Web chỉ cần khai thác tập trung **14 REST API** và **2 Kênh WebSocket thời gian thực** (Tổng cộng 16 kết nối), bảo đảm ứng dụng khởi động tức thì, tải cực nhanh và bảo toàn 100% dữ liệu viễn thông thực.
+
+### 2. Ma trận 16 API & Kênh kết nối máy chủ:
+
+| STT | Phương thức | Endpoint API / Kênh kết nối | Microservice | Phân hệ gọi | Vị trí gọi trong mã nguồn | Tác dụng nghiệp vụ |
+| :---: | :---: | :--- | :--- | :--- | :--- | :--- |
+| **1** | `POST` | `/api/auth/0.1/token` | `wazo-auth` | **Login** | `wazo.js:51` | Xác thực tài khoản, cấp phát Token & Session UUID |
+| **2** | `GET` | `/api/auth/0.1/token/{token}` | `wazo-auth` | **Login / Init** | `wazo.js:103` | Kiểm tra token cũ để tự động phục hồi phiên khi F5 |
+| **3** | `DELETE`| `/api/auth/0.1/token/{token}` | `wazo-auth` | **Logout** | `wazo.js:151` | Hủy token phiên làm việc trên máy chủ khi đăng xuất |
+| **4** | `GET` | `/api/confd/1.1/users/me` | `wazo-confd` | **Login / Profile**| `LoginView.vue:218` | Dự phòng lấy họ tên, UUID và số máy lẻ nếu SDK thiếu |
+| **5** | `GET` | `/api/dird/0.1/directories/default/sources` | `wazo-dird` | **Contacts** | `contactService.js:100` | Lấy định danh nguồn danh bạ nội bộ (`sourceUuid`) |
+| **6** | `GET` | `/api/dird/0.1/backends/wazo/sources/{id}/contacts` | `wazo-dird` | **Contacts** | `contactService.js:113` | Tải toàn bộ danh bạ nhân sự công ty (kèm số máy lẻ) |
+| **7** | `GET` | `/api/dird/0.1/directories/lookup/default` | `wazo-dird` | **Contacts** | `contactService.js:132` | Tìm kiếm danh bạ dự phòng khi nguồn chính rỗng |
+| **8** | `GET` | `/api/chatd/1.0/users/presences` | `wazo-chatd` | **Presence** | `contactService.js:290` | Tải trạng thái Online/Busy/Away của danh bạ hàng loạt |
+| **9** | `PUT` | `/api/chatd/1.0/users/{uuid}/presences` | `wazo-chatd` | **Header / Status**| `wazo.js:1064` | Đổi trạng thái cá nhân (Sẵn sàng, Vắng mặt, DND) |
+| **10**| `GET` | `/api/chatd/1.0/users/me/rooms` | `wazo-chatd` | **Messages** | `chatService.js:187` | Tải danh sách tất cả các phòng chat (1-1 & Nhóm) |
+| **11**| `GET` | `/api/chatd/1.0/users/me/rooms/{id}/messages` | `wazo-chatd` | **Messages** | `chatService.js:280` | Tải lịch sử 50 tin nhắn cũ trong một phòng chat |
+| **12**| `POST`| `/api/chatd/1.0/users/me/rooms` | `wazo-chatd` | **Messages** | `chatService.js:362` | Tạo phòng chat mới (phòng nhóm hoặc 1-1 mới) |
+| **13**| `POST`| `/api/chatd/1.0/users/me/rooms/{id}/messages` | `wazo-chatd` | **Messages** | `chatService.js:450` | Gửi tin nhắn văn bản mới vào phòng chat |
+| **14**| `GET` | `/api/call-logd/1.0/users/me/cdr` | `wazo-call-logd` | **History / CDR**| `historyService.js:122` | Tải danh sách bản ghi chi tiết lịch sử cuộc gọi |
+| **15**| `WSS` | `/api/asterisk/ws` | **Asterisk PBX** | **Calls / WebRTC** | `wazo.js:291` | Kênh SIP WebSocket: Đăng ký số máy lẻ & đàm thoại thoại |
+| **16**| `WSS` | `/api/websocketd/?token=...&version=2` | **websocketd** | **Event Bus** | `wazo.js:219` | Lắng nghe tin nhắn mới & biến động trạng thái thời gian thực |
+
+### 3. Tài liệu Tham chiếu Độc lập:
+- Toàn bộ nội dung phân tích chi tiết headers, payloads và luồng xử lý của 16 kết nối trên được lưu trữ tại:
+  `doc/TONG_HOP_TOAN_BO_API_DA_CALL.md`
+
+### 4. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Đồng bộ toàn văn `doc/TONG_HOP_TOAN_BO_API_DA_CALL.md` và `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md` sang `D:\Project\Smart_Call_Web_Mock\doc\`.
+
+### 5. Kết quả Kiểm tra (Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+
+
+---
+
 ## 37. BÓC TÁCH CHI TIẾT TOÀN BỘ TẦNG SERVICES & TẦNG VIEWS/COMPONENTS (CODE ENCYCLOPEDIA)
 
 ### 1. Mục tiêu & Định vị Nghiệp vụ:
@@ -2107,5 +2148,46 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 ### 4. Kết quả Kiểm tra (Verification):
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+
+---
+
+## 38. TỔNG HỢP TOÀN BỘ CÁC API & KẾT NỐI MÁY CHỦ SỬ DỤNG TRONG SMARTCALL WEB
+
+### 1. Bối cảnh & Phân định Kiến trúc:
+- Trong tổng số hơn 840 API endpoint của tài liệu kỹ thuật tổng đài Wazo, có hơn 95% là các API dành riêng cho quản trị hạ tầng (SysAdmin/DevOps: SIP Trunk, Queues, IVR, Tenant, Provisioning).
+- Phía Client SmartCall Web chỉ cần khai thác tập trung **14 REST API** và **2 Kênh WebSocket thời gian thực** (Tổng cộng 16 kết nối), bảo đảm ứng dụng khởi động tức thì, tải cực nhanh và bảo toàn 100% dữ liệu viễn thông thực.
+
+### 2. Ma trận 16 API & Kênh kết nối máy chủ:
+
+| STT | Phương thức | Endpoint API / Kênh kết nối | Microservice | Phân hệ gọi | Vị trí gọi trong mã nguồn | Tác dụng nghiệp vụ |
+| :---: | :---: | :--- | :--- | :--- | :--- | :--- |
+| **1** | `POST` | `/api/auth/0.1/token` | `wazo-auth` | **Login** | `wazo.js:51` | Xác thực tài khoản, cấp phát Token & Session UUID |
+| **2** | `GET` | `/api/auth/0.1/token/{token}` | `wazo-auth` | **Login / Init** | `wazo.js:103` | Kiểm tra token cũ để tự động phục hồi phiên khi F5 |
+| **3** | `DELETE`| `/api/auth/0.1/token/{token}` | `wazo-auth` | **Logout** | `wazo.js:151` | Hủy token phiên làm việc trên máy chủ khi đăng xuất |
+| **4** | `GET` | `/api/confd/1.1/users/me` | `wazo-confd` | **Login / Profile**| `LoginView.vue:218` | Dự phòng lấy họ tên, UUID và số máy lẻ nếu SDK thiếu |
+| **5** | `GET` | `/api/dird/0.1/directories/default/sources` | `wazo-dird` | **Contacts** | `contactService.js:100` | Lấy định danh nguồn danh bạ nội bộ (`sourceUuid`) |
+| **6** | `GET` | `/api/dird/0.1/backends/wazo/sources/{id}/contacts` | `wazo-dird` | **Contacts** | `contactService.js:113` | Tải toàn bộ danh bạ nhân sự công ty (kèm số máy lẻ) |
+| **7** | `GET` | `/api/dird/0.1/directories/lookup/default` | `wazo-dird` | **Contacts** | `contactService.js:132` | Tìm kiếm danh bạ dự phòng khi nguồn chính rỗng |
+| **8** | `GET` | `/api/chatd/1.0/users/presences` | `wazo-chatd` | **Presence** | `contactService.js:290` | Tải trạng thái Online/Busy/Away của danh bạ hàng loạt |
+| **9** | `PUT` | `/api/chatd/1.0/users/{uuid}/presences` | `wazo-chatd` | **Header / Status**| `wazo.js:1064` | Đổi trạng thái cá nhân (Sẵn sàng, Vắng mặt, DND) |
+| **10**| `GET` | `/api/chatd/1.0/users/me/rooms` | `wazo-chatd` | **Messages** | `chatService.js:187` | Tải danh sách tất cả các phòng chat (1-1 & Nhóm) |
+| **11**| `GET` | `/api/chatd/1.0/users/me/rooms/{id}/messages` | `wazo-chatd` | **Messages** | `chatService.js:280` | Tải lịch sử 50 tin nhắn cũ trong một phòng chat |
+| **12**| `POST`| `/api/chatd/1.0/users/me/rooms` | `wazo-chatd` | **Messages** | `chatService.js:362` | Tạo phòng chat mới (phòng nhóm hoặc 1-1 mới) |
+| **13**| `POST`| `/api/chatd/1.0/users/me/rooms/{id}/messages` | `wazo-chatd` | **Messages** | `chatService.js:450` | Gửi tin nhắn văn bản mới vào phòng chat |
+| **14**| `GET` | `/api/call-logd/1.0/users/me/cdr` | `wazo-call-logd` | **History / CDR**| `historyService.js:122` | Tải danh sách bản ghi chi tiết lịch sử cuộc gọi |
+| **15**| `WSS` | `/api/asterisk/ws` | **Asterisk PBX** | **Calls / WebRTC** | `wazo.js:291` | Kênh SIP WebSocket: Đăng ký số máy lẻ & đàm thoại thoại |
+| **16**| `WSS` | `/api/websocketd/?token=...&version=2` | **websocketd** | **Event Bus** | `wazo.js:219` | Lắng nghe tin nhắn mới & biến động trạng thái thời gian thực |
+
+### 3. Tài liệu Tham chiếu Độc lập:
+- Toàn bộ nội dung phân tích chi tiết headers, payloads và luồng xử lý của 16 kết nối trên được lưu trữ tại:
+  `doc/TONG_HOP_TOAN_BO_API_DA_CALL.md`
+
+### 4. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Đồng bộ toàn văn `doc/TONG_HOP_TOAN_BO_API_DA_CALL.md` và `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md` sang `D:\Project\Smart_Call_Web_Mock\doc\`.
+
+### 5. Kết quả Kiểm tra (Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi.
+
 
 
