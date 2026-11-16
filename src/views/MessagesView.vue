@@ -5,7 +5,7 @@
       <div class="chat-rooms-col">
         <div class="rooms-header">
           <h2>Tin nhắn</h2>
-          <button class="btn-new-room" @click="openAddMemberModal">+ Tạo nhóm</button>
+          <button class="btn-new-room" @click="openCreateGroupModal()">+ Tạo nhóm</button>
         </div>
 
         <div v-if="isLoadingRooms" class="rooms-loading">
@@ -61,10 +61,14 @@
           <div class="chat-title-group">
             <h3>
               <span v-if="currentRoom.isDirect" class="status-dot-inline" :class="getRoomStatusClass(currentRoom)"></span>
+              <span v-else class="group-icon-prefix">👥 </span>
               {{ currentRoom.title }}
             </h3>
             <span v-if="!currentRoom.isDirect" class="online-indicator">
               👥 {{ currentRoomMembers.length || currentRoom.memberCount || 2 }} thành viên
+            </span>
+            <span v-else-if="currentDirectContact" class="online-indicator">
+              {{ getStatusLabel(currentDirectContact.status) }} • Máy lẻ {{ currentDirectContact.number || currentRoom.ext }}
             </span>
           </div>
 
@@ -87,7 +91,7 @@
                 <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" />
               </svg>
             </button>
-            <button class="btn-manage-members" @click="openAddMemberModal">👥 Thành viên</button>
+            <button class="btn-manage-members" @click="openMemberModal">👥 Thành viên</button>
           </div>
         </div>
 
@@ -174,84 +178,153 @@
       </div>
     </div>
 
-    <!-- MODAL: ADD / QUẢN LÝ THÀNH VIÊN VÀ PHÂN QUYỀN ADMIN -->
+    <!-- MODAL 1: TẠO NHÓM CHAT MỚI (CHUẨN WAZO CHATD API) -->
+    <div v-if="showCreateGroupModal" class="modal-overlay" @click.self="showCreateGroupModal = false">
+      <div class="modal-card">
+        <div class="modal-head">
+          <span>👥 TẠO NHÓM CHAT MỚI (WAZO CHATD)</span>
+          <button class="btn-close" @click="showCreateGroupModal = false">✖</button>
+        </div>
+
+        <div class="modal-body">
+          <label class="form-label">TÊN NHÓM CHAT (*):</label>
+          <input
+            v-model="newGroupTitle"
+            type="text"
+            maxlength="100"
+            class="form-input"
+            placeholder="Ví dụ: Nhóm Kỹ Thuật, Ban Quản Trị..."
+          />
+
+          <label class="form-label">TÌM KIẾM ĐỒNG NGHIỆP TỪ DANH BẠ TỔNG ĐÀI:</label>
+          <div class="search-add-row">
+            <input
+              v-model="groupContactSearch"
+              type="text"
+              placeholder="Tìm theo tên hoặc số máy lẻ..."
+              class="form-input"
+            />
+          </div>
+
+          <label class="form-label">
+            CHỌN ĐỒNG NGHIỆP THAM GIA (TỐI THIỂU 2 NGƯỜI):
+          </label>
+          <div class="contact-select-box">
+            <div v-if="availableContactsForGroup.length === 0" class="no-contacts-hint">
+              Không tìm thấy đồng nghiệp phù hợp trong danh bạ
+            </div>
+            <label
+              v-for="c in availableContactsForGroup"
+              :key="c.uuid || c.number"
+              class="contact-select-row"
+              :class="{ selected: selectedGroupMemberUuids.includes(c.uuid) }"
+            >
+              <input
+                type="checkbox"
+                class="contact-checkbox"
+                :value="c.uuid"
+                :checked="selectedGroupMemberUuids.includes(c.uuid)"
+                @change="toggleSelectGroupMember(c.uuid)"
+              />
+              <div class="contact-avatar-mini" :style="{ backgroundColor: getContactAvatarBg(c) }">
+                {{ (c.name || c.number || 'U').slice(0, 2).toUpperCase() }}
+              </div>
+              <div class="contact-detail-mini">
+                <strong>{{ c.name }}</strong>
+                <small>{{ c.dept ? c.dept + ' • ' : '' }}Máy lẻ: {{ c.number }}</small>
+              </div>
+              <span class="status-pill" :class="c.status || 'offline'">
+                {{ getStatusLabel(c.status) }}
+              </span>
+            </label>
+          </div>
+
+          <div class="select-counter-hint" :class="{ valid: selectedGroupMemberUuids.length >= 2 }">
+            Đã chọn: <strong>{{ selectedGroupMemberUuids.length }}</strong> đồng nghiệp
+            <span v-if="selectedGroupMemberUuids.length < 2"> (Cần chọn thêm ít nhất {{ 2 - selectedGroupMemberUuids.length }} người để tạo nhóm)</span>
+            <span v-else> (Đủ điều kiện tạo phòng nhóm Wazo)</span>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <button class="btn-secondary" @click="showCreateGroupModal = false">Hủy</button>
+          <button
+            class="btn-primary"
+            :disabled="selectedGroupMemberUuids.length < 2 || isSubmittingGroup"
+            @click="submitCreateGroup"
+          >
+            <span v-if="isSubmittingGroup">⏳ Đang tạo...</span>
+            <span v-else>🚀 Tạo nhóm chat</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL 2: THÀNH VIÊN CUỘC TRÒ CHUYỆN & CHUYỂN ĐỔI 1-1 SANG NHÓM -->
     <div v-if="showMemberModal" class="modal-overlay" @click.self="showMemberModal = false">
       <div class="modal-card">
         <div class="modal-head">
-          <span>QUẢN LÝ THÀNH VIÊN PHÒNG CHAT</span>
+          <span v-if="currentRoom?.isDirect">THÀNH VIÊN CUỘC TRÒ CHUYỆN (1-1)</span>
+          <span v-else>👥 THÀNH VIÊN NHÓM: {{ currentRoom?.title }}</span>
           <button class="btn-close" @click="showMemberModal = false">✖</button>
         </div>
 
         <div class="modal-body">
-          <!-- Đổi tên nhóm (TITLE - Phân quyền Admin) -->
-          <div class="admin-perm-notice" v-if="!currentIsAdmin">
-            🔒 Bạn đang đăng nhập quyền Nhân viên (User thường). Chỉ Quản trị viên mới được đổi tên nhóm và xóa thành viên.
-          </div>
-
-          <label class="form-label">
-            TITLE (TÊN NHÓM {{ currentIsAdmin ? '- BẠN CÓ QUYỀN SỬA' : '- KHÓA (CẦN ADMIN)' }}):
-          </label>
-          <input
-            v-model="editGroupTitle"
-            type="text"
-            maxlength="100"
-            class="form-input"
-            :disabled="!currentIsAdmin"
-            :placeholder="currentIsAdmin ? 'Nhập tên nhóm mới...' : 'Chỉ Quản trị viên mới được sửa tên nhóm'"
-            @input="checkTitleChange"
-          />
-
-          <!-- Tìm kiếm nhân viên để thêm -->
-          <label class="form-label">TÌM KIẾM NHÂN VIÊN ĐỂ THÊM VÀO NHÓM:</label>
-          <div class="search-add-row">
-            <input
-              v-model="searchQuery"
-              type="text"
-              placeholder="Nhập tên hoặc số máy lẻ..."
-              class="form-input"
-              @keyup.enter="searchAndAdd"
-            />
-            <button class="btn-action-add" title="Thêm vào nhóm" @click="searchAndAdd">+</button>
-          </div>
-
-          <!-- Danh sách thành viên hiện tại -->
-          <label class="form-label">
-            DANH SÁCH THÀNH VIÊN HIỆN TẠI ({{ currentRoomMembers.length }} THÀNH VIÊN):
-          </label>
-          <div class="member-list-box">
-            <div
-              v-for="m in currentRoomMembers"
-              :key="m.id"
-              class="member-row"
-            >
-              <div class="member-info">
-                <strong>{{ m.name }}</strong>
-                <small>{{ m.dept }} • Máy lẻ: {{ m.ext }}</small>
+          <!-- Trường hợp A: Phòng 1-1 -->
+          <div v-if="currentRoom?.isDirect" class="direct-member-view">
+            <div class="direct-member-card">
+              <div class="avatar-direct-modal" :style="{ backgroundColor: currentRoom.avatarBg || '#0284c7' }">
+                {{ currentRoom.title.slice(0, 2).toUpperCase() }}
               </div>
+              <div class="direct-member-meta">
+                <h4>{{ currentRoom.title }}</h4>
+                <p>Số máy lẻ: <strong>{{ currentRoom.ext || 'N/A' }}</strong></p>
+                <p>Trạng thái: <span class="status-text-badge" :class="getRoomStatusClass(currentRoom)">{{ getStatusLabel(getRoomStatusClass(currentRoom)) }}</span></p>
+              </div>
+            </div>
 
-              <!-- Ràng buộc Quyền Admin & Xóa -->
-              <span v-if="m.isAdmin" class="admin-badge">👑 Admin</span>
-              <button
-                v-else-if="currentIsAdmin && currentRoomMembers.length >= 3"
-                class="btn-remove-member"
-                title="Xóa thành viên này"
-                @click="removeMember(m)"
-              >
-                ✖ Xóa
+            <div class="group-upgrade-banner">
+              <p>💡 Cuộc trò chuyện này hiện đang là trao đổi 1-1 riêng tư. Bạn có thể thêm các đồng nghiệp khác để nâng cấp thành một nhóm chat thảo luận chung!</p>
+              <button class="btn-upgrade-group" @click="upgradeDirectToGroup">
+                ➕ Thêm người để tạo thành nhóm chat
               </button>
+            </div>
+          </div>
+
+          <!-- Trường hợp B: Phòng Nhóm (Group) -->
+          <div v-else class="group-members-view">
+            <div class="group-actions-bar">
+              <button class="btn-add-more-members" @click="openAddMoreToGroup">
+                ➕ Thêm thành viên vào nhóm (Tạo nhóm mở rộng)
+              </button>
+            </div>
+
+            <label class="form-label">
+              DANH SÁCH THÀNH VIÊN TRÊN MÁY CHỦ WAZO ({{ currentRoomMembers.length }} THÀNH VIÊN):
+            </label>
+            <div class="member-list-box">
+              <div
+                v-for="m in currentRoomMembers"
+                :key="m.id || m.uuid"
+                class="member-row"
+              >
+                <div class="member-avatar-mini" :style="{ backgroundColor: m.isAdmin ? '#f59e0b' : '#3b82f6' }">
+                  {{ (m.name || 'U').slice(0, 2).toUpperCase() }}
+                </div>
+                <div class="member-info">
+                  <strong>{{ m.name }} <span v-if="m.isAdmin" class="admin-badge">Admin</span></strong>
+                  <small>{{ m.dept ? m.dept + ' • ' : '' }}Máy lẻ: {{ m.ext || 'N/A' }}</small>
+                </div>
+                <span class="status-pill" :class="m.status || 'offline'">
+                  {{ getStatusLabel(m.status) }}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="modal-foot">
           <button class="btn-secondary" @click="showMemberModal = false">Đóng</button>
-          <button
-            class="btn-primary"
-            :disabled="!isTitleChanged || !currentIsAdmin"
-            @click="saveGroupTitle"
-          >
-            OK (Lưu thay đổi)
-          </button>
         </div>
       </div>
     </div>
@@ -295,12 +368,14 @@ import { wazoService, callStore } from '@/services/wazo'
 const route = useRoute()
 const router = useRouter()
 
+const showCreateGroupModal = ref(false)
 const showMemberModal = ref(false)
 const showReadModal = ref(false)
 const inputText = ref('')
-const searchQuery = ref('')
-const editGroupTitle = ref('')
-const isTitleChanged = ref(false)
+const newGroupTitle = ref('')
+const groupContactSearch = ref('')
+const selectedGroupMemberUuids = ref([])
+const isSubmittingGroup = ref(false)
 const selectedMsg = ref(null)
 const msgContainerRef = ref(null)
 const isLoadingRooms = ref(false)
@@ -335,6 +410,66 @@ const selectedMsgReaders = computed(() => {
   return others.length > 0 ? others : ['Đồng nghiệp']
 })
 
+// Thông tin đối phương trong cuộc trò chuyện 1-1
+const currentDirectContact = computed(() => {
+  if (!currentRoom.value || !currentRoom.value.isDirect) return null
+  const myExt = callStore?.myExtension || localStorage.getItem('smartcall_extension') || ''
+  const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || ''
+  const otherMember = (currentRoom.value.members || []).find((mem) => {
+    const isMe =
+      (myUuid && (mem.id === myUuid || mem.uuid === myUuid)) ||
+      (myExt && (mem.ext === myExt || mem.number === myExt))
+    return !isMe
+  })
+  const targetExt = otherMember?.ext || (currentRoom.value.ext ? String(currentRoom.value.ext).split('@')[0] : '')
+  const targetUuid = otherMember?.id || otherMember?.uuid || currentRoom.value.peerUuid || ''
+  return (
+    (targetExt && contactService.findContactByExtension(targetExt)) ||
+    (targetUuid && contactService.findContactByUuid(targetUuid)) ||
+    (otherMember ? { name: otherMember.name, number: otherMember.ext, dept: otherMember.dept, status: 'offline', uuid: otherMember.id } : null)
+  )
+})
+
+const getStatusLabel = (status) => {
+  switch (status) {
+    case 'online': return 'Trực tuyến'
+    case 'busy': return 'Đang gọi'
+    case 'ringing': return 'Đang đổ chuông'
+    case 'away': return 'Vắng mặt'
+    case 'dnd': return 'Không làm phiền'
+    default: return 'Ngoại tuyến'
+  }
+}
+
+const getContactAvatarBg = (contact) => {
+  const colors = ['#0284c7', '#7c3aed', '#059669', '#d97706', '#dc2626', '#4f46e5']
+  const str = contact?.name || contact?.number || 'U'
+  let hash = 0
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash)
+  return colors[Math.abs(hash) % colors.length]
+}
+
+// Danh sách đồng nghiệp từ danh bạ Wazo có thể chọn để tạo nhóm chat
+const availableContactsForGroup = computed(() => {
+  const list = contactService.currentContacts || []
+  const myExt = (callStore?.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
+  const myUuid = (callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || '').trim()
+  const q = groupContactSearch.value.trim().toLowerCase()
+
+  return list.filter((c) => {
+    // Loại trừ chính mình
+    if (c.uuid && myUuid && c.uuid === myUuid) return false
+    if (c.number && myExt && c.number === myExt) return false
+    // Lọc theo từ khóa tìm kiếm
+    if (q) {
+      const matchName = (c.name || '').toLowerCase().includes(q)
+      const matchExt = (c.number || '').toLowerCase().includes(q)
+      return matchName || matchExt
+    }
+    return true
+  })
+})
+
 const loadRooms = async () => {
   isLoadingRooms.value = true
   try {
@@ -353,9 +488,7 @@ const loadRooms = async () => {
 const selectRoom = async (room) => {
   currentRoom.value = room
   room.unread = 0
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('smartcall_active_room_id', room.id)
-  }
+  chatService.setActiveRoomId(room.id)
   chatService.saveRooms()
   if (route.query && route.query.ext) {
     router.replace({ path: '/messages', query: {} }).catch(() => {})
@@ -455,9 +588,7 @@ const checkDirectChatRoute = async () => {
         target.title = `${target.title} (Bạn)`
       }
       currentRoom.value = target
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('smartcall_active_room_id', target.id)
-      }
+      chatService.setActiveRoomId(target.id)
     }
 
     // Xóa sạch query URL ngay lập tức để tránh re-trigger khi switch tab
@@ -469,9 +600,7 @@ const checkDirectChatRoute = async () => {
       if (serverRoom) {
         currentRoom.value = serverRoom
         rooms.value = [...chatService.rooms]
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('smartcall_active_room_id', serverRoom.id)
-        }
+        chatService.setActiveRoomId(serverRoom.id)
         if (!serverRoom.id.startsWith('direct-')) {
           const msgs = await chatService.getRoomMessages(serverRoom.id)
           if (msgs && msgs.length > 0) {
@@ -517,8 +646,8 @@ const onRoomsUpdated = () => {
 onMounted(async () => {
   await loadRooms()
   checkDirectChatRoute()
-  if (currentRoom.value && typeof localStorage !== 'undefined') {
-    localStorage.setItem('smartcall_active_room_id', currentRoom.value.id)
+  if (currentRoom.value) {
+    chatService.setActiveRoomId(currentRoom.value.id)
   }
   window.addEventListener('smartcall-message-received', onMessageReceived)
   window.addEventListener('smartcall-rooms-updated', onRoomsUpdated)
@@ -532,92 +661,110 @@ onActivated(async () => {
 })
 
 onDeactivated(() => {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('smartcall_active_room_id')
-  }
+  chatService.setActiveRoomId(null)
 })
 
 onUnmounted(() => {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('smartcall_active_room_id')
-  }
+  chatService.setActiveRoomId(null)
   window.removeEventListener('smartcall-message-received', onMessageReceived)
   window.removeEventListener('smartcall-rooms-updated', onRoomsUpdated)
 })
 
-// Modal Quản lý thành viên
-const openAddMemberModal = () => {
+// Các hàm tương tác Modal Tạo nhóm & Quản lý thành viên (Pure Wazo Chatd API First)
+const openCreateGroupModal = (initialContact = null) => {
+  newGroupTitle.value = ''
+  groupContactSearch.value = ''
+  selectedGroupMemberUuids.value = []
+
+  // Đảm bảo danh bạ đã nạp đầy đủ
+  if (!contactService.currentContacts || contactService.currentContacts.length === 0) {
+    contactService.getContacts().catch(() => {})
+  }
+
+  if (initialContact) {
+    if (initialContact.uuid) {
+      selectedGroupMemberUuids.value.push(initialContact.uuid)
+    }
+    newGroupTitle.value = `Nhóm thảo luận [${initialContact.name || initialContact.number || 'Nội bộ'}]`
+  }
+
+  showCreateGroupModal.value = true
+}
+
+const toggleSelectGroupMember = (uuid) => {
+  if (!uuid) return
+  const idx = selectedGroupMemberUuids.value.indexOf(uuid)
+  if (idx > -1) {
+    selectedGroupMemberUuids.value.splice(idx, 1)
+  } else {
+    selectedGroupMemberUuids.value.push(uuid)
+  }
+}
+
+const submitCreateGroup = async () => {
+  if (selectedGroupMemberUuids.value.length < 2) {
+    alert('Vui lòng chọn ít nhất 2 đồng nghiệp để tạo nhóm chat (nhóm cần ít nhất 3 thành viên bao gồm bạn).')
+    return
+  }
+
+  isSubmittingGroup.value = true
+  try {
+    let title = newGroupTitle.value.trim()
+    if (!title) {
+      const chosenNames = selectedGroupMemberUuids.value
+        .map((u) => {
+          const c = contactService.findContactByUuid(u)
+          return c?.name || 'Đồng nghiệp'
+        })
+        .slice(0, 2)
+      title = `Nhóm [${chosenNames.join(', ')}...]`
+    }
+
+    const createdRoom = await chatService.createGroupRoom(title, selectedGroupMemberUuids.value)
+    showCreateGroupModal.value = false
+    await loadRooms()
+    if (createdRoom) {
+      await selectRoom(createdRoom)
+    }
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `🎉 Đã tạo nhóm chat [${title}] thành công trên máy chủ Wazo!`,
+          type: 'success',
+        },
+      }),
+    )
+  } catch (err) {
+    alert(`Lỗi tạo nhóm: ${err.message}`)
+  } finally {
+    isSubmittingGroup.value = false
+  }
+}
+
+const openMemberModal = () => {
   if (!currentRoom.value) return
-  editGroupTitle.value = currentRoom.value.title
-  isTitleChanged.value = false
   showMemberModal.value = true
 }
 
-const checkTitleChange = () => {
-  if (!currentRoom.value) return
-  isTitleChanged.value =
-    editGroupTitle.value.trim() !== '' && editGroupTitle.value !== currentRoom.value.title
+const upgradeDirectToGroup = () => {
+  showMemberModal.value = false
+  const directContact = currentDirectContact.value
+  openCreateGroupModal(directContact)
 }
 
-const saveGroupTitle = async () => {
-  if (!currentIsAdmin.value || !currentRoom.value) return
-  try {
-    await chatService.updateRoomTitle(currentRoom.value.id, editGroupTitle.value)
-    currentRoom.value.title = editGroupTitle.value.trim()
-    rooms.value = await chatService.getRooms()
-    showMemberModal.value = false
-  } catch (err) {
-    alert(err.message)
-  }
-}
-
-const searchAndAdd = async () => {
-  const q = searchQuery.value.trim()
-  if (!q || !currentRoom.value) return
-
-  const realContact = contactService.findContactByExtension(q)
-  const empName = realContact?.name || `Nhân viên ${q}`
-  const empDept = realContact?.dept || ''
-  const empExt = realContact?.number || q
-  const empId = realContact?.uuid || realContact?.id || `emp-${q}`
-
-  if (confirm(`Thêm nhân viên [${empName} - ${empExt}] vào nhóm này?`)) {
-    const newEmp = {
-      id: empId,
-      name: empName,
-      dept: empDept,
-      ext: empExt,
-      isAdmin: false,
-    }
-    await chatService.addMember(currentRoom.value.id, newEmp)
-    rooms.value = await chatService.getRooms()
-    const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
-    if (updated) currentRoom.value = updated
-    searchQuery.value = ''
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: { message: `Đã thêm thành viên [${empName}] vào nhóm thành công!`, type: 'success' },
-      }),
-    )
-  }
-}
-
-const removeMember = async (m) => {
-  if (!currentIsAdmin.value || !currentRoom.value) return
-  if (confirm(`Bạn có chắc chắn muốn Xóa [${m.name}] khỏi nhóm không?`)) {
-    try {
-      await chatService.removeMember(currentRoom.value.id, m.id)
-      rooms.value = await chatService.getRooms()
-      const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
-      if (updated) currentRoom.value = updated
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: { message: `Đã xóa [${m.name}] khỏi nhóm!`, type: 'info' },
-        }),
-      )
-    } catch (err) {
-      alert(err.message)
-    }
+const openAddMoreToGroup = () => {
+  showMemberModal.value = false
+  openCreateGroupModal()
+  // Chọn sẵn tất cả thành viên của phòng nhóm hiện tại
+  if (currentRoom.value?.members) {
+    const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || ''
+    currentRoom.value.members.forEach((m) => {
+      const uId = m.id || m.uuid
+      if (uId && uId !== myUuid && !selectedGroupMemberUuids.value.includes(uId)) {
+        selectedGroupMemberUuids.value.push(uId)
+      }
+    })
+    newGroupTitle.value = `${currentRoom.value.title} (Mở rộng)`
   }
 }
 
@@ -1374,6 +1521,256 @@ const getRoomStatusClass = (room) => {
 .btn-primary:disabled {
   background: #cbd5e1;
   cursor: not-allowed;
+}
+
+.group-icon-prefix {
+  font-size: 1.1rem;
+  margin-right: 4px;
+}
+
+/* Contact selection in Create Group Modal */
+.contact-select-box {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-top: 6px;
+  background: #f8fafc;
+}
+
+.no-contacts-hint {
+  padding: 16px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.contact-select-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.contact-select-row:last-child {
+  border-bottom: none;
+}
+
+.contact-select-row:hover {
+  background: #eff6ff;
+}
+
+.contact-select-row.selected {
+  background: #e0f2fe;
+}
+
+.contact-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #0284c7;
+}
+
+.contact-avatar-mini {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.contact-detail-mini {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.contact-detail-mini strong {
+  font-size: 0.88rem;
+  color: #1e293b;
+}
+
+.contact-detail-mini small {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.status-pill {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+.status-pill.online {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.status-pill.busy,
+.status-pill.ringing {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.status-pill.away {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.status-pill.offline {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.select-counter-hint {
+  font-size: 0.82rem;
+  color: #64748b;
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+
+.select-counter-hint.valid {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+/* Direct member view modal */
+.direct-member-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 16px;
+}
+
+.avatar-direct-modal {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.direct-member-meta h4 {
+  margin: 0 0 4px 0;
+  font-size: 1.05rem;
+  color: #1e293b;
+}
+
+.direct-member-meta p {
+  margin: 2px 0;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.status-text-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.status-text-badge.online {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.status-text-badge.busy,
+.status-text-badge.ringing {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.status-text-badge.away {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.status-text-badge.offline {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.group-upgrade-banner {
+  background: #f5f3ff;
+  border: 1px dashed #c4b5fd;
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+}
+
+.group-upgrade-banner p {
+  margin: 0 0 12px 0;
+  font-size: 0.84rem;
+  color: #6d28d9;
+  line-height: 1.4;
+}
+
+.btn-upgrade-group {
+  background: #7c3aed;
+  color: white;
+  border: none;
+  padding: 9px 18px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-upgrade-group:hover {
+  background: #6d28d9;
+}
+
+.btn-add-more-members {
+  background: #4f46e5;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.82rem;
+  cursor: pointer;
+  margin-bottom: 12px;
+  width: 100%;
+}
+
+.btn-add-more-members:hover {
+  background: #4338ca;
+}
+
+.member-avatar-mini {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-right: 10px;
 }
 
 .read-time-hint {
