@@ -297,12 +297,12 @@
                 </svg>
               </button>
 
-              <!-- Nút Ghi âm (Record) -->
+              <!-- Nút Ghi âm (Record trên tổng đài Wazo) -->
               <button
                 class="control-btn btn-record"
                 :class="{ active: isRecording, recording: isRecording }"
-                :disabled="!isCalling"
-                :title="isRecording ? 'Dừng ghi âm cuộc gọi (bấm vào để dừng ghi âm)' : 'Bắt đầu ghi âm cuộc gọi'"
+                :disabled="!isCalling || callState === 'ringing'"
+                :title="isRecording ? 'Dừng ghi âm cuộc gọi trên tổng đài (bấm vào để dừng ghi âm)' : (callState === 'ringing' ? 'Chờ đối phương nhấc máy để bắt đầu ghi âm' : 'Bắt đầu ghi âm cuộc gọi trên tổng đài Wazo')"
                 @click="toggleRecord"
               >
                 <span v-if="isRecording" class="rec-dot-pulse">●</span>
@@ -1033,19 +1033,59 @@ const hangupCall = () => {
 
 const toggleRecord = async () => {
   if (isRecording.value) {
-    await recordService.stopRecording()
+    try {
+      await recordService.stopRecording()
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '⏹️ Đã dừng ghi âm cuộc gọi trên máy chủ tổng đài Wazo.',
+            type: 'info',
+          },
+        }),
+      )
+    } catch (e) {
+      console.warn('Lỗi khi dừng ghi âm máy chủ:', e)
+    }
   } else if (callStore.activeCall) {
-    const callId = callStore.activeCall.callId || `rec-${Date.now()}`
-    callStore.activeCall.callId = callId
-    await recordService.startRecording(callId, {
-      name: callStore.activeCall.name,
-      number: callStore.activeCall.number,
-      extension: callStore.activeCall.number,
-      dept: callStore.activeCall.dept,
-      direction: callStore.activeCall.direction,
-      session: callStore.activeCall.session,
-    })
-    callStore.activeCall.isRecorded = true
+    if (callState.value === 'ringing') {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '⏳ Xin vui lòng chờ đối phương nhấc máy để bắt đầu ghi âm!',
+            type: 'warning',
+          },
+        }),
+      )
+      return
+    }
+
+    try {
+      await recordService.startRecording(null, {
+        name: callStore.activeCall.name,
+        number: callStore.activeCall.number,
+        extension: callStore.activeCall.number,
+        dept: callStore.activeCall.dept,
+        direction: callStore.activeCall.direction,
+      })
+      callStore.activeCall.isRecorded = true
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '🔴 Đang ghi âm cuộc gọi trực tiếp trên máy chủ tổng đài Wazo...',
+            type: 'success',
+          },
+        }),
+      )
+    } catch (err) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `⚠️ Không thể ghi âm trên tổng đài: ${err.message || 'Lỗi phân quyền'}`,
+            type: 'error',
+          },
+        }),
+      )
+    }
   }
 }
 

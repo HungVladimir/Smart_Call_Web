@@ -240,36 +240,15 @@ const stopCurrentAudio = () => {
   currentPlayingId.value = null
 }
 
-const syncRecordingsAvailability = async () => {
+const syncRecordingsAvailability = () => {
   try {
-    const all = await recordService.getAllRecordings()
     const map = {}
-    all.forEach((r) => {
-      if (r.callId) map[r.callId] = true
-    })
     calls.value.forEach((c) => {
-      if (c.recordingId && map[c.recordingId]) {
-        c.hasRecording = true
-      }
-      if (c.callId && map[c.callId]) {
-        c.hasRecording = true
-      }
+      // Xác định cuộc gọi có file ghi âm dựa trên mảng recordings từ máy chủ Wazo Call-Logd
       if (c.recordings && c.recordings.length > 0) {
         c.hasRecording = true
-      }
-      if (!c.hasRecording && c.extension && c.date) {
-        const matched = all.find(
-          (r) =>
-            r.extension === String(c.extension) &&
-            Math.abs(new Date(r.date || 0) - new Date(c.date || 0)) < 120000,
-        )
-        if (matched) {
-          c.hasRecording = true
-          c.recordingId = matched.callId
-          map[c.id] = true
-        }
-      }
-      if (c.hasRecording) {
+        map[c.id] = true
+      } else if (c.hasRecording) {
         map[c.id] = true
       }
     })

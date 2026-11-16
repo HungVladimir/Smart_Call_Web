@@ -31,9 +31,21 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
   - Duy trì các mảng dữ liệu mẫu: `MOCK_CONTACTS` (danh bạ), `MOCK_HISTORY` (lịch sử cuộc gọi), `INITIAL_MOCK_ROOMS` (tin nhắn), `quickContacts` (phím tắt).
   - Duy trì nút **"Chạy chế độ thử nghiệm Offline"** tại trang Login và tab **"🚩 Phân hệ & Mock Data"** trong modal Cài đặt.
 
-### Quy tắc đồng bộ song song (Sync Rule):
-- Mỗi khi người dùng yêu cầu sửa lỗi, tối ưu hoặc phát triển tính năng mới ở `Smart_Call_Web`, **AI phải chủ động cập nhật tương ứng sang `Smart_Call_Web_Mock`**.
-- Khi đồng bộ, chỉ cập nhật phần logic tính năng, giữ nguyên các khối dữ liệu mock và cơ chế fallback offline sẵn có của `Smart_Call_Web_Mock`.
+### Quy tắc đồng bộ song song & Định hướng phát triển:
+- **Tập trung tối đa vào dự án chính `Smart_Call_Web`**: Hiện tại tập trung 100% vào việc hoàn thiện dự án chính `Smart_Call_Web` thuần call API máy chủ Wazo chuẩn production của công ty, tạm thời không cần can thiệp hay phân tán nguồn lực sang dự án mock.
+
+### Quy tắc bất biến: API Server First - Triệt tiêu Local Storage / IndexedDB nghiệp vụ
+1. **100% Thuần Call API Wazo cho mọi nghiệp vụ**:
+   - Dự án `Smart_Call_Web` là hệ thống chuẩn production của công ty, phục vụ kịch bản một tài khoản có thể đăng nhập trên nhiều máy tính/thiết bị khác nhau.
+   - Bất kỳ tính năng nghiệp vụ nào (Ghi âm cuộc gọi, Lịch sử cuộc gọi CDR, Danh bạ, Tin nhắn phòng chat, DND, Chuyển tiếp cuộc gọi...), nếu tài liệu kỹ thuật tổng đài (`wazo_api_reference.md`, `dev_guide.md`) có REST API hoặc WebSocket hỗ trợ thì **BẮT BUỘC PHẢI GỌI VÀ LƯU TRỮ 100% QUA API CỦA MÁY CHỦ WAZO**.
+2. **Triệt tiêu lưu trữ dữ liệu nghiệp vụ cục bộ (Zero Local Business Data)**:
+   - Cấm tuyệt đối việc sử dụng `IndexedDB`, `localStorage`, hay `sessionStorage` để lưu trữ nội dung dữ liệu nghiệp vụ (không lưu file âm thanh Blob trong trình duyệt, không lưu cache lịch sử cuộc gọi/danh bạ/tin nhắn cục bộ làm sai lệch tính đồng bộ giữa các máy).
+   - Mọi dữ liệu hiển thị trên giao diện (Lịch sử cuộc gọi, file ghi âm, danh bạ, tin nhắn) phải được fetch thời gian thực từ máy chủ Wazo.
+3. **Phạm vi duy nhất được phép sử dụng `localStorage`**:
+   - Chỉ được phép lưu 2 nhóm thông tin kỹ thuật máy khách tối thiểu:
+     a) **Phiên xác thực phiên làm việc**: `smartcall_wazo_token`, `smartcall_user_uuid`, `smartcall_wazo_host`, `smartcall_tenant_id`, `smartcall_extension`, `smartcall_username` (để khi người dùng F5 / reload trang không bị văng đăng nhập).
+     b) **Cấu hình phần cứng cục bộ của máy tính đó**: `smartcall_selected_mic`, `smartcall_selected_speaker`, `smartcall_selected_camera` (do ID thiết bị phần cứng là duy nhất trên từng máy tính vật lý).
+   - Tuyệt đối không lưu bất kỳ dữ liệu nào khác ngoài 2 nhóm trên.
 
 ### Nguyên tắc phân tách trách nhiệm chỉnh sửa (Scope Separation Rule):
 - **Dự án chính `Smart_Call_Web` là dự án chạy dữ liệu thật 100%**: Tuyệt đối **KHÔNG** đưa bất kỳ dữ liệu mock, dữ liệu giả lập, hay logic phục vụ kiểm thử fake data nào vào dự án này.

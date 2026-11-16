@@ -2581,6 +2581,40 @@ Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn 
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
 
+---
+
+## BƯỚC 46: CHUYỂN ĐỔI TOÀN DIỆN SANG WAZO SERVER-SIDE RECORDING & TRIỆT TIÊU LOCAL STORAGE NGHIỆP VỤ
+
+### 1. Bối cảnh & Nguyên tắc Cốt lõi:
+- **Nguyên tắc "API Server First - Zero Local Business Data" (GEMINI.md)**:
+  - Do hệ thống triển khai production cho công ty và phục vụ tình huống một tài khoản có thể đăng nhập trên nhiều máy tính/thiết bị khác nhau, dữ liệu nghiệp vụ không được lưu trữ cục bộ trên máy khách (không dùng `IndexedDB`, không dùng `localStorage` lưu blob âm thanh).
+  - Toàn bộ tính năng ghi âm và lịch sử cuộc gọi phải được quản lý và lưu trữ 100% trên máy chủ tổng đài Wazo.
+- **Triệt tiêu IndexedDB cục bộ**:
+  - Loại bỏ hoàn toàn IndexedDB (`smartcall_recordings_db`), gỡ bỏ `MediaRecorder` và `AudioContext` thu âm cục bộ.
+- **Khai thác toàn diện Wazo Server Recording REST API**:
+  - `wazo-calld` (`/api/calld/1.0`):
+    - `GET /api/calld/1.0/users/me/calls`: Truy vấn cuộc gọi đang kết nối để lấy `call_id` máy chủ.
+    - `PUT /api/calld/1.0/users/me/calls/{call_id}/record/start`: Bắt đầu ghi âm trên tổng đài Asterisk PBX.
+    - `PUT /api/calld/1.0/users/me/calls/{call_id}/record/stop`: Dừng ghi âm trên tổng đài.
+    - `PUT /api/calld/1.0/users/me/calls/{call_id}/record/pause`: Tạm dừng ghi âm.
+    - `PUT /api/calld/1.0/users/me/calls/{call_id}/record/resume`: Tiếp tục ghi âm.
+  - `wazo-call-logd` (`/api/call-logd/1.0`):
+    - `GET /api/call-logd/1.0/users/me/cdr`: Lấy danh sách lịch sử cuộc gọi máy chủ, mỗi bản ghi có mảng `recordings` chứa `uuid` file ghi âm.
+    - `GET /api/call-logd/1.0/users/me/cdr/{id}/recordings/{uuid}/media`: Tải và phát luồng âm thanh trực tiếp từ máy chủ tổng đài Wazo.
+
+### 2. Danh sách các File Đã Tái cấu trúc:
+- `GEMINI.md`: Cập nhật quy tắc bắt buộc "API Server First - Triệt tiêu Local Storage / IndexedDB nghiệp vụ" và định hướng tập trung 100% cho `Smart_Call_Web`.
+- `src/services/recordService.js`: Tái cấu trúc toàn bộ module thành Wazo Calld Server Recording API client (loại bỏ sạch IndexedDB và Web Audio API).
+- `src/views/CallsView.vue`: Nút 🔴 Ghi âm chỉ mở khi cuộc gọi đã kết nối (`callState === 'connected'`), chặn ghi âm khi đang đổ chuông (`ringing`), gửi lệnh ghi âm trực tiếp tới máy chủ Wazo.
+- `src/views/HistoryView.vue`: Hiển thị Audio Player mini hoàn toàn dựa trên mảng `recordings` của CDR máy chủ Wazo Call-Logd, stream media trực tiếp từ máy chủ.
+- `src/services/historyService.js`: Loại bỏ cơ chế merge file ghi âm cục bộ, duy trì tính nguyên bản 100% của CDR máy chủ Wazo.
+- `src/services/wazo.js`: Điều chỉnh luồng tự động ghi âm qua API máy chủ Wazo khi cuộc gọi được kết nối (`ON_CALL_ACCEPTED`).
+- `src/components/common/SettingsModal.vue`: Cập nhật nhãn Tự động ghi âm cuộc gọi trên tổng đài Wazo.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp.
+
+
 
 
 

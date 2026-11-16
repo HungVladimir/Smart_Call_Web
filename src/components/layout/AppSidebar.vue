@@ -28,13 +28,9 @@
 
     <div class="sidebar-footer">
       <div class="dev-credits">
-        <div class="dev-line">Nguyễn Văn Hùng - vhung99.nguyen</div>
-        <div class="dev-line">Lê Việt Dũng - vdung.le</div>
+        <!-- <div class="dev-line">Nguyễn Văn Hùng - vhung99.nguyen</div>
+        <div class="dev-line">Lê Việt Dũng - vdung.le</div> -->
         <div class="dept-line">AI Transformation Part</div>
-      </div>
-      <div class="webrtc-status" :class="{ 'status-online': isWebRtcReady, 'status-offline': !isWebRtcReady }">
-        <span class="status-indicator-dot">●</span>
-        <span class="status-label">{{ isWebRtcReady ? `Trực tuyến • Máy lẻ ${userExt}` : 'Ngoại tuyến' }}</span>
       </div>
     </div>
   </aside>

@@ -476,13 +476,11 @@ class WazoService {
             : (active.duration || 0))
         : 0
 
-      const hadRecording = recordService.isRecording() || Boolean(active?.isRecorded)
-      const currentCallId = active?.callId || null
       if (recordService.isRecording()) {
         try {
           recordService.stopRecording()
         } catch (recErr) {
-          logger.warn('RECORD', 'Lỗi dừng ghi âm cuộc gọi:', recErr)
+          logger.warn('RECORD', 'Lỗi dừng ghi âm máy chủ:', recErr)
         }
       }
 
@@ -495,8 +493,6 @@ class WazoService {
           direction: active.direction || 'outbound',
           status: status,
           answered: wasConnected,
-          recordingId: currentCallId,
-          hasRecording: hadRecording,
         })
       } catch (cdrErr) {
         logger.warn('CALL', 'Không thể ghi nhận CDR cho cuộc gọi hoạt động:', cdrErr)
@@ -675,21 +671,24 @@ class WazoService {
 
       this.startCallDurationTimer()
 
-      // Tự động kích hoạt ghi âm nếu bật cấu hình autoRecordCalls
+      // Tự động kích hoạt ghi âm máy chủ nếu bật cấu hình autoRecordCalls
       if (localStorage.getItem('smartcall_auto_record_calls') === 'true') {
-        setTimeout(() => {
+        setTimeout(async () => {
           if (callStore.activeCall && !recordService.isRecording()) {
-            recordService.startRecording(callStore.activeCall.callId, {
-              name: callStore.activeCall.name,
-              number: callStore.activeCall.number,
-              extension: callStore.activeCall.number,
-              dept: callStore.activeCall.dept,
-              direction: callStore.activeCall.direction,
-              session: callSession,
-            })
-            callStore.activeCall.isRecorded = true
+            try {
+              await recordService.startRecording(null, {
+                name: callStore.activeCall.name,
+                number: callStore.activeCall.number,
+                extension: callStore.activeCall.number,
+                dept: callStore.activeCall.dept,
+                direction: callStore.activeCall.direction,
+              })
+              callStore.activeCall.isRecorded = true
+            } catch (err) {
+              logger.warn('RECORD', 'Không thể tự động kích hoạt ghi âm máy chủ:', err.message)
+            }
           }
-        }, 800)
+        }, 1200)
       }
 
       // Gắn luồng âm thanh đàm thoại WebRTC
@@ -858,19 +857,22 @@ class WazoService {
     this.startCallDurationTimer()
 
     if (localStorage.getItem('smartcall_auto_record_calls') === 'true') {
-      setTimeout(() => {
+      setTimeout(async () => {
         if (callStore.activeCall && !recordService.isRecording()) {
-          recordService.startRecording(recId, {
-            name: callStore.activeCall.name,
-            number: callStore.activeCall.number,
-            extension: callStore.activeCall.number,
-            dept: callStore.activeCall.dept,
-            direction: callStore.activeCall.direction,
-            session: session,
-          })
-          callStore.activeCall.isRecorded = true
+          try {
+            await recordService.startRecording(null, {
+              name: callStore.activeCall.name,
+              number: callStore.activeCall.number,
+              extension: callStore.activeCall.number,
+              dept: callStore.activeCall.dept,
+              direction: callStore.activeCall.direction,
+            })
+            callStore.activeCall.isRecorded = true
+          } catch (err) {
+            logger.warn('RECORD', 'Không thể tự động kích hoạt ghi âm máy chủ khi trả lời:', err.message)
+          }
         }
-      }, 800)
+      }, 1200)
     }
   }
 

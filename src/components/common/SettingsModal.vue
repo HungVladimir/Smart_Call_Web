@@ -103,8 +103,8 @@
 
         <div class="st-toggle-row">
           <div class="st-toggle-info">
-            <strong>Tự động ghi âm cuộc gọi (Auto Record Calls)</strong>
-            <small>Tự động kích hoạt ghi âm âm thanh 2 chiều ngay khi cuộc gọi thoại được kết nối.</small>
+            <strong>Tự động ghi âm cuộc gọi trên tổng đài (Auto Record Calls)</strong>
+            <small>Tự động kích hoạt ghi âm cuộc gọi trên máy chủ Wazo ngay khi cuộc gọi thoại được kết nối.</small>
           </div>
           <input v-model="autoRecordCalls" type="checkbox" class="toggle-cb" @change="saveAutoRecord" />
         </div>

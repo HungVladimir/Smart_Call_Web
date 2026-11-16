@@ -228,7 +228,7 @@ class HistoryService {
           }
         })
 
-        // Hợp nhất dữ liệu: kết hợp các cuộc gọi cục bộ mới nhất với CDR từ Wazo server
+        // Hợp nhất dữ liệu: chỉ bổ sung các cuộc gọi cục bộ tạm thời (vừa thực hiện chưa kịp lên CDR)
         const merged = [...mapped]
         this.localHistory.forEach((loc) => {
           const existing = merged.find(
@@ -237,15 +237,7 @@ class HistoryService {
               (m.extension === loc.extension &&
                 Math.abs(new Date(m.date || 0) - new Date(loc.date || 0)) < 120000),
           )
-          if (existing) {
-            // Bảo toàn thông tin file ghi âm cục bộ khi kết hợp với bản ghi CDR của máy chủ
-            if (loc.recordingId && !existing.recordingId) {
-              existing.recordingId = loc.recordingId
-            }
-            if (loc.hasRecording) {
-              existing.hasRecording = true
-            }
-          } else {
+          if (!existing) {
             merged.push(loc)
           }
         })
