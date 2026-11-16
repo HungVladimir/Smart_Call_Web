@@ -45,6 +45,7 @@ class WazoService {
   }
 
   async login(username, password) {
+    this.logout()
     this.init()
     logger.info('AUTH', `Đang gửi yêu cầu đăng nhập tài khoản "${username}" tới máy chủ...`)
     try {

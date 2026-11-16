@@ -251,7 +251,14 @@
         </div>
 
         <div class="modal-body">
-          <p class="read-time-hint">Đã xem vào thời điểm: {{ selectedMsg?.time }}</p>
+          <p v-if="selectedMsg?.readStatus === 'Đã xem'" class="read-time-hint">
+            Đã xem vào thời điểm: {{ selectedMsg?.time }}
+          </p>
+          <p v-else class="read-time-hint">
+            Trạng thái: Đã gửi (Người nhận chưa mở tin nhắn)<br />
+            <small>Thời gian gửi: {{ selectedMsg?.time }}</small>
+          </p>
+          <label class="form-label">NGƯỜI NHẬN TRONG PHÒNG:</label>
           <ul class="readers-list">
             <li v-for="name in selectedMsgReaders" :key="name">
               <span class="check-icon">✔</span>
@@ -268,6 +275,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { chatService, formatMessageDateTime } from '@/services/chatService'
+import { contactService } from '@/services/contactService'
 
 const route = useRoute()
 const router = useRouter()
@@ -552,12 +560,18 @@ const searchAndAdd = async () => {
   const q = searchQuery.value.trim()
   if (!q || !currentRoom.value) return
 
-  if (confirm(`Thêm nhân viên có số máy lẻ [${q}] vào nhóm này?`)) {
+  const realContact = contactService.findContactByExtension(q)
+  const empName = realContact?.name || `Nhân viên ${q}`
+  const empDept = realContact?.dept || ''
+  const empExt = realContact?.number || q
+  const empId = realContact?.uuid || realContact?.id || `emp-${q}`
+
+  if (confirm(`Thêm nhân viên [${empName} - ${empExt}] vào nhóm này?`)) {
     const newEmp = {
-      id: `emp-${q}-${Date.now()}`,
-      name: `Nhân viên ${q}`,
-      dept: '',
-      ext: q,
+      id: empId,
+      name: empName,
+      dept: empDept,
+      ext: empExt,
       isAdmin: false,
     }
     await chatService.addMember(currentRoom.value.id, newEmp)
@@ -567,7 +581,7 @@ const searchAndAdd = async () => {
     searchQuery.value = ''
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `Đã thêm thành viên máy lẻ ${q} vào nhóm thành công!`, type: 'success' },
+        detail: { message: `Đã thêm thành viên [${empName}] vào nhóm thành công!`, type: 'success' },
       }),
     )
   }

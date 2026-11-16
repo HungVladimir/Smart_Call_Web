@@ -9,7 +9,28 @@ import { logger } from './loggerService'
  */
 export const formatMessageDateTime = (isoOrTimestamp) => {
   if (!isoOrTimestamp) return ''
-  const d = new Date(isoOrTimestamp)
+  let d
+  if (isoOrTimestamp instanceof Date) {
+    d = isoOrTimestamp
+  } else if (typeof isoOrTimestamp === 'number') {
+    d = new Date(isoOrTimestamp)
+  } else if (typeof isoOrTimestamp === 'string') {
+    let str = isoOrTimestamp.trim()
+    if (/^\d{10,13}$/.test(str)) {
+      d = new Date(Number(str.length === 10 ? str + '000' : str))
+    } else {
+      // Đảm bảo parse chuẩn UTC nếu chuỗi ISO từ server chưa có Z hoặc múi giờ (+00:00)
+      if (str.includes('T') && !str.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(str)) {
+        str += 'Z'
+      } else if (!str.includes('T') && str.includes(' ') && !/[+-]\d{2}:?\d{2}$/.test(str)) {
+        str = str.replace(' ', 'T') + 'Z'
+      }
+      d = new Date(str)
+    }
+  } else {
+    d = new Date(isoOrTimestamp)
+  }
+
   if (isNaN(d.getTime())) return String(isoOrTimestamp)
   const pad = (n) => String(n).padStart(2, '0')
   const hours = pad(d.getHours())
@@ -25,7 +46,6 @@ class ChatService {
     this.rooms = []
     this._fetchingRoomsPromise = null
     if (typeof window !== 'undefined') {
-      this.rooms = this.loadSavedRooms()
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
       websocketService.on('chatd_user_room_message_created', (data) => this.handleIncomingMessage(data))
       websocketService.on('chatd_user_message_created', (data) => this.handleIncomingMessage(data))
@@ -41,35 +61,8 @@ class ChatService {
     return `smartcall_chat_rooms_${userUuid}`
   }
 
-  // Tải dữ liệu phòng chat từ localStorage của phiên người dùng hiện tại
+  // Tải dữ liệu phòng chat: thuần 100% API thật từ Wazo server (Issue 8 & Rule 2 GEMINI.md)
   loadSavedRooms() {
-    try {
-      const key = this.getStorageKey()
-      const raw = localStorage.getItem(key)
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          parsed.forEach((r, idx) => {
-            // Chuẩn hóa updatedAt theo timestamp của tin nhắn cuối cùng nếu có
-            if (r.messages && r.messages.length > 0) {
-              const lastMsg = r.messages[r.messages.length - 1]
-              if (lastMsg && (lastMsg.timestamp || lastMsg.time)) {
-                if (lastMsg.timestamp) {
-                  r.updatedAt = Number(lastMsg.timestamp)
-                }
-              }
-            }
-            if (!r.updatedAt && r.updatedAt !== 0) {
-              r.updatedAt = Date.now() - idx * 60000
-            }
-          })
-          parsed.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-          return parsed
-        }
-      }
-    } catch (e) {
-      console.warn('Lỗi đọc cache phòng chat:', e)
-    }
     return []
   }
 
@@ -79,17 +72,15 @@ class ChatService {
     this.rooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   }
 
-  // Lưu bền vững vào localStorage của user hiện tại (hỗ trợ cờ silent để chống vòng lặp vô tận)
+  // Cập nhật trạng thái phòng chat và phát sự kiện đồng bộ
   saveRooms(silent = false) {
     try {
       this.sortRooms()
-      const key = this.getStorageKey()
-      localStorage.setItem(key, JSON.stringify(this.rooms))
-      if (!silent) {
+      if (!silent && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
       }
     } catch (e) {
-      console.warn('Lỗi lưu cache phòng chat:', e)
+      console.warn('Lỗi cập nhật phòng chat:', e)
     }
   }
 
@@ -148,8 +139,6 @@ class ChatService {
       isMine = true
     } else if (currentUserName && alias && alias.toLowerCase() === currentUserName.toLowerCase()) {
       isMine = true
-    } else if (alias === 'Tôi' || alias === 'me') {
-      isMine = true
     }
 
     // 2. Nếu là tin nhắn của chính mình, kiểm tra xem có tin tạm (prefix cmsg-) cùng nội dung hay không
@@ -191,6 +180,7 @@ class ChatService {
       alias: alias,
     }
     targetRoom.messages.push(newMsg)
+    targetRoom.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
     targetRoom.preview = content
     targetRoom.time = timeStr
     targetRoom.updatedAt = msgTimestamp
@@ -223,6 +213,15 @@ class ChatService {
 
         const token = wazoService.getToken()
         if (token) {
+          // Đảm bảo danh bạ đã nạp để tra cứu tên người đối phương chuẩn xác 100% (Issue 3)
+          if (!contactService.currentContacts || contactService.currentContacts.length === 0) {
+            try {
+              await contactService.getContacts()
+            } catch (e) {
+              /* ignore */
+            }
+          }
+
           const host = wazoService.host.startsWith('http')
             ? wazoService.host
             : `https://${wazoService.host}`
@@ -291,9 +290,8 @@ class ChatService {
                 }
 
                 if (!displayTitle) {
-                  const rName = (room.name || '').trim()
-                  if (rName && rName.toLowerCase() !== myUserName && !rName.toLowerCase().includes('(bạn)')) {
-                    displayTitle = rName
+                  if (otherContact?.number) {
+                    displayTitle = `Máy lẻ ${otherContact.number}`
                   } else if (otherUuid) {
                     displayTitle = `Máy lẻ ${otherUuid.slice(0, 4)}`
                   } else {
@@ -412,15 +410,13 @@ class ChatService {
             const currentUserName = (wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || '').trim()
 
             const mapped = data.items.map((m) => {
-              const senderUuid = m.user_uuid || m.uuid || ''
+              const senderUuid = m.user_uuid || m.sender_uuid || (m.user && m.user.uuid) || ''
               const senderAlias = (m.alias || '').trim()
 
               let isMine = false
               if (myUserUuid && senderUuid && senderUuid === myUserUuid) {
                 isMine = true
               } else if (currentUserName && senderAlias && senderAlias.toLowerCase() === currentUserName.toLowerCase()) {
-                isMine = true
-              } else if (senderAlias === 'Tôi' || senderAlias === 'me') {
                 isMine = true
               }
 
@@ -439,7 +435,7 @@ class ChatService {
                 sender: isMine ? 'mine' : 'theirs',
                 senderName: senderDisplayName,
                 text: m.content || '',
-                time: formatMessageDateTime(m.created_at),
+                time: formatMessageDateTime(m.created_at || msgTimestamp),
                 timestamp: msgTimestamp,
                 readStatus: isMine ? 'Đã xem' : 'Read',
                 readers: [],
@@ -674,7 +670,9 @@ class ChatService {
    * Gửi một tin nhắn mới vào phòng
    * Cập nhật tức thì vào mảng phòng (Optimistic 0ms) và đồng bộ với Wazo Chatd
    */
-  async sendMessage(roomId, text, userAlias = 'Tôi') {
+  async sendMessage(roomId, text, userAlias = null) {
+    const myRealName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Người dùng'
+    const actualAlias = userAlias && userAlias !== 'Tôi' ? userAlias : myRealName
     const now = new Date()
     const msgTimestamp = now.getTime()
     const timeStr = formatMessageDateTime(now)
@@ -686,7 +684,7 @@ class ChatService {
     // Nếu phòng đang mang ID tạm (direct-...), tự động nâng cấp lên ID server thật trước khi gửi API
     if (targetRoomId && targetRoomId.startsWith('direct-') && room?.ext) {
       try {
-        const upgraded = await this.getDirectRoom(room.ext, room.title, userAlias)
+        const upgraded = await this.getDirectRoom(room.ext, room.title, actualAlias)
         if (upgraded && !upgraded.id.startsWith('direct-')) {
           targetRoomId = upgraded.id
           room = upgraded
@@ -734,7 +732,7 @@ class ChatService {
           signal: AbortSignal.timeout(8000),
           body: JSON.stringify({
             content: text,
-            alias: userAlias,
+            alias: actualAlias,
           }),
         })
 

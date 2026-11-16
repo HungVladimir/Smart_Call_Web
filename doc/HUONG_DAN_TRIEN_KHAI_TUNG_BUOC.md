@@ -2370,9 +2370,18 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 ### 4. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
 - Đồng bộ toàn bộ các cập nhật logic tương ứng sang `D:\Project\Smart_Call_Web_Mock\`, đồng thời bảo toàn cơ chế fallback offline cho bản thử nghiệm.
 
-### 5. Kết quả Kiểm tra Biên dịch (Build Verification):
-- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp (416ms).
-- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp (575ms).
+### 5. Kết quả Kiểm tra Biên dịch & Tối ưu Hóa Sâu (Deep Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp (440ms).
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp (425ms).
+- Kiểm tra toàn bộ 8 vấn đề cốt lõi:
+  1. Favorite Wazo Dird API: Tự động đồng bộ `rawId`, `uuid` và fallback `default`/`source`, nạp đa trình duyệt bảo toàn.
+  2. Dọn sạch Storage khi đổi tài khoản: `wazoService.login()` và `logout()` triệt tiêu 100% session keys và stale in-memory state.
+  3. Tiêu đề phòng 1-1 và chiều tin nhắn: Tuyệt đối không dùng `room.name` từ server cho phòng 1-1, loại bỏ nhận diện giả định pronoun "Tôi", phân giải động chuẩn xác 2 chiều A $\leftrightarrow$ B.
+  4. Chuẩn hóa ngày giờ: `formatMessageDateTime` xử lý chuẩn xác chuỗi UTC có/không có Z, hiển thị `HH:mm DD/MM/YYYY`.
+  5. Sắp xếp tin nhắn: Tăng dần theo thời gian (`a.timestamp - b.timestamp`), tự động cuộn xuống đáy.
+  6. Badge tin nhắn Sidebar: Bảo toàn khi chuyển tab, giảm trừ chính xác từng phòng được xem (7 $\rightarrow$ 4 $\rightarrow$ 2 $\rightarrow$ 0).
+  7. Ghim độc lập theo phòng & nhãn Read: Ghim theo `currentRoom.pinned`, nhãn Read chỉ hiện ở tin của mình, modal Read ID hiển thị rõ trạng thái và người đọc.
+  8. 100% Real API: Loại bỏ toàn bộ fake data / stale localStorage trong production, trang bị loading spinners.
 
 
 

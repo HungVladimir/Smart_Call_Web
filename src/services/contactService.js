@@ -87,10 +87,12 @@ class ContactService {
     let contactId = ''
     if (contactOrId && typeof contactOrId === 'object') {
       contact = contactOrId
-      contactId = contact.id || contact.uuid || ''
+      contactId = contact.rawId || contact.id || contact.uuid || ''
     } else {
       contactId = String(contactOrId || '')
-      contact = this.currentContacts.find((c) => c.id === contactId || c.uuid === contactId)
+      contact = this.currentContacts.find(
+        (c) => c.id === contactId || c.uuid === contactId || c.rawId === contactId,
+      )
     }
 
     if (!contactId) return false
@@ -100,13 +102,18 @@ class ContactService {
     if (contact) {
       contact.isFavorite = willBeFavorite
     }
+    const idList = [contactId]
+    if (contact?.uuid) idList.push(String(contact.uuid))
+    if (contact?.id) idList.push(String(contact.id))
+    if (contact?.rawId) idList.push(String(contact.rawId))
+    if (contact?.number) idList.push(String(contact.number))
+
     if (willBeFavorite) {
-      if (!this.favoriteIds.includes(contactId)) this.favoriteIds.push(contactId)
-      if (contact?.uuid && !this.favoriteIds.includes(contact.uuid)) this.favoriteIds.push(contact.uuid)
+      idList.forEach((id) => {
+        if (!this.favoriteIds.includes(id)) this.favoriteIds.push(id)
+      })
     } else {
-      this.favoriteIds = this.favoriteIds.filter(
-        (id) => id !== contactId && (!contact?.uuid || id !== contact.uuid),
-      )
+      this.favoriteIds = this.favoriteIds.filter((id) => !idList.includes(id))
     }
 
     try {
@@ -117,8 +124,10 @@ class ContactService {
           : `https://${wazoService.host}`
         const directory = contact?.source || 'default'
         const method = willBeFavorite ? 'PUT' : 'DELETE'
-        await fetch(
-          `${host}/api/dird/0.1/directories/favorites/${directory}/${encodeURIComponent(contactId)}`,
+        const targetId = contact?.rawId || contact?.id || contact?.uuid || contactId
+
+        let res = await fetch(
+          `${host}/api/dird/0.1/directories/favorites/${directory}/${encodeURIComponent(targetId)}`,
           {
             method,
             headers: {
@@ -128,6 +137,21 @@ class ContactService {
             signal: AbortSignal.timeout(4000),
           },
         )
+
+        // Nếu directory !== 'default' mà bị lỗi, dự phòng gọi tiếp endpoint default
+        if (!res.ok && directory !== 'default') {
+          res = await fetch(
+            `${host}/api/dird/0.1/directories/favorites/default/${encodeURIComponent(targetId)}`,
+            {
+              method,
+              headers: {
+                'X-Auth-Token': token,
+                Accept: 'application/json',
+              },
+              signal: AbortSignal.timeout(4000),
+            },
+          )
+        }
       }
     } catch (e) {
       console.warn('Lỗi gọi API favorites Wazo:', e)
@@ -136,9 +160,12 @@ class ContactService {
     return willBeFavorite
   }
 
-  isFavorite(id) {
-    if (!id) return false
-    return (this.favoriteIds || []).includes(String(id))
+  isFavorite(id, uuid = null) {
+    if (!id && !uuid) return false
+    return (
+      Boolean(id && (this.favoriteIds || []).includes(String(id))) ||
+      Boolean(uuid && (this.favoriteIds || []).includes(String(uuid)))
+    )
   }
 
   /**
@@ -248,7 +275,8 @@ class ContactService {
       if (Array.isArray(contactsData.items) && contactsData.items.length > 0) {
         const mappedList = contactsData.items.map((item, index) => {
           const userUuid = item.uuid || item.user_uuid || (typeof item.relations === 'object' && item.relations?.user_uuid) || null
-          const id = userUuid || item.id || `wazo-${index}`
+          const rawId = String(item.id || item.contact_id || userUuid || '')
+          const id = userUuid || rawId || `wazo-${index}`
 
           const fn = (item.firstname || item.firstName || '').trim()
           const ln = (item.lastname || item.lastName || '').trim()
@@ -267,9 +295,23 @@ class ContactService {
           const email = item.email || (Array.isArray(item.emails) && item.emails[0]?.email) || ''
           const dept = item.department || item.society || item.title || item.userfield || item.description || ''
 
+          const isFav =
+            favorites.includes(id) ||
+            (userUuid && favorites.includes(userUuid)) ||
+            (rawId && favorites.includes(rawId)) ||
+            Boolean(item.favorited)
+
+          if (isFav) {
+            if (id && !this.favoriteIds.includes(id)) this.favoriteIds.push(id)
+            if (userUuid && !this.favoriteIds.includes(userUuid)) this.favoriteIds.push(userUuid)
+            if (rawId && !this.favoriteIds.includes(rawId)) this.favoriteIds.push(rawId)
+          }
+
           return {
             id,
+            rawId,
             uuid: userUuid,
+            source: item.source || item.backend || 'default',
             name,
             email,
             dept,
@@ -277,7 +319,7 @@ class ContactService {
             status: 'offline',
             statusLabel: 'Ngoại tuyến',
             unreadCount: 0,
-            isFavorite: favorites.includes(id) || (userUuid && favorites.includes(userUuid)) || Boolean(item.favorited),
+            isFavorite: isFav,
           }
         })
         const finalContacts = await this.loadPresencesForContacts(mappedList)
@@ -294,7 +336,8 @@ class ContactService {
             return idx !== -1 ? r.column_values[idx] : null
           }
           const userUuid = r.relations?.user_uuid || null
-          const id = userUuid || `wazo-${index}`
+          const rawId = String(getVal('id') || r.id || userUuid || '')
+          const id = userUuid || rawId || `wazo-${index}`
           const fn = (getVal('firstname') || '').trim()
           const ln = (getVal('lastname') || '').trim()
           const fullName = [fn, ln].filter(Boolean).join(' ').trim()
@@ -303,9 +346,23 @@ class ContactService {
           const email = getVal('email') || ''
           const dept = getVal('department') || getVal('society') || getVal('title') || getVal('userfield') || getVal('description') || ''
 
+          const isFav =
+            favorites.includes(id) ||
+            (userUuid && favorites.includes(userUuid)) ||
+            (rawId && favorites.includes(rawId)) ||
+            Boolean(r.favorited)
+
+          if (isFav) {
+            if (id && !this.favoriteIds.includes(id)) this.favoriteIds.push(id)
+            if (userUuid && !this.favoriteIds.includes(userUuid)) this.favoriteIds.push(userUuid)
+            if (rawId && !this.favoriteIds.includes(rawId)) this.favoriteIds.push(rawId)
+          }
+
           return {
             id,
+            rawId,
             uuid: userUuid,
+            source: r.source || r.backend || 'default',
             name,
             email,
             dept,
@@ -313,7 +370,7 @@ class ContactService {
             status: 'offline',
             statusLabel: 'Ngoại tuyến',
             unreadCount: 0,
-            isFavorite: favorites.includes(id) || (userUuid && favorites.includes(userUuid)) || Boolean(r.favorited),
+            isFavorite: isFav,
           }
         })
         const finalContacts = await this.loadPresencesForContacts(mappedList)
