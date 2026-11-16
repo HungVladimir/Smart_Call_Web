@@ -2422,6 +2422,54 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (440ms).
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (596ms).
 
+---
+
+## BƯỚC 43: CHUẨN HÓA THAM SỐ SOURCE / DIRECTORY CHO FAVORITES THEO THAM CHIẾU ANDROID & TRIỆT TIÊU LỖI 404 WAZO DIRD
+
+### 1. Bối cảnh & Hiện tượng:
+- Khi người dùng bấm thêm/bỏ yêu thích (Favorite ⭐) trên Web, console xuất hiện cảnh báo lỗi 404 từ máy chủ Wazo Dird:
+  ```
+  [API] Gửi yêu cầu DELETE favorite tới Wazo Dird: /directories/favorites/default/6
+  [API] Máy chủ Wazo Dird trả về status 404 cho favorite (đã bảo toàn cục bộ)
+  ```
+- Tuy nhiên việc đồng bộ lấy danh sách yêu thích trước đó lại thành công:
+  ```
+  [API] Đồng bộ Wazo Dird favorites thành công (12 mục)
+  ```
+- Trên ứng dụng Android, tính năng Favorites hoạt động bình thường, đồng bộ thành công cả 2 chiều.
+
+### 2. Nguyên nhân Gốc rễ (Root Cause Analysis):
+Qua đối chiếu kiến trúc Wazo Dird và mã nguồn tham chiếu Android:
+1. **Sự khác biệt giữa Profile và Source trong Wazo Dird:**
+   - Khi đọc danh sách (GET): Endpoint là `/api/dird/0.1/directories/favorites/{profile}`. Web và Android đều truyền `{profile} = "default"`.
+   - Khi ghi/xóa (PUT/DELETE): Endpoint là `/api/dird/0.1/directories/favorites/{directory}/{contact}`. Ở đây, `{directory}` **không phải là Profile "default"**, mà bắt buộc phải là **Tên Nguồn Danh bạ (Source Name)** (ví dụ: `"wazo_user"`, `"wazo"`, hoặc Source UUID trong CSDL `dird_favorite`).
+   - Web trước đó gửi chuỗi cố định `"default"` vào `{directory}` (`/directories/favorites/default/5`), khiến Wazo Dird tìm bảng/nguồn tên là "default" và trả về `404 Not Found`.
+2. **Cơ chế Phân giải Source và Extension của Android:**
+   - Android bóc tách tên nguồn thực tế `defaultSourceName = f.getSource()` (thường là `"wazo_user"`) từ response của `getFavoriteContacts`, sau đó truyền đúng `defaultSourceName` vào `@Path("directory")`.
+   - Android quản lý bộ nhận diện Favorite theo số máy lẻ (`favoriteExtSet.add(f.getExtension())`), giúp việc đồng bộ đa nền tảng không bị lệch ID nội bộ giữa các backend.
+
+### 3. Giải pháp Kỹ thuật Đã Triển khai (`src/services/contactService.js`):
+1. **Tự động Bóc tách Source Name & Source UUID từ Server:**
+   - Trong `getContacts()`: Trích xuất `sourceItem.name` và gán vào `this.defaultSourceName` (mặc định `'wazo_user'`); lưu `this.wazoSourceUuid = sourceUuid`.
+   - Trong `fetchFavorites()`: Duyệt qua `item.source` / `r.source` để ghi nhận nguồn danh bạ mà server đang sử dụng.
+2. **Cơ chế Phân giải Thử nghiệm Đa nguồn (Candidate Directory Fallback):**
+   - Khi gọi `toggleFavorite()`: Xây dựng mảng danh sách nguồn ứng viên:
+     `[primaryDirectory, this.defaultSourceName, 'wazo_user', 'wazo', this.wazoSourceUuid, 'personal']`.
+   - Tự động gọi API lần lượt với các nguồn ứng viên. Khi một nguồn trả về 2xx (Thành công), hệ thống lưu ngay nguồn đó vào `this.defaultSourceName` cho các lượt gọi tiếp theo, triệt tiêu hoàn toàn lỗi 404.
+3. **Mở rộng Nhận diện Yêu thích theo Máy lẻ (Extension Matching):**
+   - Mở rộng hàm `isFavorite(id, uuid, number)`: Hỗ trợ đối chiếu cả số máy lẻ `number` (Extension) tương tự Android (`favoriteExtSet`), đảm bảo đồng bộ chéo hoàn hảo giữa Web và Mobile.
+   - Khi nạp danh bạ từ server hoặc localStorage, tự động đưa cả Extension vào mảng `favoriteIds`.
+4. **Bảo toàn Write-Through Cache:**
+   - Trạng thái ⭐ luôn được cập nhật và lưu ngay lập tức xuống `localStorage` theo User UUID (0ms), người dùng ấn F5 hoặc chuyển màn hình không bao giờ bị mất trạng thái dù server phản hồi chậm.
+
+### 4. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Áp dụng toàn bộ logic phân giải Source Name, candidate directories fallback và nhận diện theo số máy lẻ sang `D:\Project\Smart_Call_Web_Mock\src/services/contactService.js`.
+
+### 5. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (419ms).
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (590ms).
+
+
 
 
 

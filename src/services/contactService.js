@@ -7,6 +7,8 @@ class ContactService {
     this.presences = {}
     this.presencePollTimer = null
     this.favoriteIds = []
+    this.defaultSourceName = 'wazo_user'
+    this.wazoSourceUuid = ''
 
     if (typeof window !== 'undefined') {
       window.addEventListener('wazo-presence-updated', (ev) => {
@@ -83,6 +85,9 @@ class ContactService {
         const ids = []
         if (Array.isArray(data.items)) {
           data.items.forEach((item) => {
+            if (item.source) {
+              this.defaultSourceName = item.source
+            }
             const cid = item.contact_id || item.id || item.uuid || item.relations?.user_uuid
             if (cid) ids.push(String(cid))
             if (item.relations?.user_uuid) ids.push(String(item.relations.user_uuid))
@@ -90,20 +95,29 @@ class ContactService {
           })
         } else if (Array.isArray(data.results) && Array.isArray(data.column_types)) {
           const idIdx = data.column_types.indexOf('id')
+          const numIdx = data.column_types.indexOf('number')
           data.results.forEach((r) => {
+            if (r.source) {
+              this.defaultSourceName = r.source
+            }
             if (idIdx !== -1 && r.column_values[idIdx]) ids.push(String(r.column_values[idIdx]))
+            if (numIdx !== -1 && r.column_values[numIdx]) ids.push(String(r.column_values[numIdx]))
             if (r.relations?.user_uuid) ids.push(String(r.relations.user_uuid))
           })
         } else if (Array.isArray(data)) {
           data.forEach((item) => {
+            if (item.source) {
+              this.defaultSourceName = item.source
+            }
             const cid = item.contact_id || item.id || item.uuid || item.relations?.user_uuid
             if (cid) ids.push(String(cid))
+            if (item.exten || item.number) ids.push(String(item.exten || item.number))
           })
         }
         // Hợp nhất server favorites với local favorites
         this.favoriteIds = Array.from(new Set([...(this.favoriteIds || []), ...ids]))
         this.saveFavorites(this.favoriteIds)
-        logger.info('API', `Đồng bộ Wazo Dird favorites thành công (${this.favoriteIds.length} mục)`)
+        logger.info('API', `Đồng bộ Wazo Dird favorites thành công (${this.favoriteIds.length} mục, Nguồn mặc định: "${this.defaultSourceName}")`)
         return this.favoriteIds
       } else {
         logger.warn('API', `Wazo Dird favorites trả về mã ${res.status}, duy trì danh sách yêu thích cục bộ (${(this.favoriteIds || []).length} mục)`)
@@ -119,6 +133,7 @@ class ContactService {
    * PUT /api/dird/0.1/directories/favorites/{directory}/{contact}
    * DELETE /api/dird/0.1/directories/favorites/{directory}/{contact}
    * Áp dụng mô hình Write-Through Cache: Ghi ngay lập tức xuống localStorage theo User UUID
+   * Chuẩn hóa theo tham chiếu Android: Truyền đúng tên nguồn danh bạ vào {directory}
    */
   async toggleFavorite(contactOrId) {
     let contact = null
@@ -134,7 +149,9 @@ class ContactService {
     }
 
     if (!contactId) return false
-    const willBeFavorite = contact ? !contact.isFavorite : !this.isFavorite(contactId)
+    const willBeFavorite = contact
+      ? !contact.isFavorite
+      : !this.isFavorite(contactId, contact?.uuid, contact?.number)
 
     // Cập nhật trạng thái tức thời trên đối tượng contact
     if (contact) {
@@ -157,49 +174,64 @@ class ContactService {
     // Write-Through: Ghi NGAY LẬP TỨC xuống localStorage theo User UUID (F5 không mất)
     this.saveFavorites(this.favoriteIds)
 
-    // Gọi API Wazo Dird bất đồng bộ dưới nền
+    // Gọi API Wazo Dird bất đồng bộ dưới nền theo tên nguồn chuẩn
     try {
       const token = wazoService.getToken()
       if (token) {
         const host = wazoService.host.startsWith('http')
           ? wazoService.host
           : `https://${wazoService.host}`
-        const directory = contact?.source || 'default'
+        const primaryDirectory = contact?.source || this.defaultSourceName || 'wazo_user'
         const method = willBeFavorite ? 'PUT' : 'DELETE'
         const targetId = contact?.rawId || contact?.id || contact?.uuid || contactId
 
-        logger.info('API', `Gửi yêu cầu ${method} favorite tới Wazo Dird: /directories/favorites/${directory}/${targetId}`)
-        let res = await fetch(
-          `${host}/api/dird/0.1/directories/favorites/${directory}/${encodeURIComponent(targetId)}`,
-          {
-            method,
-            headers: {
-              'X-Auth-Token': token,
-              Accept: 'application/json',
-            },
-            signal: AbortSignal.timeout(3500),
-          },
+        // Danh sách các ứng viên Directory/Source theo thứ tự ưu tiên Wazo
+        const candidateDirectories = Array.from(
+          new Set(
+            [
+              primaryDirectory,
+              this.defaultSourceName,
+              'wazo_user',
+              'wazo',
+              this.wazoSourceUuid,
+              'personal',
+            ].filter(Boolean),
+          ),
         )
 
-        // Nếu directory !== 'default' mà bị lỗi, dự phòng gọi tiếp endpoint default
-        if (!res.ok && directory !== 'default') {
-          res = await fetch(
-            `${host}/api/dird/0.1/directories/favorites/default/${encodeURIComponent(targetId)}`,
-            {
-              method,
-              headers: {
-                'X-Auth-Token': token,
-                Accept: 'application/json',
+        let success = false
+        for (const dir of candidateDirectories) {
+          try {
+            logger.info('API', `Gửi yêu cầu ${method} favorite tới Wazo Dird: /directories/favorites/${dir}/${targetId}`)
+            const res = await fetch(
+              `${host}/api/dird/0.1/directories/favorites/${encodeURIComponent(dir)}/${encodeURIComponent(targetId)}`,
+              {
+                method,
+                headers: {
+                  'X-Auth-Token': token,
+                  Accept: 'application/json',
+                },
+                signal: AbortSignal.timeout(3500),
               },
-              signal: AbortSignal.timeout(3500),
-            },
-          )
+            )
+
+            if (res.ok) {
+              logger.success('API', `Đã đồng bộ trạng thái favorite lên Wazo Dird qua nguồn "${dir}" (${willBeFavorite ? 'ADD' : 'REMOVE'})`)
+              this.defaultSourceName = dir
+              if (contact) contact.source = dir
+              success = true
+              break
+            } else if (res.status !== 404) {
+              logger.warn('API', `Wazo Dird nguồn "${dir}" trả về mã ${res.status}`)
+              break
+            }
+          } catch (fetchErr) {
+            logger.warn('API', `Thử nguồn "${dir}" gặp lỗi:`, fetchErr.message)
+          }
         }
 
-        if (res.ok) {
-          logger.success('API', `Đã đồng bộ trạng thái favorite lên máy chủ Wazo Dird (${willBeFavorite ? 'ADD' : 'REMOVE'})`)
-        } else {
-          logger.warn('API', `Máy chủ Wazo Dird trả về status ${res.status} cho favorite (đã bảo toàn cục bộ)`)
+        if (!success) {
+          logger.warn('API', `Không thể đồng bộ favorite lên server qua các nguồn Wazo Dird (đã bảo toàn cục bộ 0ms)`)
         }
       }
     } catch (e) {
@@ -209,11 +241,12 @@ class ContactService {
     return willBeFavorite
   }
 
-  isFavorite(id, uuid = null) {
-    if (!id && !uuid) return false
+  isFavorite(id, uuid = null, number = null) {
+    if (!id && !uuid && !number) return false
     return (
       Boolean(id && (this.favoriteIds || []).includes(String(id))) ||
-      Boolean(uuid && (this.favoriteIds || []).includes(String(uuid)))
+      Boolean(uuid && (this.favoriteIds || []).includes(String(uuid))) ||
+      Boolean(number && (this.favoriteIds || []).includes(String(number)))
     )
   }
 
@@ -277,8 +310,13 @@ class ContactService {
 
         if (sourceRes.ok) {
           const sourcesData = await sourceRes.json()
-          const sourceUuid = sourcesData.items?.[0]?.uuid
+          const sourceItem = sourcesData.items?.[0]
+          const sourceUuid = sourceItem?.uuid
+          if (sourceItem?.name) {
+            this.defaultSourceName = sourceItem.name
+          }
           if (sourceUuid) {
+            this.wazoSourceUuid = sourceUuid
             // Lấy toàn bộ danh sách liên hệ từ nguồn (limit=1000)
             const contactsRes = await fetch(
               `${host}/api/dird/0.1/backends/wazo/sources/${sourceUuid}/contacts?limit=1000`,
@@ -348,19 +386,21 @@ class ContactService {
             favorites.includes(id) ||
             (userUuid && favorites.includes(userUuid)) ||
             (rawId && favorites.includes(rawId)) ||
+            (number && favorites.includes(String(number))) ||
             Boolean(item.favorited)
 
           if (isFav) {
             if (id && !this.favoriteIds.includes(id)) this.favoriteIds.push(id)
             if (userUuid && !this.favoriteIds.includes(userUuid)) this.favoriteIds.push(userUuid)
             if (rawId && !this.favoriteIds.includes(rawId)) this.favoriteIds.push(rawId)
+            if (number && !this.favoriteIds.includes(String(number))) this.favoriteIds.push(String(number))
           }
 
           return {
             id,
             rawId,
             uuid: userUuid,
-            source: item.source || item.backend || 'default',
+            source: item.source || item.backend || this.defaultSourceName || 'wazo_user',
             name,
             email,
             dept,
@@ -400,19 +440,21 @@ class ContactService {
             favorites.includes(id) ||
             (userUuid && favorites.includes(userUuid)) ||
             (rawId && favorites.includes(rawId)) ||
+            (number && favorites.includes(String(number))) ||
             Boolean(r.favorited)
 
           if (isFav) {
             if (id && !this.favoriteIds.includes(id)) this.favoriteIds.push(id)
             if (userUuid && !this.favoriteIds.includes(userUuid)) this.favoriteIds.push(userUuid)
             if (rawId && !this.favoriteIds.includes(rawId)) this.favoriteIds.push(rawId)
+            if (number && !this.favoriteIds.includes(String(number))) this.favoriteIds.push(String(number))
           }
 
           return {
             id,
             rawId,
             uuid: userUuid,
-            source: r.source || r.backend || 'default',
+            source: r.source || r.backend || this.defaultSourceName || 'wazo_user',
             name,
             email,
             dept,
