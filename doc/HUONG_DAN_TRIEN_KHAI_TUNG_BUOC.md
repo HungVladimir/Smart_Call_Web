@@ -60,7 +60,7 @@
 | **44** | Nâng cấp Toàn diện 13 Hạng mục Tính năng, Bảo mật & Chuẩn hóa Mã nguồn Hệ thống | Kế hoạch Nâng cấp Toàn diện & GEMINI.md | **HOÀN THÀNH** ✅ | Trực tuyến máy lẻ SIP & Profile User : Department; Danh bạ auto-refresh onActivated/focus; Trạng thái tin nhắn 4 cấp (Đang gửi -> Đã gửi -> Đã nhận -> Đã xem); Vô hiệu hóa video call kèm toast; Lọc lịch sử theo ngày & gỡ bỏ các nút xóa; Wazo Confd API thật cho DND & Call Forwards; Đổi/quên mật khẩu qua Auth API; Smart Softphone Dialer tự động tra cứu danh bạ; Single Device Login cảnh báo khi bị chiếm phiên; Realtime presence dot cho Messages; 100% Wazo Dird API cho Favorites; Xóa preview_smartcall.html & clean router redirects; Dọn sạch toàn bộ comment thừa. |
 | **45** | Bổ sung Tính năng Ghi âm Cuộc gọi (Call Recording), Mini Audio Player Lịch sử & Tinh chỉnh Sidebar | Kế hoạch Call Recording & Sidebar Refinement | **HOÀN THÀNH** ✅ | Cải tiến chân Sidebar; Bổ sung nút 🔴 Ghi âm trên CallsView; Tích hợp Audio Player mini trong HistoryView; Tùy chọn tự động ghi âm trong SettingsModal. |
 | **46** | Chuyển đổi Toàn diện sang Wazo Server-Side Recording & Triệt tiêu Local Storage Nghiệp vụ | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & API Server First | **HOÀN THÀNH** ✅ | Loại bỏ 100% IndexedDB và thu âm client; Chuyển toàn bộ sang REST API Wazo Calld (/users/me/calls/{id}/record/start, stop) và Call-Logd stream media; Chặn ghi âm khi đang ringing; Giao diện thuần API thật. |
-| **47** | Giải pháp Đóng gói Chạy Máy chủ Công ty & Phát triển Nhóm Chat Wazo Chatd Thuần API | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Cung cấp giải pháp Nginx static & Docker offline image (smartcall-web.tar) chạy ngay không cần npm; Khắc phục nút Tạo nhóm; Triệt tiêu mock in-memory; Tích hợp 100% Wazo Chatd API POST /users/me/rooms tạo phòng nhóm thật; Tách biệt Modal Tạo nhóm và Modal Thành viên; Quản lý activeRoomId trong RAM. |
+| **47** | Phát triển Nhóm Chat Wazo Chatd Thuần API, Triệt tiêu Local In-Memory & Quản lý Thành viên | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khắc phục nút Tạo nhóm; Triệt tiêu mock in-memory; Tích hợp 100% Wazo Chatd API POST /users/me/rooms tạo phòng nhóm thật; Tách biệt Modal Tạo nhóm và Modal Thành viên; Quản lý activeRoomId trong RAM. |
 
 ---
 
@@ -2619,15 +2619,9 @@ Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn 
 
 ---
 
-## BƯỚC 47: GIẢI PHÁP ĐÓNG GÓI CHẠY MÁY CHỦ CÔNG TY & PHÁT TRIỂN NHÓM CHAT WAZO CHATD THUẦN API
+## BƯỚC 47: PHÁT TRIỂN NHÓM CHAT WAZO CHATD THUẦN API & TRIỆT TIÊU LOCAL IN-MEMORY
 
 ### 1. Bối cảnh & Mục tiêu Kỹ thuật:
-- **Đóng gói triển khai máy chủ công ty (Không cần cài Wazo nội bộ, Không cần npm install từ internet)**:
-  - Bản chất dự án Vue 3 + Vite là Single Page Application (SPA), ở môi trường runtime chỉ gồm các tệp tĩnh thuần túy (`dist/`), hoàn toàn không cần Node.js hay `node_modules`.
-  - Cung cấp 2 phương án triển khai chuẩn:
-    1. *Phương án A (Nginx Tĩnh)*: Build sẵn thư mục `dist/` đưa vào máy chủ, cấu hình Nginx với HTTPS và SPA routing fallback `try_files $uri $uri/ /index.html;`.
-    2. *Phương án B (Docker Offline Image)*: Đóng gói Nginx Alpine + `dist/` vào `smartcall-web.tar`, chuyển vào máy chủ nội bộ chỉ cần `docker load` và `docker run`.
-  - Bổ sung `Dockerfile`, `nginx.conf`, và script tự động `package-offline.bat`.
 - **Khảo sát Wazo Chatd API & Triệt tiêu hoàn toàn Local In-Memory trong Nhóm Chat & Thành viên**:
   - Khắc phục lỗi nút `+ Tạo nhóm` bị kẹt khi chưa chọn phòng chat nào.
   - Xóa bỏ toàn bộ các hàm giả lập local in-memory: `addMember`, `removeMember`, `updateRoomTitle`.
@@ -2638,9 +2632,6 @@ Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn 
   - Triệt tiêu `smartcall_active_room_id` trong localStorage, chuyển sang quản lý tập trung trong bộ nhớ service (`chatService.activeRoomId`).
 
 ### 2. Danh sách các File Đã Triển khai & Cập nhật:
-- `Dockerfile`: Image Nginx Alpine phục vụ `dist/` cho môi trường máy chủ nội bộ.
-- `nginx.conf`: Cấu hình Nginx tối ưu cho Vue 3 SPA (Gzip, static asset caching, SPA fallback).
-- `package-offline.bat`: Script Windows tự động biên dịch `npm run build` và hướng dẫn đóng gói.
 - `src/services/chatService.js`:
   - Triển khai phương thức `createGroupRoom(groupName, memberUserUuids)` thuần Wazo Chatd API.
   - Phân định rõ ràng phòng 1-1 vs phòng Nhóm (`isGroup`, icon `👥`, avatar tím `#8b5cf6`, tiêu đề nhóm).
