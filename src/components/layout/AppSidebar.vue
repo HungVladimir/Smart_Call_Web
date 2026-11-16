@@ -68,7 +68,10 @@ const updateSidebarCounts = async () => {
   try {
     // Thống kê tin nhắn chưa đọc (chỉ duy nhất tin nhắn hiển thị badge trên Sidebar theo Rule 3.4 GEMINI.md)
     try {
-      const rooms = await chatService.getRooms()
+      const rooms =
+        chatService.rooms && chatService.rooms.length > 0
+          ? chatService.rooms
+          : await chatService.getRooms()
       if (Array.isArray(rooms)) {
         unreadMessagesCount.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
       }
@@ -84,7 +87,7 @@ const debouncedUpdateSidebarCounts = () => {
   if (sidebarDebounceTimer) clearTimeout(sidebarDebounceTimer)
   sidebarDebounceTimer = setTimeout(() => {
     updateSidebarCounts()
-  }, 400)
+  }, 100)
 }
 
 onMounted(() => {

@@ -3,6 +3,23 @@ import { contactService } from './contactService'
 import { websocketService } from './websocketService'
 import { logger } from './loggerService'
 
+/**
+ * Định dạng thời gian tin nhắn chuẩn xác theo giờ Việt Nam / Trình duyệt cục bộ (HH:mm DD/MM/YYYY)
+ * Ví dụ: "10:30 16/11/2026"
+ */
+export const formatMessageDateTime = (isoOrTimestamp) => {
+  if (!isoOrTimestamp) return ''
+  const d = new Date(isoOrTimestamp)
+  if (isNaN(d.getTime())) return String(isoOrTimestamp)
+  const pad = (n) => String(n).padStart(2, '0')
+  const hours = pad(d.getHours())
+  const minutes = pad(d.getMinutes())
+  const day = pad(d.getDate())
+  const month = pad(d.getMonth() + 1)
+  const year = d.getFullYear()
+  return `${hours}:${minutes} ${day}/${month}/${year}`
+}
+
 class ChatService {
   constructor() {
     this.rooms = []
@@ -84,9 +101,7 @@ class ChatService {
     const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
     const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}-${Math.random()}`
     const msgTimestamp = data.created_at ? new Date(data.created_at).getTime() : Date.now()
-    const timeStr = data.created_at
-      ? new Date(data.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-      : new Date(msgTimestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    const timeStr = formatMessageDateTime(data.created_at || msgTimestamp)
 
     if (!roomUuid || !content) return
 
@@ -124,8 +139,18 @@ class ChatService {
     const alreadyExists = targetRoom.messages.some((m) => m.id === msgId)
     if (alreadyExists) return
 
-    const currentUserName = localStorage.getItem('smartcall_username') || 'Người dùng'
-    const isMine = alias === currentUserName
+    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
+    const currentUserName = (wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || '').trim()
+    const senderUuid = data.user_uuid || data.message?.user_uuid || ''
+
+    let isMine = false
+    if (myUserUuid && senderUuid && senderUuid === myUserUuid) {
+      isMine = true
+    } else if (currentUserName && alias && alias.toLowerCase() === currentUserName.toLowerCase()) {
+      isMine = true
+    } else if (alias === 'Tôi' || alias === 'me') {
+      isMine = true
+    }
 
     // 2. Nếu là tin nhắn của chính mình, kiểm tra xem có tin tạm (prefix cmsg-) cùng nội dung hay không
     if (isMine) {
@@ -145,15 +170,25 @@ class ChatService {
       }
     }
 
+    let senderDisplayName = alias
+    if (isMine) {
+      senderDisplayName = 'Tôi'
+    } else if (senderUuid) {
+      const c = contactService.findContactByUuid(senderUuid)
+      if (c?.name) senderDisplayName = c.name
+    }
+
     const newMsg = {
       id: msgId,
       sender: isMine ? 'mine' : 'theirs',
-      senderName: alias,
+      senderName: senderDisplayName,
       text: content,
       time: timeStr,
       timestamp: msgTimestamp,
-      readStatus: 'Read',
+      readStatus: isMine ? 'Đã gửi' : 'Read',
       readers: [],
+      user_uuid: senderUuid,
+      alias: alias,
     }
     targetRoom.messages.push(newMsg)
     targetRoom.preview = content
@@ -166,7 +201,7 @@ class ChatService {
     }
 
     this.saveRooms()
-    logger.info('CHAT', `Nhận tin nhắn mới từ [${alias}] trong phòng [${targetRoom.title}]: ${content}`)
+    logger.info('CHAT', `Nhận tin nhắn mới từ [${senderDisplayName}] trong phòng [${targetRoom.title}]: ${content}`)
     window.dispatchEvent(
       new CustomEvent('smartcall-message-received', { detail: { roomId: roomUuid, message: newMsg } }),
     )
@@ -199,119 +234,139 @@ class ChatService {
 
           if (res.ok) {
             const data = await res.json()
-            if (data.items && data.items.length > 0) {
-              const myUuid =
-                wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid')
-              const myExt =
-                wazoService.getMyExtension() || localStorage.getItem('smartcall_extension')
+            const items = Array.isArray(data.items) ? data.items : []
+            const myUuid =
+              wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
+            const myExt =
+              wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
+            const myUserName = (
+              wazoService.getMyUserName() ||
+              localStorage.getItem('smartcall_username') ||
+              ''
+            ).toLowerCase().trim()
 
-              // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
-              const serverRooms = data.items.map((room) => {
-                const existing = (this.rooms || []).find((r) => r.id === room.uuid)
-                const serverUsers = Array.isArray(room.users) ? room.users : []
-                const memberCount =
-                  serverUsers.length || existing?.members?.length || existing?.memberCount || 2
+            // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
+            const serverRooms = items.map((room) => {
+              const existing = (this.rooms || []).find((r) => r.id === room.uuid)
+              const serverUsers = Array.isArray(room.users) ? room.users : []
+              const memberCount =
+                serverUsers.length || existing?.members?.length || existing?.memberCount || 2
 
-                // Nhận diện phòng 1-1: đúng 2 user và tên phòng không chứa 'nhóm'
-                const isDirect =
-                  serverUsers.length === 2 &&
-                  (!room.name || !room.name.toLowerCase().includes('nhóm'))
-                const isGroup = !isDirect
+              // Nhận diện phòng 1-1: đúng 2 user và tên phòng không chứa 'nhóm'
+              const isDirect =
+                serverUsers.length === 2 &&
+                (!room.name || !room.name.toLowerCase().includes('nhóm'))
+              const isGroup = !isDirect
 
-                // Phân giải thông tin đối phương nếu là phòng 1-1
-                let directTitle = room.name
-                let directExt = existing?.ext || ''
+              // Phân giải thông tin đối phương nếu là phòng 1-1 theo quy tắc SSOT (Issue 3)
+              // TUYỆT ĐỐI KHÔNG dùng room.name từ server cho phòng 1-1
+              let displayTitle = ''
+              let directExt = existing?.ext || ''
+
+              if (isDirect) {
+                const otherUser = serverUsers.find((u) => {
+                  const uId = typeof u === 'string' ? u : u.uuid
+                  return uId && uId !== myUuid
+                })
+                const otherUuid = otherUser
+                  ? typeof otherUser === 'string'
+                    ? otherUser
+                    : otherUser.uuid
+                  : null
+
                 let otherContact = null
-                if (isDirect) {
-                  const otherUser = serverUsers.find((u) => {
-                    const uId = typeof u === 'string' ? u : u.uuid
-                    return uId && uId !== myUuid
-                  })
-                  const otherUuid = otherUser
-                    ? typeof otherUser === 'string'
-                      ? otherUser
-                      : otherUser.uuid
-                    : null
-                  if (otherUuid) {
-                    otherContact = contactService.findContactByUuid(otherUuid)
-                  }
-                  if (otherContact) {
-                    directTitle = otherContact.name
-                    directExt = otherContact.number || otherContact.exten || ''
-                  } else if (existing?.title && existing.title !== 'Phòng thảo luận') {
-                    directTitle = existing.title
-                  } else if (!directTitle) {
-                    directTitle = 'Cuộc trò chuyện 1-1'
+                if (otherUuid) {
+                  otherContact = contactService.findContactByUuid(otherUuid)
+                }
+
+                if (otherContact) {
+                  displayTitle = otherContact.name
+                  directExt = otherContact.number || otherContact.exten || ''
+                } else if (existing?.ext) {
+                  const c = contactService.findContactByExtension(existing.ext)
+                  if (c) {
+                    displayTitle = c.name
+                    directExt = c.number
                   }
                 }
 
-                // Chuẩn hóa updatedAt theo timestamp của tin nhắn gần nhất
-                let lastMsgTimestamp = existing?.updatedAt
-                if (existing?.messages && existing.messages.length > 0) {
-                  const lastMsg = existing.messages[existing.messages.length - 1]
-                  if (lastMsg && (lastMsg.timestamp || lastMsg.time)) {
-                    if (lastMsg.timestamp) lastMsgTimestamp = Number(lastMsg.timestamp)
+                if (!displayTitle) {
+                  const rName = (room.name || '').trim()
+                  if (rName && rName.toLowerCase() !== myUserName && !rName.toLowerCase().includes('(bạn)')) {
+                    displayTitle = rName
+                  } else if (otherUuid) {
+                    displayTitle = `Máy lẻ ${otherUuid.slice(0, 4)}`
+                  } else {
+                    displayTitle = 'Cuộc trò chuyện 1-1'
                   }
                 }
+              } else {
+                displayTitle = room.name || 'Phòng thảo luận'
+              }
 
-                const displayTitle = isDirect
-                  ? directTitle || 'Trò chuyện 1-1'
-                  : room.name || 'Phòng thảo luận'
-                const avatarBg = isGroup ? '#8b5cf6' : existing?.avatarBg || '#0284c7'
-                const icon = isGroup
-                  ? '👥'
-                  : (displayTitle || 'CH').slice(0, 2).toUpperCase()
-
-                return {
-                  id: room.uuid,
-                  title: displayTitle,
-                  preview: existing?.preview || 'Cuộc trò chuyện mới',
-                  time: existing?.time || '',
-                  unread: existing?.unread || 0,
-                  avatarBg: avatarBg,
-                  icon: icon,
-                  isDirect: isDirect,
-                  ext: directExt,
-                  messages: existing?.messages || [],
-                  members:
-                    existing?.members && existing.members.length > 0
-                      ? existing.members
-                      : serverUsers.map((u) => {
-                          const uId = typeof u === 'string' ? u : u.uuid
-                          const c = contactService.findContactByUuid(uId)
-                          return {
-                            id: uId,
-                            name:
-                              c?.name ||
-                              (uId === myUuid
-                                ? localStorage.getItem('smartcall_username') || 'Tôi'
-                                : 'Thành viên'),
-                            ext: c?.number || (uId === myUuid ? myExt : ''),
-                          }
-                        }),
-                  memberCount: memberCount,
-                  pinned: existing?.pinned || '',
-                  updatedAt: lastMsgTimestamp || existing?.updatedAt || Date.now(),
-                }
-              })
-
-              // Giữ lại các phòng chat 1-1 local nếu CHƯA có phòng server nào tương ứng
-              const directRooms = (this.rooms || []).filter(
-                (r) => r.isDirect || (r.id && r.id.startsWith('direct-')),
-              )
-              const merged = [...serverRooms]
-              for (const dr of directRooms) {
-                const hasMatch = merged.some(
-                  (m) => m.id === dr.id || (dr.ext && m.ext === dr.ext),
-                )
-                if (!hasMatch) {
-                  merged.push(dr)
+              // Chuẩn hóa updatedAt theo timestamp của tin nhắn gần nhất
+              let lastMsgTimestamp = existing?.updatedAt
+              if (existing?.messages && existing.messages.length > 0) {
+                const lastMsg = existing.messages[existing.messages.length - 1]
+                if (lastMsg && (lastMsg.timestamp || lastMsg.time)) {
+                  if (lastMsg.timestamp) lastMsgTimestamp = Number(lastMsg.timestamp)
                 }
               }
-              this.rooms = merged
-              this.saveRooms(true) // Silent: không kích hoạt vòng lặp sự kiện
-              return [...this.rooms]
+
+              const avatarBg = isGroup ? '#8b5cf6' : existing?.avatarBg || '#0284c7'
+              const icon = isGroup
+                ? '👥'
+                : (displayTitle || 'CH').slice(0, 2).toUpperCase()
+
+              return {
+                id: room.uuid,
+                title: displayTitle,
+                preview: existing?.preview || 'Cuộc trò chuyện mới',
+                time: existing?.time || '',
+                unread: existing?.unread || 0,
+                avatarBg: avatarBg,
+                icon: icon,
+                isDirect: isDirect,
+                ext: directExt,
+                messages: existing?.messages || [],
+                members:
+                  existing?.members && existing.members.length > 0
+                    ? existing.members
+                    : serverUsers.map((u) => {
+                        const uId = typeof u === 'string' ? u : u.uuid
+                        const c = contactService.findContactByUuid(uId)
+                        return {
+                          id: uId,
+                          name:
+                            c?.name ||
+                            (uId === myUuid
+                              ? localStorage.getItem('smartcall_username') || 'Tôi'
+                              : 'Thành viên'),
+                          ext: c?.number || (uId === myUuid ? myExt : ''),
+                        }
+                      }),
+                memberCount: memberCount,
+                pinned: existing?.pinned || '',
+                updatedAt: lastMsgTimestamp || existing?.updatedAt || Date.now(),
+              }
+            })
+
+            // Giữ lại các phòng chat 1-1 local nếu CHƯA có phòng server nào tương ứng
+            const directRooms = (this.rooms || []).filter(
+              (r) => r.id && r.id.startsWith('direct-'),
+            )
+            const merged = [...serverRooms]
+            for (const dr of directRooms) {
+              const hasMatch = merged.some(
+                (m) => m.id === dr.id || (dr.ext && m.ext === dr.ext),
+              )
+              if (!hasMatch) {
+                merged.push(dr)
+              }
             }
+            this.rooms = merged
+            this.saveRooms(true) // Silent: không kích hoạt vòng lặp sự kiện
+            return [...this.rooms]
           }
         }
       } catch (err) {
@@ -352,23 +407,58 @@ class ChatService {
 
         if (res.ok) {
           const data = await res.json()
-          if (Array.isArray(data.items) && data.items.length > 0) {
-            const currentUserName = localStorage.getItem('smartcall_username') || 'Người dùng'
+          if (Array.isArray(data.items)) {
+            const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
+            const currentUserName = (wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || '').trim()
+
             const mapped = data.items.map((m) => {
-              const isMine =
-                m.alias === currentUserName || m.user_uuid === wazoService.session?.uuid
+              const senderUuid = m.user_uuid || m.uuid || ''
+              const senderAlias = (m.alias || '').trim()
+
+              let isMine = false
+              if (myUserUuid && senderUuid && senderUuid === myUserUuid) {
+                isMine = true
+              } else if (currentUserName && senderAlias && senderAlias.toLowerCase() === currentUserName.toLowerCase()) {
+                isMine = true
+              } else if (senderAlias === 'Tôi' || senderAlias === 'me') {
+                isMine = true
+              }
+
+              let senderDisplayName = senderAlias || 'Đồng nghiệp'
+              if (isMine) {
+                senderDisplayName = 'Tôi'
+              } else if (senderUuid) {
+                const c = contactService.findContactByUuid(senderUuid)
+                if (c?.name) senderDisplayName = c.name
+              }
+
+              const msgTimestamp = m.created_at ? new Date(m.created_at).getTime() : Date.now()
+
               return {
                 id: m.uuid || `msg-${Date.now()}-${Math.random()}`,
                 sender: isMine ? 'mine' : 'theirs',
-                senderName: m.alias || 'Đồng nghiệp',
+                senderName: senderDisplayName,
                 text: m.content || '',
-                time: m.created_at ? m.created_at.substring(11, 16) : '',
-                readStatus: 'Read',
+                time: formatMessageDateTime(m.created_at),
+                timestamp: msgTimestamp,
+                readStatus: isMine ? 'Đã xem' : 'Read',
                 readers: [],
+                user_uuid: senderUuid,
+                alias: senderAlias,
               }
             })
+
+            // Sắp xếp tăng dần theo thời gian (cũ ở trên, mới ở dưới) - Issue 5
+            mapped.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+
             if (localRoom) {
               localRoom.messages = mapped
+              if (mapped.length > 0) {
+                const last = mapped[mapped.length - 1]
+                localRoom.preview = last.text
+                localRoom.time = last.time
+                localRoom.updatedAt = last.timestamp
+              }
               this.saveRooms(true)
             }
             return mapped
@@ -587,7 +677,7 @@ class ChatService {
   async sendMessage(roomId, text, userAlias = 'Tôi') {
     const now = new Date()
     const msgTimestamp = now.getTime()
-    const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    const timeStr = formatMessageDateTime(now)
     const tempId = `cmsg-${msgTimestamp}`
 
     let targetRoomId = roomId
@@ -609,12 +699,12 @@ class ChatService {
     const newMsg = {
       id: tempId,
       sender: 'mine',
-      senderName: userAlias,
+      senderName: 'Tôi',
       dept: '',
       text,
       time: timeStr,
       timestamp: msgTimestamp,
-      readStatus: 'Read (0)',
+      readStatus: 'Đã gửi',
       readers: [],
     }
 
@@ -653,12 +743,8 @@ class ChatService {
           if (serverMsg && (serverMsg.uuid || serverMsg.id)) {
             newMsg.id = serverMsg.uuid || serverMsg.id
             if (serverMsg.created_at) {
-              const serverDate = new Date(serverMsg.created_at)
-              newMsg.time = serverDate.toLocaleTimeString('vi-VN', {
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-              newMsg.timestamp = serverDate.getTime()
+              newMsg.time = formatMessageDateTime(serverMsg.created_at)
+              newMsg.timestamp = new Date(serverMsg.created_at).getTime()
               if (room) {
                 room.time = newMsg.time
                 room.updatedAt = newMsg.timestamp
@@ -761,8 +847,16 @@ class ChatService {
    */
   reset() {
     this.rooms = []
+    this._fetchingRoomsPromise = null
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('smartcall_active_room_id')
+      try {
+        Object.keys(localStorage).forEach((k) => {
+          if (k.startsWith('smartcall_chat_rooms_')) {
+            localStorage.removeItem(k)
+          }
+        })
+      } catch (e) {}
     }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))

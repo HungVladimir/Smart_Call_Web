@@ -8,7 +8,15 @@
           <button class="btn-new-room" @click="openAddMemberModal">+ Tạo nhóm</button>
         </div>
 
-        <div class="room-list">
+        <div v-if="isLoadingRooms" class="rooms-loading">
+          <div class="spinner-circle"></div>
+          <span>Đang đồng bộ cuộc trò chuyện...</span>
+        </div>
+        <div v-else-if="sortedRooms.length === 0" class="rooms-empty">
+          <span class="rooms-empty-icon">💬</span>
+          <p>Chưa có cuộc trò chuyện nào</p>
+        </div>
+        <div v-else class="room-list">
           <div
             v-for="room in sortedRooms"
             :key="room.id"
@@ -80,44 +88,54 @@
         </div>
 
         <!-- Thanh thông báo ghim -->
-        <div v-if="showPinned" class="pinned-bar">
+        <div v-if="currentRoom && currentRoom.pinned" class="pinned-bar">
           <div class="pinned-content">
             <span class="pinned-tag">📌 Ghim:</span>
-            <span class="pinned-text">{{ pinnedNotice }}</span>
+            <span class="pinned-text">{{ currentRoom.pinned }}</span>
           </div>
-          <button class="btn-close-pin" title="Ẩn thông báo ghim" @click="showPinned = false">✖</button>
+          <button class="btn-close-pin" title="Gỡ thông báo ghim" @click="unpinMessage">✖</button>
         </div>
 
         <!-- Danh sách tin nhắn -->
         <div ref="msgContainerRef" class="chat-messages">
-          <div
-            v-for="msg in currentRoom.messages"
-            :key="msg.id"
-            class="msg-bubble-wrap"
-            :class="(msg.sender === 'mine' || msg.sender === 'me') ? 'mine' : 'theirs'"
-          >
-            <span class="msg-sender">{{ msg.senderName }}</span>
-            <div class="msg-bubble">
-              {{ msg.text }}
-            </div>
-            <div class="msg-meta">
-              <span>{{ msg.time }}</span>
-              <span
-                class="read-tag"
-                title="Xem ai đã đọc"
-                @click="openReadIdModal(msg)"
-              >
-                {{ msg.readStatus }}
-              </span>
-              <button
-                class="btn-pin-msg"
-                title="Ghim tin nhắn này lên đầu phòng chat"
-                @click="pinMessage(msg)"
-              >
-                📌 Ghim
-              </button>
-            </div>
+          <div v-if="isLoadingMessages" class="messages-loading">
+            <div class="spinner-circle"></div>
+            <span>Đang tải tin nhắn từ máy chủ...</span>
           </div>
+          <div v-else-if="!currentRoom.messages || currentRoom.messages.length === 0" class="messages-empty">
+            <p>Chưa có tin nhắn nào trong cuộc trò chuyện này.</p>
+          </div>
+          <template v-else>
+            <div
+              v-for="msg in currentRoom.messages"
+              :key="msg.id"
+              class="msg-bubble-wrap"
+              :class="(msg.sender === 'mine' || msg.sender === 'me') ? 'mine' : 'theirs'"
+            >
+              <span class="msg-sender">{{ (msg.sender === 'mine' || msg.sender === 'me') ? 'Tôi' : msg.senderName }}</span>
+              <div class="msg-bubble">
+                {{ msg.text }}
+              </div>
+              <div class="msg-meta">
+                <span>{{ msg.time }}</span>
+                <span
+                  v-if="msg.sender === 'mine' || msg.sender === 'me'"
+                  class="read-tag"
+                  title="Xem ai đã đọc"
+                  @click="openReadIdModal(msg)"
+                >
+                  {{ msg.readStatus || 'Đã gửi' }}
+                </span>
+                <button
+                  class="btn-pin-msg"
+                  title="Ghim tin nhắn này lên đầu phòng chat"
+                  @click="pinMessage(msg)"
+                >
+                  📌 Ghim
+                </button>
+              </div>
+            </div>
+          </template>
         </div>
 
         <!-- Hộp soạn thảo tin nhắn -->
@@ -249,13 +267,11 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { chatService } from '@/services/chatService'
+import { chatService, formatMessageDateTime } from '@/services/chatService'
 
 const route = useRoute()
 const router = useRouter()
 
-const showPinned = ref(true)
-const pinnedNotice = ref('Thông báo: Mọi thắc mắc kỹ thuật vui lòng liên hệ bộ phận hỗ trợ LAN.')
 const showMemberModal = ref(false)
 const showReadModal = ref(false)
 const inputText = ref('')
@@ -264,6 +280,8 @@ const editGroupTitle = ref('')
 const isTitleChanged = ref(false)
 const selectedMsg = ref(null)
 const msgContainerRef = ref(null)
+const isLoadingRooms = ref(false)
+const isLoadingMessages = ref(false)
 
 // Phân quyền Quản trị viên vs Người dùng thường
 const currentIsAdmin = computed(() => localStorage.getItem('smartcall_is_admin') === 'true')
@@ -282,14 +300,30 @@ const currentRoomMembers = computed(() => {
 })
 
 const selectedMsgReaders = computed(() => {
-  return selectedMsg.value?.readers || [currentUserName.value]
+  if (selectedMsg.value?.readers && selectedMsg.value.readers.length > 0) {
+    return selectedMsg.value.readers
+  }
+  if (currentRoom.value?.isDirect) {
+    return [currentRoom.value.title]
+  }
+  const others = (currentRoom.value?.members || [])
+    .filter((m) => m.name !== currentUserName.value && m.name !== 'Tôi')
+    .map((m) => m.name)
+  return others.length > 0 ? others : ['Đồng nghiệp']
 })
 
 const loadRooms = async () => {
-  const list = await chatService.getRooms()
-  rooms.value = [...list]
-  if (!currentRoom.value && rooms.value.length > 0) {
-    currentRoom.value = rooms.value[0]
+  isLoadingRooms.value = true
+  try {
+    const list = await chatService.getRooms()
+    rooms.value = [...list]
+    // Giữ nguyên phòng đang mở nếu có, KHÔNG tự ý chọn rooms[0] để bảo toàn badge (Issue 6)
+    if (currentRoom.value) {
+      const found = rooms.value.find((r) => r.id === currentRoom.value.id)
+      if (found) currentRoom.value = found
+    }
+  } finally {
+    isLoadingRooms.value = false
   }
 }
 
@@ -305,21 +339,25 @@ const selectRoom = async (room) => {
   }
   // Tự động kéo lịch sử tin nhắn từ Wazo chatd nếu là phòng trên server thật
   if (room && room.id && !room.id.startsWith('room-') && !room.id.startsWith('direct-')) {
-    const msgs = await chatService.getRoomMessages(room.id)
-    if (msgs && msgs.length > 0) {
-      room.messages = msgs
+    isLoadingMessages.value = true
+    try {
+      const msgs = await chatService.getRoomMessages(room.id)
+      if (msgs && msgs.length > 0) {
+        room.messages = msgs
+      }
+    } finally {
+      isLoadingMessages.value = false
     }
   }
   scrollToBottom()
 }
 
-// Ghim tin nhắn bất kỳ lên đầu phòng chat
+// Ghim tin nhắn bất kỳ lên đầu phòng chat (Issue 7 - per-room)
 const pinMessage = async (msg) => {
-  pinnedNotice.value = `${msg.senderName}: "${msg.text}"`
-  showPinned.value = true
-  if (currentRoom.value) {
-    await chatService.updatePinnedMessage(currentRoom.value.id, pinnedNotice.value)
-  }
+  if (!currentRoom.value) return
+  const pinText = `${msg.senderName}: "${msg.text}"`
+  currentRoom.value.pinned = pinText
+  await chatService.updatePinnedMessage(currentRoom.value.id, pinText)
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: {
@@ -328,6 +366,12 @@ const pinMessage = async (msg) => {
       },
     }),
   )
+}
+
+const unpinMessage = async () => {
+  if (!currentRoom.value) return
+  currentRoom.value.pinned = ''
+  await chatService.updatePinnedMessage(currentRoom.value.id, '')
 }
 
 const sendMessage = async () => {
@@ -342,7 +386,7 @@ const sendMessage = async () => {
   if (target) {
     target.updatedAt = Date.now()
     target.preview = text
-    target.time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    target.time = formatMessageDateTime(new Date())
   }
   rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
@@ -461,13 +505,6 @@ onActivated(async () => {
   await loadRooms()
   if (route.query && route.query.ext) {
     checkDirectChatRoute()
-  }
-  if (currentRoom.value) {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('smartcall_active_room_id', currentRoom.value.id)
-    }
-    currentRoom.value.unread = 0
-    chatService.saveRooms()
   }
 })
 
@@ -1265,5 +1302,53 @@ const startVideoCall = () => {
 .check-icon {
   color: #16a34a;
   font-weight: bold;
+}
+
+/* Loading Spinners & Empty states */
+.rooms-loading,
+.messages-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 16px;
+  gap: 12px;
+  color: #64748b;
+  font-size: 0.88rem;
+  flex: 1;
+}
+
+.rooms-empty,
+.messages-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 16px;
+  gap: 10px;
+  color: #94a3b8;
+  font-size: 0.88rem;
+  text-align: center;
+  flex: 1;
+}
+
+.rooms-empty-icon {
+  font-size: 2rem;
+  opacity: 0.7;
+}
+
+.spinner-circle {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #1e88e5;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

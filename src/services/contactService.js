@@ -6,6 +6,7 @@ class ContactService {
     this.currentContacts = []
     this.presences = {}
     this.presencePollTimer = null
+    this.favoriteIds = []
 
     if (typeof window !== 'undefined') {
       window.addEventListener('wazo-presence-updated', (ev) => {
@@ -16,36 +17,128 @@ class ContactService {
     }
   }
 
-  // Khóa danh sách yêu thích phân tách theo User UUID
+  // Khóa danh sách yêu thích phân tách theo User UUID (dự phòng)
   getFavoritesKey() {
     const userUuid = wazoService?.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'default'
     return `smartcall_favorites_${userUuid}`
   }
 
-  // Quản lý danh sách Yêu thích (Favorites) - Mặc định là mảng rỗng [] chuẩn production
-  getFavoriteIds() {
+  /**
+   * Tải danh sách liên hệ yêu thích từ máy chủ Wazo Dird API
+   * GET /api/dird/0.1/directories/favorites/default
+   */
+  async fetchFavorites() {
     try {
-      const raw = localStorage.getItem(this.getFavoritesKey())
-      return raw ? JSON.parse(raw) : []
-    } catch (e) {
-      return []
+      const token = wazoService.getToken()
+      if (!token) {
+        this.favoriteIds = []
+        return []
+      }
+      const host = wazoService.host.startsWith('http')
+        ? wazoService.host
+        : `https://${wazoService.host}`
+
+      const res = await fetch(`${host}/api/dird/0.1/directories/favorites/default`, {
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(4000),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        const ids = []
+        if (Array.isArray(data.items)) {
+          data.items.forEach((item) => {
+            const cid = item.contact_id || item.id || item.uuid || item.relations?.user_uuid
+            if (cid) ids.push(String(cid))
+            if (item.relations?.user_uuid) ids.push(String(item.relations.user_uuid))
+            if (item.exten || item.number) ids.push(String(item.exten || item.number))
+          })
+        } else if (Array.isArray(data.results) && Array.isArray(data.column_types)) {
+          const idIdx = data.column_types.indexOf('id')
+          data.results.forEach((r) => {
+            if (idIdx !== -1 && r.column_values[idIdx]) ids.push(String(r.column_values[idIdx]))
+            if (r.relations?.user_uuid) ids.push(String(r.relations.user_uuid))
+          })
+        } else if (Array.isArray(data)) {
+          data.forEach((item) => {
+            const cid = item.contact_id || item.id || item.uuid || item.relations?.user_uuid
+            if (cid) ids.push(String(cid))
+          })
+        }
+        this.favoriteIds = Array.from(new Set(ids))
+        return this.favoriteIds
+      }
+    } catch (err) {
+      console.warn('Lỗi lấy danh sách yêu thích từ Wazo Dird:', err)
     }
+    return this.favoriteIds || []
   }
 
-  toggleFavorite(id) {
-    const list = this.getFavoriteIds()
-    const idx = list.indexOf(id)
-    if (idx !== -1) {
-      list.splice(idx, 1)
+  /**
+   * Bật/Tắt trạng thái yêu thích trên máy chủ Wazo Dird REST API
+   * PUT /api/dird/0.1/directories/favorites/{directory}/{contact}
+   * DELETE /api/dird/0.1/directories/favorites/{directory}/{contact}
+   */
+  async toggleFavorite(contactOrId) {
+    let contact = null
+    let contactId = ''
+    if (contactOrId && typeof contactOrId === 'object') {
+      contact = contactOrId
+      contactId = contact.id || contact.uuid || ''
     } else {
-      list.push(id)
+      contactId = String(contactOrId || '')
+      contact = this.currentContacts.find((c) => c.id === contactId || c.uuid === contactId)
     }
-    localStorage.setItem(this.getFavoritesKey(), JSON.stringify(list))
-    return list.includes(id)
+
+    if (!contactId) return false
+    const willBeFavorite = contact ? !contact.isFavorite : !this.isFavorite(contactId)
+
+    // Cập nhật trạng thái tức thời
+    if (contact) {
+      contact.isFavorite = willBeFavorite
+    }
+    if (willBeFavorite) {
+      if (!this.favoriteIds.includes(contactId)) this.favoriteIds.push(contactId)
+      if (contact?.uuid && !this.favoriteIds.includes(contact.uuid)) this.favoriteIds.push(contact.uuid)
+    } else {
+      this.favoriteIds = this.favoriteIds.filter(
+        (id) => id !== contactId && (!contact?.uuid || id !== contact.uuid),
+      )
+    }
+
+    try {
+      const token = wazoService.getToken()
+      if (token) {
+        const host = wazoService.host.startsWith('http')
+          ? wazoService.host
+          : `https://${wazoService.host}`
+        const directory = contact?.source || 'default'
+        const method = willBeFavorite ? 'PUT' : 'DELETE'
+        await fetch(
+          `${host}/api/dird/0.1/directories/favorites/${directory}/${encodeURIComponent(contactId)}`,
+          {
+            method,
+            headers: {
+              'X-Auth-Token': token,
+              Accept: 'application/json',
+            },
+            signal: AbortSignal.timeout(4000),
+          },
+        )
+      }
+    } catch (e) {
+      console.warn('Lỗi gọi API favorites Wazo:', e)
+    }
+
+    return willBeFavorite
   }
 
   isFavorite(id) {
-    return this.getFavoriteIds().includes(id)
+    if (!id) return false
+    return (this.favoriteIds || []).includes(String(id))
   }
 
   /**
@@ -85,7 +178,8 @@ class ContactService {
    * Lấy danh bạ toàn bộ nhân viên trực tiếp từ Wazo (100% dữ liệu thật, không mock data)
    */
   async getContacts() {
-    const favorites = this.getFavoriteIds()
+    await this.fetchFavorites()
+    const favorites = this.favoriteIds || []
     try {
       const token = wazoService.getToken()
       if (!token) throw new Error('No token available')
@@ -183,7 +277,7 @@ class ContactService {
             status: 'offline',
             statusLabel: 'Ngoại tuyến',
             unreadCount: 0,
-            isFavorite: favorites.includes(id),
+            isFavorite: favorites.includes(id) || (userUuid && favorites.includes(userUuid)) || Boolean(item.favorited),
           }
         })
         const finalContacts = await this.loadPresencesForContacts(mappedList)
@@ -219,7 +313,7 @@ class ContactService {
             status: 'offline',
             statusLabel: 'Ngoại tuyến',
             unreadCount: 0,
-            isFavorite: favorites.includes(id),
+            isFavorite: favorites.includes(id) || (userUuid && favorites.includes(userUuid)) || Boolean(r.favorited),
           }
         })
         const finalContacts = await this.loadPresencesForContacts(mappedList)
@@ -374,6 +468,7 @@ class ContactService {
     this.stopPresencePolling()
     this.currentContacts = []
     this.presences = {}
+    this.favoriteIds = []
     logger.info('API', 'Đã dọn dẹp sạch toàn bộ cache danh bạ và hiện diện.')
   }
 

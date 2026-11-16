@@ -800,13 +800,14 @@ const handleMessage = (contact) => {
   })
 }
 
-// Bật/tắt trạng thái Yêu thích
-const toggleFavorite = (contact) => {
-  contact.isFavorite = contactService.toggleFavorite(contact.id)
+// Bật/tắt trạng thái Yêu thích (gọi Wazo Dird REST API)
+const toggleFavorite = async (contact) => {
+  const newFav = await contactService.toggleFavorite(contact)
+  contact.isFavorite = newFav
   window.dispatchEvent(
     new CustomEvent('app-toast', {
       detail: {
-        message: contact.isFavorite
+        message: newFav
           ? `Đã thêm [${contact.name}] vào mục Yêu thích ⭐`
           : `Đã bỏ [${contact.name}] khỏi mục Yêu thích`,
         type: 'info',

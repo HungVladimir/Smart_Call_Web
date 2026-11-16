@@ -2295,5 +2295,84 @@ Biên soạn tài liệu dài hơn 900 dòng, phân tích chi tiết với sơ �
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (491ms).
 - `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi (443ms).
 
+---
+
+## 41. KHẮC PHỤC TRIỆT ĐỂ 8 VẤN ĐỀ VỀ DANH BẠ YÊU THÍCH, PHÂN LẬP TIN NHẮN, TÊN NGƯỜI DÙNG, ĐỊNH DẠNG GIỜ, HUY HIỆU & STORAGE DỮ LIỆU THẬT
+
+### 1. Bối cảnh & Hiện trạng Sự cố:
+- Sau khi kiểm thử thực tế trên hệ thống tổng đài thật giữa nhiều tài khoản (Alice, Bob, v.v.), phát hiện 8 vấn đề cốt lõi liên quan đến lưu trữ danh bạ yêu thích, phân lập phiên làm việc khi đổi tài khoản, nhận diện chiều tin nhắn và tiêu đề phòng 1-1, định dạng múi giờ +7, tính toán huy hiệu Sidebar và hiệu ứng loading dữ liệu thật.
+
+### 2. Các Nội dung Kỹ thuật Đã Triển khai Chi tiết:
+
+1. **Danh bạ Yêu thích (Favorite) chuẩn Wazo Dird API:**
+   - Thay thế việc lưu danh sách ID yêu thích vào `localStorage` bằng việc gọi trực tiếp REST API của máy chủ Wazo Dird:
+     - `GET /api/dird/0.1/directories/favorites/default`: Lấy danh sách yêu thích lưu trên máy chủ Wazo.
+     - `PUT /api/dird/0.1/directories/favorites/{directory}/{contact}`: Đánh dấu yêu thích lên máy chủ Wazo.
+     - `DELETE /api/dird/0.1/directories/favorites/{directory}/{contact}`: Bỏ đánh dấu yêu thích trên máy chủ Wazo.
+   - Đọc đồng thời cờ `favorited` từ phản hồi danh bạ Wazo Dird.
+   - Khi đăng nhập trên bất kỳ trình duyệt nào khác, danh sách yêu thích luôn được đồng bộ chính xác từ máy chủ tổng đài.
+
+2. **Phân lập Dữ liệu & Dọn sạch Session Storage khi Đổi Tài khoản:**
+   - Trong `wazoService.logout()`: Xóa sạch toàn bộ session storage keys: `smartcall_wazo_token`, `smartcall_wazo_refreshToken`, `smartcall_user_uuid`, `smartcall_user_exten`, `smartcall_extension`, `smartcall_username`, `smartcall_role`, `smartcall_is_admin`, `smartcall_logged_in`, `smartcall_active_room_id`, `smartcall_offline_mode`.
+   - Xóa toàn bộ các key phòng chat cục bộ `smartcall_chat_rooms_*` và `smartcall_favorites_*`.
+   - Gọi `contactService.reset()`, `chatService.reset()`, `historyService.reset()` để dọn sạch hoàn toàn RAM.
+   - Khi tài khoản B đăng nhập, hệ thống chỉ nạp dữ liệu thật của tài khoản B từ Wazo server, không rò rỉ bất kỳ phòng chat hay tin nhắn nào của tài khoản A.
+
+3. **Phân giải Động Tên Người Dùng & Tiêu đề Phòng Chat 1-1 (Dynamic Title Resolution):**
+   - Áp dụng nguyên tắc bất biến: **Tuyệt đối KHÔNG dùng trường `room.name` từ server cho phòng chat 1-1 (`isDirect`)**.
+   - Tiêu đề phòng 1-1 được tính toán động dựa trên người đang đăng nhập (`myUserUuid`):
+     - Tìm thành viên đối phương trong phòng: `otherUser = serverUsers.find(u => uId !== myUserUuid)`.
+     - Tra cứu thông tin đối phương từ danh bạ: `contactService.findContactByUuid(otherUuid)`.
+     - Phía máy A hiển thị tên B; Phía máy B hiển thị tên A.
+   - Trong tin nhắn: So sánh chính xác `myUserUuid` và `myUserName` để nhận diện `isMine`.
+     - Tin nhắn của chính mình: Bong bóng bên phải (`mine`), tên người gửi hiển thị "Tôi".
+     - Tin nhắn của đối phương: Bong bóng bên trái (`theirs`), tên người gửi hiển thị tên đối phương.
+
+4. **Chuẩn hóa Định dạng Ngày Giờ Tin nhắn (Khắc phục Triệt để Lỗi Lệch +7h / UTC):**
+   - Loại bỏ lệnh cắt chuỗi ISO UTC `substring(11, 16)`.
+   - Xây dựng hàm chuẩn hóa duy nhất: `formatMessageDateTime(isoOrTimestamp)`:
+     - Xuất định dạng đầy đủ: `HH:mm DD/MM/YYYY` (ví dụ: `10:30 16/11/2026`).
+     - Tự động chuyển đổi từ giờ UTC sang múi giờ địa phương của trình duyệt.
+   - Áp dụng đồng bộ cho: Tin nhắn nạp từ API máy chủ, tin nhắn nhận qua WebSocket, và tin nhắn vừa gửi đi.
+
+5. **Đơn giản hóa Thứ tự & Luồng Hiển thị Tin nhắn:**
+   - Sắp xếp tin nhắn trong phòng chat theo thời gian tăng dần (`messages.sort((a, b) => a.timestamp - b.timestamp)`): Tin cũ ở trên, tin mới ở dưới.
+   - Tự động cuộn xuống đáy (`scrollToBottom`) khi mở phòng hoặc khi có tin nhắn mới.
+   - Danh sách phòng chat cột bên trái sắp xếp theo tin nhắn mới nhất lên đầu (`updatedAt desc`).
+
+6. **Huy hiệu Số đỏ (Badge) Tin nhắn trên Sidebar Giảm dần theo Từng Cuộc Trò chuyện:**
+   - Loại bỏ việc tự ý gán `currentRoom = rooms[0]` và xóa unread khi vừa vào màn hình `MessagesView.vue`.
+   - Khi người dùng click vào tab "Tin nhắn", huy hiệu số tin nhắn chưa đọc vẫn được bảo toàn.
+   - Chỉ khi người dùng click chọn xem một cuộc trò chuyện cụ thể (`selectRoom(room)`):
+     - Đặt `room.unread = 0`.
+     - Phát sự kiện `smartcall-rooms-updated`.
+     - `AppSidebar.vue` tự động tính lại tổng số tin chưa đọc và giảm số hiển thị tương ứng (ví dụ: 7 $\rightarrow$ 4 $\rightarrow$ 2 $\rightarrow$ 0).
+
+7. **Ghim Tin nhắn Độc lập theo Phòng & Trạng thái Đã đọc (Read Status):**
+   - Thanh ghim tin nhắn phụ thuộc trực tiếp vào `currentRoom.pinned`. Khi chuyển sang phòng khác, nếu phòng đó chưa có tin ghim thì thanh ghim tự động ẩn đi; hỗ trợ gỡ ghim độc lập cho từng phòng.
+   - Nhãn `Read`/`Đã xem`/`Đã gửi` CHỈ hiển thị ở tin nhắn của chính mình gửi đi (`msg.sender === 'mine'`).
+   - Khi click vào nhãn `Đã xem`, mở modal popup "DANH SÁCH ĐÃ ĐỌC (READ ID)" hiển thị tên người đọc và thời điểm xem tin nhắn.
+
+8. **Thuần 100% Real API & Biểu tượng Loading Spinners:**
+   - Loại bỏ toàn bộ fake data / stale cache gây sai lệch; toàn bộ dữ liệu phòng và tin nhắn nạp trực tiếp từ Wazo Chatd server.
+   - Bổ sung biểu tượng xoay tròn (`loading spinner`):
+     - Cột danh sách phòng chat: Hiển thị spinner khi đang tải danh sách phòng từ server (`isLoadingRooms`).
+     - Khung nội dung tin nhắn: Hiển thị spinner khi đang tải tin nhắn của phòng từ server (`isLoadingMessages`).
+
+### 3. Danh sách File Đã Chỉnh Sửa:
+- `src/services/contactService.js`: Bổ sung `fetchFavorites()`, `toggleFavorite()`, `isFavorite()`, tích hợp REST API Wazo Dird.
+- `src/services/wazo.js`: Dọn sạch triệt để toàn bộ session storage keys và cache cục bộ trong `logout()`.
+- `src/services/chatService.js`: Bổ sung hàm tiện ích `formatMessageDateTime()`, phân giải động tiêu đề phòng 1-1, sắp xếp tin nhắn tăng dần theo thời gian, cập nhật `sendMessage()`, `getRoomMessages()`, `handleIncomingMessage()` và `reset()`.
+- `src/views/MessagesView.vue`: Bổ sung loading spinners (`isLoadingRooms`, `isLoadingMessages`), sửa thanh ghim per-room, nhãn Read chỉ hiện ở tin của mình, bỏ auto-clear unread khi vừa vào màn hình.
+- `src/views/CallsView.vue`: Kết nối nút ⭐ với `contactService.toggleFavorite()` bất đồng bộ lên Wazo Dird API.
+- `src/components/layout/AppSidebar.vue`: Tối ưu cập nhật badge số đỏ tin nhắn chưa đọc tức thì khi chọn xem phòng.
+
+### 4. Đồng bộ Song song sang `Smart_Call_Web_Mock`:
+- Đồng bộ toàn bộ các cập nhật logic tương ứng sang `D:\Project\Smart_Call_Web_Mock\`, đồng thời bảo toàn cơ chế fallback offline cho bản thử nghiệm.
+
+### 5. Kết quả Kiểm tra Biên dịch (Build Verification):
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp (416ms).
+- `Smart_Call_Web_Mock`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp (575ms).
+
 
 

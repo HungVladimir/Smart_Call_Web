@@ -156,11 +156,30 @@ class WazoService {
       }
       this.session = null
     }
-    localStorage.removeItem('smartcall_wazo_token')
-    localStorage.removeItem('smartcall_wazo_refreshToken')
-    localStorage.removeItem('smartcall_user_exten')
-    localStorage.removeItem('smartcall_extension')
-    localStorage.removeItem('smartcall_offline_mode')
+    // Xóa sạch toàn bộ session storage keys theo Issue 2 & plan
+    const sessionKeys = [
+      'smartcall_wazo_token',
+      'smartcall_wazo_refreshToken',
+      'smartcall_user_uuid',
+      'smartcall_user_exten',
+      'smartcall_extension',
+      'smartcall_username',
+      'smartcall_role',
+      'smartcall_is_admin',
+      'smartcall_logged_in',
+      'smartcall_active_room_id',
+      'smartcall_offline_mode',
+    ]
+    sessionKeys.forEach((key) => localStorage.removeItem(key))
+
+    // Xóa tất cả các cache phòng chat cục bộ để không rò rỉ sang tài khoản khác
+    try {
+      Object.keys(localStorage).forEach((k) => {
+        if (k.startsWith('smartcall_chat_rooms_') || k.startsWith('smartcall_favorites_')) {
+          localStorage.removeItem(k)
+        }
+      })
+    } catch (e) {}
     this.disconnectPhone()
     callStore.isRegistered = false
     callStore.myExtension = ''
