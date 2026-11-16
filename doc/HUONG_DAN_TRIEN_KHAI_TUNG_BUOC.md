@@ -2550,7 +2550,7 @@ Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn 
      - Luồng 2: Âm thanh đối phương phát từ xa (từ thẻ `<audio id="wazo-remote-audio">` hoặc WebRTC remote stream).
    - Sử dụng `MediaRecorder` xuất định dạng chuẩn `audio/webm;codecs=opus`.
    - Lưu trữ bền vững dữ liệu âm thanh dạng `Blob` vào `IndexedDB` (`smartcall_recordings_db`) gắn với `callId`, không bị giới hạn 5MB như `localStorage`.
-   - Cung cấp các API: `startRecording()`, `stopRecording()`, `isRecording()`, `getRecordingDuration()`, `getRecordingAudioUrl()`, `downloadRecordingForCall()`.
+   - Cung cấp các API: `startRecording()`, `stopRecording()`, `isRecording()`, `getRecordingDuration()`, `getRecordingAudioUrl()`, `downloadRecording()`, `downloadRecordingForCall()`.
 4. **Tích hợp Nút Ghi âm trên Thanh Điều Khiển Đàm thoại (`CallsView.vue`):**
    - Bổ sung nút 🔴 Ghi âm trên `controls-row` khi cuộc gọi đang kết nối (`isCalling`).
    - Khi đang ghi âm: Nút chuyển sang nền đỏ với hiệu ứng pulse nhấp nháy, hiển thị `● 00:35` và trên thông tin cuộc gọi có thẻ chỉ báo `● 00:35 Đang ghi âm`.

@@ -231,10 +231,21 @@ class HistoryService {
         // Hợp nhất dữ liệu: kết hợp các cuộc gọi cục bộ mới nhất với CDR từ Wazo server
         const merged = [...mapped]
         this.localHistory.forEach((loc) => {
-          const alreadyExists = merged.some(
-            (m) => m.id === loc.id || (m.date === loc.date && m.extension === loc.extension),
+          const existing = merged.find(
+            (m) =>
+              m.id === loc.id ||
+              (m.extension === loc.extension &&
+                Math.abs(new Date(m.date || 0) - new Date(loc.date || 0)) < 120000),
           )
-          if (!alreadyExists) {
+          if (existing) {
+            // Bảo toàn thông tin file ghi âm cục bộ khi kết hợp với bản ghi CDR của máy chủ
+            if (loc.recordingId && !existing.recordingId) {
+              existing.recordingId = loc.recordingId
+            }
+            if (loc.hasRecording) {
+              existing.hasRecording = true
+            }
+          } else {
             merged.push(loc)
           }
         })

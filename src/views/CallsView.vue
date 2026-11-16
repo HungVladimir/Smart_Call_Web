@@ -302,11 +302,11 @@
                 class="control-btn btn-record"
                 :class="{ active: isRecording, recording: isRecording }"
                 :disabled="!isCalling"
-                :title="isRecording ? 'Dừng ghi âm cuộc gọi' : 'Bắt đầu ghi âm cuộc gọi'"
+                :title="isRecording ? 'Dừng ghi âm cuộc gọi (bấm vào để dừng ghi âm)' : 'Bắt đầu ghi âm cuộc gọi'"
                 @click="toggleRecord"
               >
                 <span v-if="isRecording" class="rec-dot-pulse">●</span>
-                <span v-if="isRecording" class="rec-label">{{ formattedRecordingDuration }}</span>
+                <span v-if="isRecording" class="rec-label">{{ formattedRecordingDuration }} Đang ghi âm</span>
                 <svg
                   v-else
                   class="ctrl-svg-icon rec-svg"
@@ -1043,6 +1043,7 @@ const toggleRecord = async () => {
       extension: callStore.activeCall.number,
       dept: callStore.activeCall.dept,
       direction: callStore.activeCall.direction,
+      session: callStore.activeCall.session,
     })
     callStore.activeCall.isRecorded = true
   }

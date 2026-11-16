@@ -181,7 +181,7 @@
 
             <div class="player-time-text">
               {{ currentPlayingId === call.id ? formatTime(playbackCurrentTime) : '00:00' }} /
-              {{ formatTime(call.duration || (currentPlayingId === call.id ? playbackDuration : 0)) }}
+              {{ formatTime(currentPlayingId === call.id && playbackDuration ? playbackDuration : (call.duration || 0)) }}
             </div>
 
             <button
@@ -200,11 +200,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
 import { recordService } from '@/services/recordService'
+import { callStore } from '@/services/wazo'
 
 const router = useRouter()
 
@@ -268,8 +269,11 @@ const syncRecordingsAvailability = async () => {
           map[c.id] = true
         }
       }
+      if (c.hasRecording) {
+        map[c.id] = true
+      }
     })
-    recordingsMap.value = map
+    recordingsMap.value = { ...map }
   } catch (e) {}
 }
 
@@ -344,15 +348,22 @@ const togglePlayCall = async (call) => {
   }
 }
 
-const seekCallAudio = (call, event) => {
-  if (currentPlayingId.value !== call.id || !globalAudio) return
+const seekCallAudio = async (call, event) => {
   const track = event.currentTarget
   const rect = track.getBoundingClientRect()
   const clickX = event.clientX - rect.left
   const ratio = Math.max(0, Math.min(1, clickX / rect.width))
-  const newTime = ratio * (playbackDuration.value || call.duration || 0)
-  globalAudio.currentTime = newTime
-  playbackCurrentTime.value = newTime
+
+  if (currentPlayingId.value !== call.id || !globalAudio) {
+    await togglePlayCall(call)
+  }
+
+  if (globalAudio) {
+    const totalDuration = playbackDuration.value || call.duration || 0
+    const newTime = ratio * totalDuration
+    globalAudio.currentTime = newTime
+    playbackCurrentTime.value = newTime
+  }
 }
 
 const downloadCall = async (call) => {
@@ -420,6 +431,18 @@ onMounted(() => {
 onActivated(() => {
   fetchHistory(false)
 })
+
+onDeactivated(() => {
+  stopCurrentAudio()
+})
+
+// Dừng phát ghi âm nếu có cuộc gọi mới phát sinh hoặc gọi đến
+watch(
+  () => Boolean(callStore.activeCall || callStore.incomingCall),
+  (hasCall) => {
+    if (hasCall) stopCurrentAudio()
+  },
+)
 
 onUnmounted(() => {
   stopCurrentAudio()

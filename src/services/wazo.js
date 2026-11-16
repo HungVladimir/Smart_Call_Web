@@ -43,6 +43,9 @@ class WazoService {
     const cleanHost = (this.host || '107.126.11.126:9443').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
     Wazo.Auth.init(this.clientId)
     Wazo.Auth.setHost(cleanHost)
+    if (typeof window !== 'undefined') {
+      window.Wazo = Wazo
+    }
     logger.info('AUTH', `Khởi tạo Wazo Auth SDK với host: ${cleanHost}`)
   }
 
@@ -682,6 +685,7 @@ class WazoService {
               extension: callStore.activeCall.number,
               dept: callStore.activeCall.dept,
               direction: callStore.activeCall.direction,
+              session: callSession,
             })
             callStore.activeCall.isRecorded = true
           }
@@ -862,6 +866,7 @@ class WazoService {
             extension: callStore.activeCall.number,
             dept: callStore.activeCall.dept,
             direction: callStore.activeCall.direction,
+            session: session,
           })
           callStore.activeCall.isRecorded = true
         }

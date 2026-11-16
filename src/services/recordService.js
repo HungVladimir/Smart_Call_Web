@@ -27,6 +27,8 @@ class RecordService {
     this._recordedChunks = []
     this._audioCtx = null
     this._micStream = null
+    this._destination = null
+    this._stopPromise = null
     this._durationTimer = null
     this._blobUrls = new Map() // callId -> objectUrl
     this._memoryFallback = new Map() // callId -> record (nếu IndexedDB bị chặn)
@@ -99,35 +101,64 @@ class RecordService {
         await this._audioCtx.resume()
       }
 
-      const destination = this._audioCtx.createMediaStreamDestination()
+      this._destination = this._audioCtx.createMediaStreamDestination()
 
-      // 1. Luồng âm thanh Micro của người dùng
+      // 1. Luồng âm thanh Micro của người dùng (ưu tiên local stream từ WebRTC session nếu có)
       try {
-        const selectedMic = localStorage.getItem('smartcall_selected_mic') || 'default'
-        const audioConstraints = {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
-        if (selectedMic && selectedMic !== 'default') {
-          audioConstraints.deviceId = { exact: selectedMic }
+        let localStream = null
+        if (meta.session) {
+          try {
+            const wazoPhone = typeof window !== 'undefined' ? window.Wazo?.Phone : null
+            if (wazoPhone?.getLocalStream) {
+              localStream = wazoPhone.getLocalStream(meta.session)
+            }
+            if (!localStream && meta.session.localStream) {
+              localStream = meta.session.localStream
+            }
+          } catch (e) {}
         }
 
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          this._micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
-          const micSource = this._audioCtx.createMediaStreamSource(this._micStream)
-          micSource.connect(destination)
+        if (localStream && localStream.getAudioTracks && localStream.getAudioTracks().length > 0) {
+          const micSource = this._audioCtx.createMediaStreamSource(localStream)
+          micSource.connect(this._destination)
+          logger.info('RECORD', 'Đã gắn luồng Micro trực tiếp từ phiên WebRTC Call.')
+        } else {
+          const selectedMic = localStorage.getItem('smartcall_selected_mic') || 'default'
+          const audioConstraints = {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+          if (selectedMic && selectedMic !== 'default') {
+            audioConstraints.deviceId = { exact: selectedMic }
+          }
+
+          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            this._micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
+            const micSource = this._audioCtx.createMediaStreamSource(this._micStream)
+            micSource.connect(this._destination)
+            logger.info('RECORD', 'Đã gắn luồng Micro từ thiết bị người dùng qua getUserMedia.')
+          }
         }
       } catch (micErr) {
         logger.warn('RECORD', 'Không thể bắt luồng Microphone cục bộ (vẫn tiếp tục thu âm đối phương):', micErr.message)
       }
 
-      // 2. Luồng âm thanh đối phương từ thẻ <audio id="wazo-remote-audio"> hoặc audio elements
+      // 2. Luồng âm thanh đối phương từ thẻ <audio id="wazo-remote-audio"> hoặc Wazo Phone
       let remoteStream = null
       const remoteAudioEl = document.getElementById('wazo-remote-audio')
       if (remoteAudioEl && remoteAudioEl.srcObject) {
         remoteStream = remoteAudioEl.srcObject
-      } else {
+      } else if (meta.session) {
+        try {
+          const wazoPhone = typeof window !== 'undefined' ? window.Wazo?.Phone : null
+          if (wazoPhone?.getRemoteStream) {
+            remoteStream = wazoPhone.getRemoteStream(meta.session)
+          }
+        } catch (e) {}
+      }
+
+      if (!remoteStream) {
         const audios = document.querySelectorAll('audio')
         for (const a of audios) {
           if (a.srcObject && a.srcObject.getAudioTracks && a.srcObject.getAudioTracks().length > 0) {
@@ -140,19 +171,20 @@ class RecordService {
       if (remoteStream) {
         try {
           const remoteSource = this._audioCtx.createMediaStreamSource(remoteStream)
-          remoteSource.connect(destination)
+          remoteSource.connect(this._destination)
+          logger.info('RECORD', 'Đã gắn luồng âm thanh đàm thoại từ xa vào tiến trình ghi âm.')
         } catch (remErr) {
           logger.warn('RECORD', 'Không thể gắn remote audio vào AudioContext:', remErr.message)
         }
       }
 
       // 3. Fallback: Nếu stream rỗng, gắn silent track để MediaRecorder không bị lỗi empty stream
-      if (destination.stream.getAudioTracks().length === 0) {
+      if (this._destination.stream.getAudioTracks().length === 0) {
         const osc = this._audioCtx.createOscillator()
         const gain = this._audioCtx.createGain()
         gain.gain.value = 0
         osc.connect(gain)
-        gain.connect(destination)
+        gain.connect(this._destination)
         osc.start()
       }
 
@@ -170,7 +202,7 @@ class RecordService {
 
       this._recordedChunks = []
       const options = mimeType ? { mimeType } : {}
-      this._mediaRecorder = new MediaRecorder(destination.stream, options)
+      this._mediaRecorder = new MediaRecorder(this._destination.stream, options)
 
       this._mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
@@ -191,11 +223,13 @@ class RecordService {
         recordStore.duration += 1
       }, 1000)
 
-      window.dispatchEvent(
-        new CustomEvent('smartcall-recording-started', {
-          detail: { callId: recCallId, meta },
-        }),
-      )
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('smartcall-recording-started', {
+            detail: { callId: recCallId, meta },
+          }),
+        )
+      }
       return true
     } catch (err) {
       logger.error('RECORD', 'Không thể khởi động ghi âm:', err)
@@ -205,11 +239,15 @@ class RecordService {
   }
 
   /**
-   * Dừng ghi âm cuộc gọi và lưu trữ vào IndexedDB
+   * Dừng ghi âm cuộc gọi và lưu trữ vào IndexedDB (Hỗ trợ lock chống xung đột đồng thời)
    */
-  async stopRecording() {
+  stopRecording() {
+    if (this._stopPromise) {
+      return this._stopPromise
+    }
+
     if (!recordStore.isRecording && !this._mediaRecorder) {
-      return null
+      return Promise.resolve(null)
     }
 
     logger.info('RECORD', 'Dừng tiến trình ghi âm cuộc gọi...')
@@ -223,50 +261,63 @@ class RecordService {
     const duration = recordStore.duration || 0
     const meta = recordStore.meta || {}
 
-    return new Promise((resolve) => {
+    // Giải phóng trạng thái ghi âm ngay lập tức để tránh UI giật hoặc xung đột cuộc gọi tiếp theo
+    recordStore.isRecording = false
+    recordStore.duration = 0
+    recordStore.currentCallId = null
+    recordStore.meta = null
+
+    this._stopPromise = new Promise((resolve) => {
       const finalizeSave = async () => {
-        const mimeType = this._mediaRecorder?.mimeType || 'audio/webm'
-        const blob = new Blob(this._recordedChunks, { type: mimeType })
-        this._cleanupResources()
+        try {
+          const mimeType = this._mediaRecorder?.mimeType || 'audio/webm'
+          const blob = new Blob(this._recordedChunks, { type: mimeType })
+          this._cleanupResources()
 
-        const now = new Date()
-        const pad = (n) => String(n).padStart(2, '0')
-        const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+          const now = new Date()
+          const pad = (n) => String(n).padStart(2, '0')
+          const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
 
-        const record = {
-          callId,
-          date: dateStr,
-          timestamp: Date.now(),
-          name: meta.name || '',
-          extension: String(meta.extension || meta.number || ''),
-          dept: meta.dept || '',
-          direction: meta.direction || 'outbound',
-          duration: Math.max(1, duration),
-          blob,
-          mimeType,
-          size: blob.size,
-          source: 'client',
+          const record = {
+            callId,
+            date: dateStr,
+            timestamp: Date.now(),
+            name: meta.name || '',
+            extension: String(meta.extension || meta.number || ''),
+            dept: meta.dept || '',
+            direction: meta.direction || 'outbound',
+            duration: Math.max(1, duration),
+            blob,
+            mimeType,
+            size: blob.size,
+            source: 'client',
+          }
+
+          let objectUrl = null
+          if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+            try {
+              objectUrl = URL.createObjectURL(blob)
+              this._blobUrls.set(callId, objectUrl)
+            } catch (e) {}
+          }
+
+          // Lưu vào IndexedDB (hoặc Memory Fallback)
+          await this._saveRecord(record)
+
+          logger.success('RECORD', `Đã lưu bản ghi âm cuộc gọi (${duration}s, ${(blob.size / 1024).toFixed(1)} KB): ${callId}`)
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('smartcall-recording-saved', {
+                detail: { callId, record },
+              }),
+            )
+          }
+          resolve(record)
+        } catch (err) {
+          logger.error('RECORD', 'Lỗi khi hoàn tất lưu bản ghi âm:', err)
+          this._cleanupResources()
+          resolve(null)
         }
-
-        // Tạo sẵn blob URL để phát lại ngay
-        const objectUrl = URL.createObjectURL(blob)
-        this._blobUrls.set(callId, objectUrl)
-
-        // Lưu vào IndexedDB (hoặc Memory Fallback)
-        await this._saveRecord(record)
-
-        recordStore.isRecording = false
-        recordStore.duration = 0
-        recordStore.currentCallId = null
-        recordStore.meta = null
-
-        logger.success('RECORD', `Đã lưu bản ghi âm cuộc gọi (${duration}s, ${(blob.size / 1024).toFixed(1)} KB): ${callId}`)
-        window.dispatchEvent(
-          new CustomEvent('smartcall-recording-saved', {
-            detail: { callId, record },
-          }),
-        )
-        resolve(record)
       }
 
       if (this._mediaRecorder && this._mediaRecorder.state !== 'inactive') {
@@ -279,7 +330,11 @@ class RecordService {
       } else {
         finalizeSave()
       }
+    }).finally(() => {
+      this._stopPromise = null
     })
+
+    return this._stopPromise
   }
 
   _cleanupResources() {
@@ -289,12 +344,19 @@ class RecordService {
       } catch (e) {}
       this._micStream = null
     }
+    if (this._destination?.stream) {
+      try {
+        this._destination.stream.getTracks().forEach((t) => t.stop())
+      } catch (e) {}
+      this._destination = null
+    }
     if (this._audioCtx) {
       try {
         this._audioCtx.close()
       } catch (e) {}
       this._audioCtx = null
     }
+    this._recordedChunks = []
     this._mediaRecorder = null
   }
 
@@ -404,6 +466,32 @@ class RecordService {
   }
 
   /**
+   * Lấy URL phát âm thanh cho cuộc gọi (Hỗ trợ cả callId dạng chuỗi hoặc call object)
+   * @param {string|object} callOrId - ID cuộc gọi hoặc đối tượng cuộc gọi
+   * @param {object} options - Tùy chọn máy chủ và token
+   */
+  async getRecordingAudioUrl(callOrId, options = {}) {
+    const call =
+      typeof callOrId === 'string'
+        ? { recordingId: callOrId, callId: callOrId, id: callOrId }
+        : callOrId || {}
+    return this.getAudioUrlForCall(call, options)
+  }
+
+  /**
+   * Tải file ghi âm về máy tính người dùng (.webm) (Hỗ trợ cả callId dạng chuỗi hoặc call object)
+   * @param {string|object} callOrId - ID cuộc gọi hoặc đối tượng cuộc gọi
+   * @param {string} filename - Tên file tùy chỉnh
+   */
+  async downloadRecording(callOrId, filename = null) {
+    const call =
+      typeof callOrId === 'string'
+        ? { recordingId: callOrId, callId: callOrId, id: callOrId }
+        : callOrId || {}
+    return this.downloadRecordingForCall(call, filename)
+  }
+
+  /**
    * Lấy URL phát âm thanh cho cuộc gọi (Hỗ trợ cả Client Recording và Wazo Call-Logd Server)
    */
   async getAudioUrlForCall(call, { wazoHost = '', token = '' } = {}) {
@@ -421,6 +509,9 @@ class RecordService {
       if (localRec && localRec.blob) {
         const url = URL.createObjectURL(localRec.blob)
         this._blobUrls.set(recId, url)
+        if (call.id && call.id !== recId) {
+          this._blobUrls.set(call.id, url)
+        }
         return url
       }
     }
@@ -436,6 +527,9 @@ class RecordService {
       if (matched && matched.blob) {
         const url = URL.createObjectURL(matched.blob)
         this._blobUrls.set(matched.callId, url)
+        if (call.id) {
+          this._blobUrls.set(call.id, url)
+        }
         return url
       }
     }
@@ -443,7 +537,12 @@ class RecordService {
     // 4. Nếu có bản ghi từ Wazo Call-Logd Server
     const serverRecUuid = call.recordings?.[0]?.uuid || call.recordingUuid
     if (call.id && serverRecUuid) {
-      const host = (wazoHost || localStorage.getItem('smartcall_wazo_host') || '107.126.11.126:9443')
+      const host = (
+        wazoHost ||
+        import.meta.env?.VITE_WAZO_HOST ||
+        localStorage.getItem('smartcall_wazo_host') ||
+        '107.126.11.126:9443'
+      )
         .trim()
         .replace(/^https?:\/\//, '')
       const authToken = token || localStorage.getItem('smartcall_wazo_token') || ''
