@@ -366,35 +366,44 @@
               :class="{ active: activeTab === 'all' }"
               @click="activeTab = 'all'"
             >
-              👥 Tất cả ({{ contacts.length }})
+              <span class="tab-icon">👥</span>
+              <span class="tab-label">Tất cả</span>
+              <span class="tab-badge">{{ contacts.length }}</span>
             </button>
             <button
               class="panel-tab-btn"
               :class="{ active: activeTab === 'favorites' }"
               @click="activeTab = 'favorites'"
             >
-              ⭐ Yêu thích ({{ favoriteCount }})
+              <span class="tab-icon">⭐</span>
+              <span class="tab-label">Yêu thích</span>
+              <span class="tab-badge">{{ favoriteCount }}</span>
             </button>
             <button
               class="panel-tab-btn"
               :class="{ active: activeTab === 'online' }"
               @click="activeTab = 'online'"
             >
-              🟢 Trực tuyến ({{ onlineCount }})
+              <span class="tab-icon">🟢</span>
+              <span class="tab-label">Trực tuyến</span>
+              <span class="tab-badge badge-online">{{ onlineCount }}</span>
             </button>
             <button
               class="panel-tab-btn"
               :class="{ active: activeTab === 'offline' }"
               @click="activeTab = 'offline'"
             >
-              ⚪ Ngoại tuyến ({{ offlineCount }})
+              <span class="tab-icon">⚪</span>
+              <span class="tab-label">Ngoại tuyến</span>
+              <span class="tab-badge badge-offline">{{ offlineCount }}</span>
             </button>
             <button
               class="panel-tab-btn tab-group-call"
               :class="{ active: activeTab === 'group_call' }"
               @click="activeTab = 'group_call'"
             >
-              📞 Gọi nhóm
+              <span class="tab-icon">📞</span>
+              <span class="tab-label">Gọi nhóm</span>
             </button>
           </div>
 
@@ -403,20 +412,27 @@
             <!-- Sticky Action Bar khi ở Tab Gọi nhóm -->
             <div v-if="activeTab === 'group_call'" class="group-call-selection-bar">
               <div class="selection-info">
-                <span class="selection-badge">Đã chọn: <strong>{{ selectedGroupExtensions.length }}</strong> người</span>
-                <button
-                  v-if="selectedGroupExtensions.length > 0"
-                  class="btn-text-action"
-                  @click="clearGroupSelection"
-                >
-                  Bỏ chọn
-                </button>
-                <button
-                  class="btn-text-action"
-                  @click="selectAllOnlineContacts"
-                >
-                  Chọn tất cả trực tuyến
-                </button>
+                <span class="selection-pill">
+                  Đã chọn: <strong>{{ selectedGroupExtensions.length }}</strong> người
+                </span>
+                <div class="action-buttons-group">
+                  <button
+                    class="btn-action-pill btn-select-online"
+                    @click="selectAllOnlineContacts"
+                    title="Chọn nhanh tất cả người đang trực tuyến"
+                  >
+                    <span class="pill-dot online"></span>
+                    <span>Chọn trực tuyến</span>
+                  </button>
+                  <button
+                    v-if="selectedGroupExtensions.length > 0"
+                    class="btn-action-pill btn-clear"
+                    @click="clearGroupSelection"
+                    title="Bỏ chọn tất cả"
+                  >
+                    <span>✕ Bỏ chọn</span>
+                  </button>
+                </div>
               </div>
               <button
                 class="btn-start-group"
@@ -427,7 +443,7 @@
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
                 </svg>
-                <span>Gọi nhóm ({{ selectedGroupExtensions.length }})</span>
+                <span>Gọi nhóm {{ selectedGroupExtensions.length >= 2 ? `(${selectedGroupExtensions.length})` : '' }}</span>
               </button>
             </div>
 
@@ -477,12 +493,23 @@
                   class="group-select-checkbox-wrap"
                   @click.stop="toggleGroupContactSelection(c)"
                 >
-                  <input
-                    type="checkbox"
-                    class="group-select-checkbox"
-                    :checked="isContactSelectedForGroup(c)"
-                    :disabled="isSelf(c)"
-                  />
+                  <div
+                    class="custom-check-box"
+                    :class="{ checked: isContactSelectedForGroup(c), disabled: isSelf(c) }"
+                  >
+                    <svg
+                      v-if="isContactSelectedForGroup(c)"
+                      class="check-svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="3.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </div>
                 </div>
                 <!-- Ghim yêu thích ⭐ khi ở các tab thông thường -->
                 <button
@@ -547,8 +574,25 @@
                   </div>
                 </div>
 
-                <!-- Nút thao tác nhanh: Gọi thoại & Nhắn tin -->
-                <div class="contact-actions">
+                <!-- Thao tác / Chỉ báo: Trong tab Gọi nhóm hiển thị nhãn đã chọn / trạng thái; ở tab thường hiển thị nút Gọi & Nhắn tin -->
+                <div v-if="activeTab === 'group_call'" class="group-select-indicator">
+                  <span
+                    v-if="isContactSelectedForGroup(c)"
+                    class="badge-group-selected"
+                  >
+                    ✓ Đã chọn
+                  </span>
+                  <span
+                    v-else
+                    class="badge-status-pill"
+                    :class="c.status || 'offline'"
+                  >
+                    {{ c.statusLabel || 'Ngoại tuyến' }}
+                  </span>
+                </div>
+
+                <!-- Nút thao tác nhanh khi ở các tab 1-1: Gọi thoại & Nhắn tin -->
+                <div v-else class="contact-actions">
                   <button
                     class="btn-action-icon call"
                     :title="!c.number || !c.number.trim() ? 'Chưa có số máy lẻ' : (isCalling || isDialing ? 'Đang bận cuộc gọi' : `Gọi máy lẻ ${c.number}`)"
@@ -1541,10 +1585,10 @@ onUnmounted(() => {
    ADAPTIVE 3-TIER GRID SYSTEM
    ========================================================================= */
 
-/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 300px, Đàm thoại 420px, Danh bạ 1fr mở rộng) */
+/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 280px, Đàm thoại 350px, Danh bạ minmax(460px, 1fr) mở rộng) */
 .calls-grid-layout {
   display: grid;
-  grid-template-columns: 300px 420px 1fr;
+  grid-template-columns: 280px 350px minmax(460px, 1fr);
   grid-template-areas: 'dialer status contacts';
   gap: 20px;
   align-items: start;
@@ -2146,39 +2190,88 @@ onUnmounted(() => {
 
 .panel-tabs-bar {
   display: flex;
-  background: #f1f5f9;
+  background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
-  padding: 0 10px;
-  gap: 6px;
+  padding: 4px 8px 0;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.panel-tabs-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .panel-tab-btn {
-  padding: 8px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
   border: none;
   background: transparent;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: #64748b;
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border-radius: 6px 6px 0 0;
 }
 
 .panel-tab-btn:hover {
   color: #1e293b;
+  background: rgba(241, 245, 249, 0.7);
 }
 
 .panel-tab-btn.active {
   color: #1e88e5;
   border-bottom-color: #1e88e5;
-  background: white;
+  background: #ffffff;
+}
+
+.tab-icon {
+  font-size: 0.85rem;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #e2e8f0;
+  color: #475569;
+  min-width: 18px;
+  line-height: 1.2;
+}
+
+.panel-tab-btn.active .tab-badge {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.tab-badge.badge-online {
+  background: #ecfdf5;
+  color: #059669;
+}
+.panel-tab-btn.active .tab-badge.badge-online {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.tab-badge.badge-offline {
+  background: #f1f5f9;
+  color: #64748b;
 }
 
 .panel-list-container {
   flex: 1;
-  max-height: 480px;
+  max-height: 620px;
   overflow-y: auto;
-  padding: 8px 10px;
+  padding: 10px 12px;
 }
 
 /* Custom Scrollbar */
@@ -2603,10 +2696,12 @@ onUnmounted(() => {
 .panel-tab-btn.tab-group-call {
   color: #2563eb;
   font-weight: 700;
+  margin-left: auto;
 }
 .panel-tab-btn.tab-group-call.active {
-  background: #eff6ff;
+  background: #ffffff;
   border-bottom-color: #2563eb;
+  color: #2563eb;
 }
 
 .group-call-selection-bar {
@@ -2615,84 +2710,231 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  background: #f0fdf4;
-  border-bottom: 1px solid #bbf7d0;
-  border-radius: 8px 8px 0 0;
-  margin-bottom: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
 .selection-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.selection-badge {
-  font-size: 0.84rem;
-  color: #166534;
-  font-weight: 600;
+.selection-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82rem;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: 500;
 }
 
-.btn-text-action {
-  border: none;
-  background: transparent;
-  color: #2563eb;
-  font-size: 0.8rem;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 0;
-}
-.btn-text-action:hover {
+.selection-pill strong {
+  font-weight: 700;
   color: #1d4ed8;
+}
+
+.action-buttons-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-action-pill:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+  border-color: #94a3b8;
+}
+
+.btn-action-pill.btn-clear {
+  color: #dc2626;
+  border-color: #fecaca;
+  background: #ffffff;
+}
+.btn-action-pill.btn-clear:hover {
+  background: #fee2e2;
+}
+
+.pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.pill-dot.online {
+  background: #22c55e;
 }
 
 .btn-start-group {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
-  background: #16a34a;
-  color: white;
+  padding: 7px 16px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 0.84rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.25);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
+
 .btn-start-group:hover:not(:disabled) {
-  background: #15803d;
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
   transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.4);
 }
+
 .btn-start-group:disabled {
-  background: #cbd5e1;
+  background: #e2e8f0;
   color: #94a3b8;
   cursor: not-allowed;
   box-shadow: none;
+  transform: none;
 }
 
+/* Custom Checkbox */
 .group-select-checkbox-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-right: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
-.group-select-checkbox {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-  accent-color: #2563eb;
+.custom-check-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 2px solid #cbd5e1;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.custom-check-box.checked {
+  background: #2563eb;
+  border-color: #2563eb;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
+}
+
+.custom-check-box.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f1f5f9;
+}
+
+.check-svg {
+  width: 13px;
+  height: 13px;
+  stroke: #ffffff;
 }
 
 .contact-item-card.group-selectable {
   cursor: pointer;
+  user-select: none;
 }
+
 .contact-item-card.group-selected {
-  background: #f0f7ff;
-  border: 1.5px solid #3b82f6 !important;
+  background: #f8faff;
+  border: 1.5px solid #93c5fd !important;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.08);
+}
+
+.group-select-indicator {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.badge-group-selected {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background: #dbeafe;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.badge-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.badge-status-pill.online {
+  background: #ecfdf5;
+  color: #059669;
+  border-color: #a7f3d0;
+}
+
+.badge-status-pill.busy {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.badge-status-pill.dnd {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
+.badge-status-pill.away {
+  background: #fefce8;
+  color: #a16207;
+  border-color: #fef08a;
+}
+
+.badge-status-pill.ringing {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.badge-status-pill.offline {
+  background: #f8fafc;
+  color: #94a3b8;
+  border-color: #e2e8f0;
 }
 
 .group-call-badge-tag {

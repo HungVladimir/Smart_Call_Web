@@ -2953,6 +2953,45 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `538ms`.
 
+---
+
+## BƯỚC 55: TỐI ƯU HÓA TOÀN DIỆN GIAO DIỆN TAB GỌI NHÓM & BỐ CỤC DANH BẠ (CALLS VIEW UI/UX ENHANCEMENTS)
+
+### 1. Bối cảnh & Yêu cầu từ Người dùng
+- Sau khi trải nghiệm thực tế Bước 54, giao diện tab Gọi nhóm và Danh bạ trong `CallsView.vue` xuất hiện một số điểm chưa tối ưu về mặt thẩm mỹ và trải nghiệm người dùng:
+  1. **Chữ và số đếm trong các tab bị rớt dòng**: Do tab header `.panel-tab-btn` thiếu thuộc tính `white-space: nowrap` và đặt số đếm dạng chuỗi thô `(3)`, `(0)`, `(2)`, `(1)` trong một cột hẹp khiến chữ và số bị gãy thành 2 dòng (ví dụ: `Tất cả\n(3)`, `Gọi\nnhóm`).
+  2. **Thanh thao tác Gọi nhóm (Action bar) có nền màu xanh lá rời rạc**: Giao diện cũ dùng kiểu dáng thông báo xanh lá nhạt (`#f0fdf4`) như một alert box, nút bấm và liên kết chữ thiếu đồng bộ với phong cách thiết kế của ứng dụng.
+  3. **Thẻ nhân viên trong tab Gọi nhóm hiển thị thừa nút Gọi thoại (📞) và Nhắn tin (💬)**: Trong chế độ chọn thành viên để gọi nhóm, sự xuất hiện của 2 nút thao tác 1-1 vừa gây chật chội vừa dễ gây bấm nhầm kích hoạt cuộc gọi đơn lẻ làm gián đoạn việc chọn nhóm.
+  4. **Checkbox và viền chọn chưa thẩm mỹ**: Sử dụng checkbox mặc định của trình duyệt và viền xanh đậm đơn điệu.
+  5. **Cột Danh bạ bị hẹp và ngắn**: Cần mở rộng chiều rộng và chiều cao danh bạ ("view danh bạ dài ra thêm tý cũng được") để tạo không gian thoải mái, cân đối với bàn phím và khung đàm thoại.
+
+### 2. Chi tiết Triển khai Kỹ thuật
+- `src/views/CallsView.vue`:
+  1. **Tối ưu Bố cục Lưới 3 Cột Desktop (`.calls-grid-layout`)**:
+     - Điều chỉnh tỷ lệ cột từ `300px 420px 1fr` thành `280px 350px minmax(460px, 1fr)`.
+     - Bàn phím số gọn gàng 280px, Khung đàm thoại vừa vặn 350px, Cột Danh bạ được ưu tiên mở rộng tối thiểu từ 460px trở lên.
+     - Tăng chiều cao danh sách `.panel-list-container` từ `max-height: 480px` lên `max-height: 620px`, giúp hiển thị dài và thoáng hơn nhiều.
+  2. **Tái thiết kế Thanh Tabs Bộ lọc (`.panel-tabs-bar` & `.panel-tab-btn`)**:
+     - Thêm `white-space: nowrap;`, `flex-shrink: 0;`, `gap: 4px;` và ẩn thanh cuộn ngang kỹ thuật.
+     - Tách số đếm thành các huy hiệu badge pill chuyên dụng (`.tab-badge`, `.tab-badge.badge-online`, `.tab-badge.badge-offline`), đảm bảo nhãn và số đếm không bao giờ bị nhảy dòng.
+     - Tab `📞 Gọi nhóm` được làm nổi bật với chữ xanh đậm và tự động căn phải tinh tế.
+  3. **Thanh Công cụ Chọn Thành viên Gọi nhóm (`.group-call-selection-bar`)**:
+     - Thay thế nền alert xanh cũ bằng thanh công cụ nền xám sáng thanh lịch (`#f8fafc`, viền `#e2e8f0`).
+     - Huy hiệu đếm số người đã chọn dạng viên thuốc (`.selection-pill`): `Đã chọn: X người`.
+     - Các nút thao tác dạng pill bo tròn mềm mại (`.btn-action-pill`): `🟢 Chọn trực tuyến` và `✕ Bỏ chọn`.
+     - Nút bắt đầu gọi nhóm (`.btn-start-group`) phong cách gradient xanh lục rực rỡ kèm hiệu ứng đổ bóng hiện đại.
+  4. **Nâng cấp Thẻ Liên hệ trong Chế độ Gọi nhóm (`activeTab === 'group_call'`)**:
+     - Thay thế checkbox mặc định của trình duyệt bằng **Custom Checkbox** vuông bo góc (`.custom-check-box`) kèm icon SVG checkmark sắc nét.
+     - Ẩn hoàn toàn 2 nút thao tác 1-1 (Gọi/Nhắn tin) khi ở tab Gọi nhóm.
+     - Thay vào đó hiển thị nhãn chỉ báo trạng thái trực quan:
+       - Khi đã chọn: Huy hiệu `✓ Đã chọn` (`.badge-group-selected`) nền xanh dương nhạt dịu mắt.
+       - Khi chưa chọn: Huy hiệu trạng thái (`.badge-status-pill`) như `Trực tuyến`, `Ngoại tuyến`, `Đang bận`.
+     - Thẻ khi được chọn (`.group-selected`) chuyển sang nền xanh dương êm dịu `#f8faff` và viền pastel `#93c5fd`.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `498ms`.
+
+
 
 
 
