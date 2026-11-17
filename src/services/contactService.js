@@ -318,8 +318,8 @@ class ContactService {
       }
 
       if (!contactsData) {
-        this.currentContacts = []
-        return []
+        // Stale-While-Revalidate: Giữ nguyên danh sách hiện tại nếu không lấy được dữ liệu mới
+        return this.currentContacts || []
       }
 
       // Xử lý dữ liệu trả về từ Wazo Dird:
@@ -462,12 +462,10 @@ class ContactService {
         return this._filterContacts(finalContacts)
       }
 
-      this.currentContacts = []
-      return []
+      return this.currentContacts || []
     } catch (err) {
       logger.warn('API', 'Không thể nạp danh bạ từ máy chủ Wazo:', err.message)
-      this.currentContacts = []
-      return []
+      return this.currentContacts || []
     }
   }
 
@@ -627,6 +625,37 @@ class ContactService {
           (c.uuid && c.uuid === String(ext).trim()),
       ) || null
     )
+  }
+
+  /**
+   * Tra cứu liên hệ an toàn từ bộ nhớ RAM hoặc trực tiếp từ Wazo Dird API
+   * Đảm bảo tính sẵn sàng 100% khi người dùng gọi lại (autocall) từ Lịch sử cuộc gọi
+   * @param {string} ext - Số máy lẻ
+   */
+  async getOrLookupContact(ext) {
+    if (!ext) return null
+    const cleanExt = String(ext).split('@')[0].trim()
+    let found = (this.currentContacts || []).find(
+      (c) =>
+        String(c.number).split('@')[0].trim() === cleanExt ||
+        c.id === cleanExt ||
+        c.uuid === cleanExt,
+    )
+    if (found) return found
+
+    // Nếu chưa có trong RAM, tự động kích hoạt nạp lại danh bạ một lần nữa từ Wazo
+    try {
+      const refreshed = await this.getContacts()
+      found = (refreshed || []).find(
+        (c) =>
+          String(c.number).split('@')[0].trim() === cleanExt ||
+          c.id === cleanExt ||
+          c.uuid === cleanExt,
+      )
+      return found || null
+    } catch (e) {
+      return null
+    }
   }
 
   /**

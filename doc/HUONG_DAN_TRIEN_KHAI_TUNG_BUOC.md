@@ -61,6 +61,7 @@
 | **45** | Bổ sung Tính năng Ghi âm Cuộc gọi (Call Recording), Mini Audio Player Lịch sử & Tinh chỉnh Sidebar | Kế hoạch Call Recording & Sidebar Refinement | **HOÀN THÀNH** ✅ | Cải tiến chân Sidebar; Bổ sung nút 🔴 Ghi âm trên CallsView; Tích hợp Audio Player mini trong HistoryView; Tùy chọn tự động ghi âm trong SettingsModal. |
 | **46** | Chuyển đổi Toàn diện sang Wazo Server-Side Recording & Triệt tiêu Local Storage Nghiệp vụ | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & API Server First | **HOÀN THÀNH** ✅ | Loại bỏ 100% IndexedDB và thu âm client; Chuyển toàn bộ sang REST API Wazo Calld (/users/me/calls/{id}/record/start, stop) và Call-Logd stream media; Chặn ghi âm khi đang ringing; Giao diện thuần API thật. |
 | **47** | Phát triển Nhóm Chat Wazo Chatd Thuần API, Triệt tiêu Local In-Memory & Quản lý Thành viên | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khắc phục nút Tạo nhóm; Triệt tiêu mock in-memory; Tích hợp 100% Wazo Chatd API POST /users/me/rooms tạo phòng nhóm thật; Tách biệt Modal Tạo nhóm và Modal Thành viên; Quản lý activeRoomId trong RAM. |
+| **48** | Khắc phục Nhảy Thứ tự Phòng Chat, Tự động Làm mới Danh bạ & Phân quyền Admin Nhóm Chat | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Tải trước song song tin nhắn gần nhất và sắp xếp phòng chat cố định từ đầu; Tự động refresh danh bạ khi click/chuyển tab Gọi điện; Tra cứu an toàn Stale-While-Revalidate khi gọi lại từ Lịch sử; Đồng bộ Quản trị viên (Admin) duy nhất cho phòng nhóm từ Wazo; Thay thế chữ trạng thái bằng chấm tròn status góc Avatar; Phân quyền chỉ Admin mới có quyền Đổi tên nhóm và Xóa thành viên. |
 
 ---
 
@@ -2647,6 +2648,53 @@ Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn 
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp (527ms).
+
+---
+
+## BƯỚC 48: KHẮC PHỤC NHẢY THỨ TỰ PHÒNG CHAT, TỰ ĐỘNG LÀM MỚI DANH BẠ & PHÂN QUYỀN ADMIN NHÓM CHAT
+
+### 1. Bối cảnh & Yêu cầu Kỹ thuật Cốt lõi:
+1. **Khắc phục lỗi nhảy xáo trộn thứ tự danh sách phòng chat khi mới đăng nhập:**
+   - **Hiện tượng cũ:** Khi mới đăng nhập, danh sách phòng chat ban đầu chưa nạp tin nhắn gần nhất (`messages: []`, `updatedAt: 0`). Khi người dùng nhấn vào từng phòng một, sự kiện nạp tin nhắn sẽ gán lại thời gian tin nhắn mới nhất khiến `updatedAt` thay đổi và computed `sortedRooms` tự động đảo vị trí các phòng, gây cảm giác giật nhảy khó chịu.
+   - **Giải pháp:** Trong `chatService.getRooms()`, bổ sung cơ chế tải trước song song (`Promise.allSettled`) tin nhắn gần nhất (`getRoomMessages(room.id, 15)`) cho toàn bộ các phòng chưa có tin nhắn. Đồng bộ trước preview, thời gian và sắp xếp thứ tự các phòng cố định 100% từ đầu theo `(b.updatedAt || 0) - (a.updatedAt || 0)`. Khi người dùng click chọn phòng, thứ tự giữ nguyên vững chắc.
+
+2. **Tự động làm mới danh bạ (Auto-refresh) khi chuyển tab & An toàn khi gọi lại từ Lịch sử:**
+   - **Tự động tải lại:** Khi người dùng chuyển tab sang *Gọi điện & Danh bạ* (`KeepAlive onActivated`) hoặc nhấp vào mục *Gọi điện & Danh bạ* trên Sidebar (phát sự kiện `smartcall-refresh-contacts`), hệ thống tự động kích hoạt `loadContacts(true)` để nạp danh bạ mới nhất từ máy chủ Wazo.
+   - **Cơ chế Stale-While-Revalidate:** Trong `contactService.js`, loại bỏ hoàn toàn các dòng `this.currentContacts = []` khi bắt đầu fetch hoặc khi gặp lỗi mạng tạm thời. Danh bạ cũ trong RAM luôn được bảo toàn hiển thị liên tục, không gây chớp tắt giao diện.
+   - **Bảo toàn khi gọi lại (Autocall):** Bổ sung phương thức `contactService.getOrLookupContact(ext)`. Trong `CallsView.handleDial()`, nếu một số máy lẻ được gọi lại từ Lịch sử mà chưa kịp có trong RAM, hệ thống sẽ tự động tra cứu nhanh từ Wazo Dird API để lấy thông tin liên hệ và thực hiện cuộc gọi ngay, triệt tiêu hoàn toàn lỗi hiển thị nhầm *"Số máy lẻ không tồn tại"*.
+
+3. **Đồng bộ Quản trị viên (Admin) duy nhất, Chấm status Avatar & Phân quyền Nhóm chat:**
+   - **Admin duy nhất từ máy chủ Wazo:** Loại bỏ hoàn toàn logic cũ `m.isAdmin = (uId === myUuid)`. Xác định `adminUuid` của phòng nhóm từ tin nhắn khởi tạo đầu tiên (`room.messages[0].user_uuid`). Tất cả các tài khoản khi đăng nhập và mở nhóm đều nhận diện đồng nhất đúng người tạo nhóm là `👑 Admin`.
+   - **Chấm tròn trạng thái (Status Dot) ở góc Avatar:** Thay thế chữ *"Ngoại tuyến / Trực tuyến"* bằng chấm tròn trạng thái thời gian thực (`.member-status-dot`) đặt ở góc dưới của Avatar (`🟢 online`, `🔴 busy/ringing`, `🟡 away`, `⛔ dnd`, `⚪ offline`), mang lại giao diện hiện đại, tinh tế như các ứng dụng chat chuẩn doanh nghiệp.
+   - **Đổi tên nhóm (Group Rename - Chỉ Admin):** Trong modal Thành viên nhóm, chỉ Quản trị viên (`currentIsAdmin`) mới có quyền chỉnh sửa tên nhóm và bấm `[ 💾 Lưu tên ]` (gọi `chatService.renameGroup(roomId, newTitle)` và gửi thông báo hệ thống lên Wazo Chatd). Đối với thành viên thường, ô nhập tên nhóm bị vô hiệu hóa kèm thông báo khóa 🔒.
+   - **Xóa thành viên khỏi nhóm (Remove Member - Chỉ Admin):** Nút `[ ✖ Xóa ]` chỉ hiển thị đối với Admin và không hiển thị trên chính mình. Khi xóa, hệ thống tạo phiên bản nhóm mới trên Wazo Chatd với các thành viên còn lại và gửi thông báo hệ thống tự động.
+
+### 2. Danh sách các File Đã Triển khai & Cập nhật:
+- `src/services/chatService.js`:
+  - Prefetch song song tin nhắn gần nhất khi nạp danh sách phòng để sắp xếp cố định từ đầu.
+  - Xác định `adminUuid` từ tin nhắn đầu tiên của nhóm.
+  - Thêm phương thức `renameGroup(roomId, newTitle)` gửi thông báo hệ thống.
+  - Thêm phương thức `removeMemberFromGroup(roomId, memberUuid)` tạo nhóm cập nhật trên Wazo Chatd.
+- `src/services/contactService.js`:
+  - Áp dụng nguyên lý Stale-While-Revalidate (không xóa rỗng `currentContacts`).
+  - Thêm phương thức `getOrLookupContact(ext)` phục vụ tra cứu an toàn khi gọi lại.
+- `src/components/layout/AppSidebar.vue`:
+  - Thêm sự kiện `@click="onCallsNavClick"` phát `smartcall-refresh-contacts`.
+  - Thêm sự kiện `@click="onMessagesNavClick"` phát `smartcall-refresh-rooms`.
+  - Dọn sạch các comment chứa tên riêng theo đúng Quy tắc GEMINI.md.
+- `src/views/CallsView.vue`:
+  - Đấu nối `contactService.getOrLookupContact(ext)` trong `handleDial()` bảo vệ luồng gọi lại từ Lịch sử.
+  - Lắng nghe sự kiện `smartcall-refresh-contacts` để tự động làm mới danh bạ khi click tab.
+- `src/views/MessagesView.vue`:
+  - Tính toán `currentIsAdmin` và `currentRoomMembers` đồng bộ theo `adminUuid` của phòng nhóm.
+  - Bổ sung ô Đổi tên nhóm (kèm khóa phân quyền cho User thường).
+  - Bổ sung Avatar kèm chấm tròn trạng thái thời gian thực (`.member-status-dot`).
+  - Bổ sung nút `[ ✖ Xóa ]` thành viên chỉ dành riêng cho Admin.
+  - Lắng nghe sự kiện `smartcall-refresh-rooms` làm mới danh sách phòng khi click tab.
+- `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể và ghi chép chi tiết Bước 48.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `574ms`.
 
 
 

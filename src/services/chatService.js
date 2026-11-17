@@ -330,6 +330,11 @@ class ChatService {
                 ? '👥'
                 : (displayTitle || 'CH').slice(0, 2).toUpperCase()
 
+              const defaultAdminUuid =
+                existing?.adminUuid ||
+                existing?.messages?.[0]?.user_uuid ||
+                (serverUsers[0] ? (typeof serverUsers[0] === 'string' ? serverUsers[0] : serverUsers[0].uuid) : '')
+
               // Ánh xạ thành viên 100% từ danh sách serverUsers của máy chủ Wazo
               const mappedMembers = serverUsers.map((u) => {
                 const uId = typeof u === 'string' ? u : u.uuid
@@ -345,7 +350,7 @@ class ChatService {
                   ext: c?.number || c?.exten || (uId === myUuid ? myExt : ''),
                   dept: c?.dept || '',
                   status: c?.status || 'offline',
-                  isAdmin: uId === myUuid,
+                  isAdmin: isGroup && defaultAdminUuid ? uId === defaultAdminUuid : uId === myUuid,
                 }
               })
 
@@ -359,13 +364,53 @@ class ChatService {
                 icon: icon,
                 isDirect: isDirect,
                 ext: directExt,
+                adminUuid: defaultAdminUuid,
                 messages: existing?.messages || [],
                 members: mappedMembers,
                 memberCount: memberCount,
                 pinned: existing?.pinned || '',
-                updatedAt: lastMsgTimestamp || existing?.updatedAt || Date.now(),
+                updatedAt: lastMsgTimestamp || existing?.updatedAt || 0,
               }
             })
+
+            // Tải trước song song tin nhắn gần nhất cho các phòng chưa nạp tin nhắn
+            const roomsNeedFetch = serverRooms.filter(
+              (r) => !r.messages || r.messages.length === 0,
+            )
+            if (roomsNeedFetch.length > 0) {
+              await Promise.allSettled(
+                roomsNeedFetch.map(async (room) => {
+                  try {
+                    const msgs = await this.getRoomMessages(room.id, 15)
+                    if (msgs && msgs.length > 0) {
+                      room.messages = msgs
+                      const last = msgs[msgs.length - 1]
+                      room.preview = last.text
+                      room.time = last.time
+                      room.updatedAt = last.timestamp
+
+                      // Xác định Quản trị viên (Admin) duy nhất của phòng nhóm từ tin nhắn khởi tạo đầu tiên
+                      if (!room.isDirect) {
+                        const firstMsg = msgs[0]
+                        if (firstMsg?.user_uuid) {
+                          room.adminUuid = firstMsg.user_uuid
+                          if (room.members) {
+                            room.members.forEach((m) => {
+                              m.isAdmin = Boolean(m.id === room.adminUuid || m.uuid === room.adminUuid)
+                            })
+                          }
+                        }
+                      }
+                    }
+                  } catch (fetchErr) {
+                    /* ignore */
+                  }
+                }),
+              )
+            }
+
+            // Sắp xếp các phòng theo thứ tự tin nhắn mới nhất lên đầu chuẩn 100%
+            serverRooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
             // Giữ lại các phòng chat 1-1 local nếu CHƯA có phòng server nào tương ứng
             const directRooms = (this.rooms || []).filter(
@@ -511,6 +556,19 @@ class ChatService {
                 localRoom.preview = last.text
                 localRoom.time = last.time
                 localRoom.updatedAt = last.timestamp
+
+                // Nhận diện Quản trị viên (Admin) duy nhất từ tin nhắn khởi tạo đầu tiên của nhóm
+                if (!localRoom.isDirect) {
+                  const first = mapped[0]
+                  if (first?.user_uuid) {
+                    localRoom.adminUuid = first.user_uuid
+                    if (localRoom.members) {
+                      localRoom.members.forEach((m) => {
+                        m.isAdmin = Boolean(m.id === localRoom.adminUuid || m.uuid === localRoom.adminUuid)
+                      })
+                    }
+                  }
+                }
               }
               this.saveRooms(true)
             }
@@ -927,6 +985,77 @@ class ChatService {
     await this.getRooms()
     const createdRoom = (this.rooms || []).find((r) => r.id === newRoomUuid)
     return createdRoom || roomData
+  }
+
+  /**
+   * Đổi tên nhóm chat và gửi thông báo hệ thống lên máy chủ Wazo (Chỉ Admin)
+   * @param {string} roomId - UUID phòng chat
+   * @param {string} newTitle - Tên nhóm mới
+   */
+  async renameGroup(roomId, newTitle) {
+    const cleanTitle = (newTitle || '').trim()
+    if (!cleanTitle) {
+      throw new Error('Vui lòng nhập tên nhóm mới')
+    }
+    const room = (this.rooms || []).find((r) => r.id === roomId)
+    if (!room) {
+      throw new Error('Không tìm thấy phòng chat')
+    }
+
+    const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Quản trị viên'
+    room.title = cleanTitle
+    room.updatedAt = Date.now()
+    this.saveRooms()
+
+    // Gửi tin nhắn thông báo hệ thống lên server Wazo
+    try {
+      await this.sendMessage(roomId, `✏️ [${myName}] đã đổi tên nhóm thành: "${cleanTitle}"`, 'Hệ thống')
+    } catch (e) {
+      logger.warn('CHAT', `Lỗi gửi tin nhắn thông báo đổi tên: ${e.message}`)
+    }
+
+    return room
+  }
+
+  /**
+   * Xóa một thành viên khỏi phòng nhóm (Chỉ Admin)
+   * Tạo phiên bản nhóm mới trên máy chủ Wazo với các thành viên còn lại
+   * @param {string} roomId - UUID phòng chat hiện tại
+   * @param {string} memberUuid - UUID thành viên cần xóa
+   */
+  async removeMemberFromGroup(roomId, memberUuid) {
+    const room = (this.rooms || []).find((r) => r.id === roomId)
+    if (!room) {
+      throw new Error('Không tìm thấy phòng chat')
+    }
+
+    const remainingMembers = (room.members || []).filter(
+      (m) => (m.id !== memberUuid && m.uuid !== memberUuid),
+    )
+
+    if (remainingMembers.length < 2) {
+      throw new Error('Số lượng thành viên tối thiểu của nhóm là 2 người, không thể xóa thêm!')
+    }
+
+    const removedMember = (room.members || []).find(
+      (m) => (m.id === memberUuid || m.uuid === memberUuid),
+    )
+    const removedName = removedMember?.name || 'Một thành viên'
+    const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Quản trị viên'
+
+    const remainingUuids = remainingMembers.map((m) => m.id || m.uuid).filter(Boolean)
+
+    logger.info('CHAT', `Đang cập nhật nhóm sau khi xóa [${removedName}]...`)
+    const newRoom = await this.createGroupRoom(room.title, remainingUuids)
+
+    // Gửi tin nhắn thông báo xóa thành viên
+    try {
+      await this.sendMessage(newRoom.id, `👋 [${myName}] đã xóa [${removedName}] khỏi nhóm thảo luận.`, 'Hệ thống')
+    } catch (e) {
+      /* ignore */
+    }
+
+    return newRoom
   }
 
   /**

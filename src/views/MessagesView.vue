@@ -293,6 +293,33 @@
 
           <!-- Trường hợp B: Phòng Nhóm (Group) -->
           <div v-else class="group-members-view">
+            <!-- Đổi tên nhóm (Chỉ Admin mới có quyền) -->
+            <div class="group-rename-section">
+              <label class="form-label">TÊN NHÓM CHAT:</label>
+              <div class="group-rename-row">
+                <input
+                  type="text"
+                  v-model="editGroupTitle"
+                  class="group-rename-input"
+                  :disabled="!currentIsAdmin"
+                  placeholder="Nhập tên nhóm mới..."
+                  maxlength="60"
+                />
+                <button
+                  v-if="currentIsAdmin"
+                  class="btn-save-group-name"
+                  :disabled="!editGroupTitle.trim() || editGroupTitle.trim() === currentRoom?.title || isRenamingGroup"
+                  @click="handleSaveGroupName"
+                >
+                  <span v-if="isRenamingGroup">⏳</span>
+                  <span v-else>💾 Lưu tên</span>
+                </button>
+              </div>
+              <small v-if="!currentIsAdmin" class="text-hint-locked">
+                🔒 Chỉ Quản trị viên nhóm (Admin) mới có quyền đổi tên nhóm.
+              </small>
+            </div>
+
             <div class="group-actions-bar">
               <button class="btn-add-more-members" @click="openAddMoreToGroup">
                 ➕ Thêm thành viên vào nhóm (Tạo nhóm mở rộng)
@@ -308,16 +335,33 @@
                 :key="m.id || m.uuid"
                 class="member-row"
               >
-                <div class="member-avatar-mini" :style="{ backgroundColor: m.isAdmin ? '#f59e0b' : '#3b82f6' }">
-                  {{ (m.name || 'U').slice(0, 2).toUpperCase() }}
+                <div class="member-avatar-wrapper">
+                  <div class="member-avatar-mini" :style="{ backgroundColor: m.isAdmin ? '#f59e0b' : '#3b82f6' }">
+                    {{ (m.name || 'U').slice(0, 2).toUpperCase() }}
+                  </div>
+                  <span
+                    class="member-status-dot"
+                    :class="m.status || 'offline'"
+                    :title="getStatusLabel(m.status)"
+                  ></span>
                 </div>
                 <div class="member-info">
-                  <strong>{{ m.name }} <span v-if="m.isAdmin" class="admin-badge">Admin</span></strong>
+                  <div class="member-name-row">
+                    <strong>{{ m.name }}</strong>
+                    <span v-if="m.isAdmin" class="admin-badge">👑 Admin</span>
+                  </div>
                   <small>{{ m.dept ? m.dept + ' • ' : '' }}Máy lẻ: {{ m.ext || 'N/A' }}</small>
                 </div>
-                <span class="status-pill" :class="m.status || 'offline'">
-                  {{ getStatusLabel(m.status) }}
-                </span>
+                <div class="member-actions">
+                  <button
+                    v-if="currentIsAdmin && !m.isAdmin"
+                    class="btn-remove-member"
+                    title="Xóa thành viên khỏi nhóm"
+                    @click="handleRemoveMember(m)"
+                  >
+                    ✖ Xóa
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -382,19 +426,36 @@ const isLoadingRooms = ref(false)
 const isLoadingMessages = ref(false)
 
 // Phân quyền Quản trị viên vs Người dùng thường
-const currentIsAdmin = computed(() => localStorage.getItem('smartcall_is_admin') === 'true')
+const currentIsAdmin = computed(() => {
+  if (!currentRoom.value || currentRoom.value.isDirect) return false
+  const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid')
+  if (myUuid && currentRoom.value.adminUuid) {
+    return currentRoom.value.adminUuid === myUuid
+  }
+  return localStorage.getItem('smartcall_is_admin') === 'true'
+})
 const currentUserName = computed(() => localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const currentUserExt = computed(() => localStorage.getItem('smartcall_extension') || '1001')
 
 const rooms = ref([])
 const currentRoom = ref(null)
+const editGroupTitle = ref('')
+const isRenamingGroup = ref(false)
 
 const sortedRooms = computed(() => {
   return [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 })
 
 const currentRoomMembers = computed(() => {
-  return currentRoom.value?.members || []
+  const list = currentRoom.value?.members || []
+  const adminId = currentRoom.value?.adminUuid
+  if (!currentRoom.value?.isDirect && adminId) {
+    return list.map((m) => ({
+      ...m,
+      isAdmin: Boolean(m.id === adminId || m.uuid === adminId),
+    }))
+  }
+  return list
 })
 
 const selectedMsgReaders = computed(() => {
@@ -651,6 +712,7 @@ onMounted(async () => {
   }
   window.addEventListener('smartcall-message-received', onMessageReceived)
   window.addEventListener('smartcall-rooms-updated', onRoomsUpdated)
+  window.addEventListener('smartcall-refresh-rooms', loadRooms)
 })
 
 onActivated(async () => {
@@ -668,6 +730,7 @@ onUnmounted(() => {
   chatService.setActiveRoomId(null)
   window.removeEventListener('smartcall-message-received', onMessageReceived)
   window.removeEventListener('smartcall-rooms-updated', onRoomsUpdated)
+  window.removeEventListener('smartcall-refresh-rooms', loadRooms)
 })
 
 // Các hàm tương tác Modal Tạo nhóm & Quản lý thành viên (Pure Wazo Chatd API First)
@@ -743,7 +806,59 @@ const submitCreateGroup = async () => {
 
 const openMemberModal = () => {
   if (!currentRoom.value) return
+  editGroupTitle.value = currentRoom.value.title || ''
   showMemberModal.value = true
+}
+
+const handleSaveGroupName = async () => {
+  if (!currentRoom.value || !editGroupTitle.value.trim()) return
+  isRenamingGroup.value = true
+  try {
+    const updated = await chatService.renameGroup(currentRoom.value.id, editGroupTitle.value.trim())
+    if (updated) {
+      currentRoom.value.title = updated.title
+    }
+    rooms.value = [...chatService.rooms]
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `✏️ Đã đổi tên nhóm thành: "${editGroupTitle.value.trim()}"`,
+          type: 'success',
+        },
+      }),
+    )
+  } catch (err) {
+    alert(`Lỗi đổi tên nhóm: ${err.message}`)
+  } finally {
+    isRenamingGroup.value = false
+  }
+}
+
+const handleRemoveMember = async (member) => {
+  if (!currentRoom.value) return
+  const memberName = member.name || `Máy lẻ ${member.ext}` || 'thành viên'
+  const memberId = member.id || member.uuid
+  if (!confirm(`Bạn có chắc chắn muốn xóa [${memberName}] khỏi nhóm thảo luận?`)) {
+    return
+  }
+
+  try {
+    const updatedRoom = await chatService.removeMemberFromGroup(currentRoom.value.id, memberId)
+    await loadRooms()
+    if (updatedRoom) {
+      await selectRoom(updatedRoom)
+    }
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `👋 Đã xóa [${memberName}] khỏi nhóm chat!`,
+          type: 'success',
+        },
+      }),
+    )
+  } catch (err) {
+    alert(`Lỗi khi xóa thành viên: ${err.message}`)
+  }
 }
 
 const upgradeDirectToGroup = () => {
@@ -1433,6 +1548,66 @@ const getRoomStatusClass = (room) => {
   flex-shrink: 0;
 }
 
+/* Group Rename Section in Modal */
+.group-rename-section {
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.group-rename-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.group-rename-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  background: white;
+  outline: none;
+}
+
+.group-rename-input:disabled {
+  background: #f1f5f9;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.btn-save-group-name {
+  background: #0284c7;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.btn-save-group-name:hover:not(:disabled) {
+  background: #0369a1;
+}
+
+.btn-save-group-name:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
+.text-hint-locked {
+  display: block;
+  margin-top: 5px;
+  font-size: 0.74rem;
+  color: #94a3b8;
+}
+
 .member-list-box {
   max-height: 180px;
   overflow-y: auto;
@@ -1447,6 +1622,56 @@ const getRoomStatusClass = (room) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.member-avatar-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.member-status-dot {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+}
+
+.member-status-dot.online {
+  background-color: #22c55e;
+}
+
+.member-status-dot.busy,
+.member-status-dot.ringing {
+  background-color: #ef4444;
+}
+
+.member-status-dot.away {
+  background-color: #eab308;
+}
+
+.member-status-dot.dnd {
+  background-color: #dc2626;
+}
+
+.member-status-dot.offline {
+  background-color: #94a3b8;
+}
+
+.member-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.member-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
 }
 
 .member-info {

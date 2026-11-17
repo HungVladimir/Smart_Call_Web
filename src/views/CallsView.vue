@@ -767,9 +767,17 @@ const handleDial = async () => {
   }
 
   // Kiểm tra trạng thái máy lẻ trong danh bạ hệ thống (Rule 3.1 & 3.3 GEMINI.md)
-  const target =
+  let target =
     contacts.value.find((c) => String(c.number || '').trim() === ext) ||
     contactService.findContactByExtension(ext)
+
+  // Tra cứu an toàn Stale-While-Revalidate nếu chưa thấy trong danh bạ hiện tại (tránh lỗi gọi lại từ Lịch sử)
+  if (!target && ext !== '8001') {
+    target = await contactService.getOrLookupContact(ext)
+    if (target && !contacts.value.some((c) => c.id === target.id)) {
+      contacts.value.push(target)
+    }
+  }
 
   // Nếu số máy lẻ không tồn tại trong danh bạ và không phải số phòng họp hệ thống (8001)
   if (!target && ext !== '8001') {
@@ -1165,9 +1173,14 @@ const onWindowFocus = () => {
   loadContacts(true)
 }
 
+const onRefreshContactsEvent = () => {
+  loadContacts(true)
+}
+
 onMounted(async () => {
   window.addEventListener('smartcall-call-ended', onCallEnded)
   window.addEventListener('smartcall-contacts-updated', onContactsUpdated)
+  window.addEventListener('smartcall-refresh-contacts', onRefreshContactsEvent)
   window.addEventListener('focus', onWindowFocus)
 
   if (route.query.q) {
@@ -1196,6 +1209,7 @@ onActivated(() => {
 onUnmounted(() => {
   window.removeEventListener('smartcall-call-ended', onCallEnded)
   window.removeEventListener('smartcall-contacts-updated', onContactsUpdated)
+  window.removeEventListener('smartcall-refresh-contacts', onRefreshContactsEvent)
   window.removeEventListener('focus', onWindowFocus)
   dtmfLog.value = ''
 })

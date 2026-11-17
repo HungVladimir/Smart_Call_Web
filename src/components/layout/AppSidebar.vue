@@ -2,14 +2,14 @@
   <aside class="app-sidebar">
     <ul class="sidebar-menu">
       <li v-if="features.calls">
-        <router-link to="/calls" class="nav-btn" active-class="active">
+        <router-link to="/calls" class="nav-btn" active-class="active" @click="onCallsNavClick">
           <span class="icon">📞</span>
           <span>Gọi điện & Danh bạ</span>
         </router-link>
       </li>
 
       <li v-if="features.messages">
-        <router-link to="/messages" class="nav-btn" active-class="active">
+        <router-link to="/messages" class="nav-btn" active-class="active" @click="onMessagesNavClick">
           <span class="icon">💬</span>
           <span>Tin nhắn</span>
           <span v-if="unreadMessagesCount > 0" class="badge-count badge-danger" title="Tin nhắn chưa đọc">
@@ -28,8 +28,6 @@
 
     <div class="sidebar-footer">
       <div class="dev-credits">
-        <!-- <div class="dev-line">Nguyễn Văn Hùng - vhung99.nguyen</div>
-        <div class="dev-line">Lê Việt Dũng - vdung.le</div> -->
         <div class="dept-line">AI Transformation Part</div>
       </div>
     </div>
@@ -52,6 +50,14 @@ const isWebRtcReady = computed(
 
 const onFeaturesChanged = (e) => {
   features.value = e.detail || getFeatures()
+}
+
+const onCallsNavClick = () => {
+  window.dispatchEvent(new CustomEvent('smartcall-refresh-contacts'))
+}
+
+const onMessagesNavClick = () => {
+  window.dispatchEvent(new CustomEvent('smartcall-refresh-rooms'))
 }
 
 const unreadMessagesCount = ref(0)
