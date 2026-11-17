@@ -67,6 +67,10 @@
 | **51** | Triển khai Thu hồi Phiên Thiết bị cũ (Session Revocation) Chuẩn Wazo Auth API Đối chiếu Android | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Tích hợp 2 API Wazo Auth: `GET /users/{uuid}/sessions` và `DELETE /users/{uuid}/sessions/{session_uuid}`; Tự động xóa các session cũ khi đăng nhập trên Web làm App Mobile bị ngắt token (401) ngay lập tức; Rút ngắn heartbeat kiểm tra token xuống 5 giây để phản ứng tức thì khi App Mobile thu hồi session của Web. |
 | **52** | Khắc phục Triệt để Session Revocation 2 Chiều (Web $\leftrightarrow$ Android), Tab Ngoại tuyến, SVG Icon & Tombstone Xóa Phòng / Tin nhắn | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã nguồn tham chiếu mẫu | **HOÀN THÀNH** ✅ | Gán `Wazo.Auth.setClientId(clientId)` cấp `sessionUuid`, xóa 2 bước Session + Refresh Token theo chuẩn mã tham chiếu mẫu; Thay icon 📱 bằng SVG smartphone sắc nét; Thêm tab thứ 4 ⚪ Ngoại tuyến; Chuẩn hóa tag hệ thống `[SYSTEM:ROOM_RENAME]` đổi tên nhóm; Áp dụng Tombstone `[SYSTEM:ROOM_CLOSED]` giải tán phòng ẩn đồng bộ đa máy; Tính năng chọn & xóa nhiều tin nhắn và xóa nhanh bằng Tombstone `[SYSTEM:MSG_DELETED]`. |
 | **53** | Triển khai Chọn & Xóa Nhiều Cuộc trò chuyện trên Cột Danh sách Tin nhắn (Conversation List) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Di chuyển tính năng chọn và xóa ra ngoài cột danh sách cuộc trò chuyện bên trái (`chat-rooms-col`); Hỗ trợ chọn xóa nhiều cuộc trò chuyện cùng lúc hoặc xóa nhanh 1 cuộc trò chuyện bằng hover; Xóa đồng bộ cả nhóm lẫn 1-1 bằng Tombstone `[SYSTEM:ROOM_CLOSED]` trên Wazo server; Khôi phục giao diện khung chat bên phải tinh gọn. |
+| **54** | Triển khai Cuộc gọi Nhóm Tức thời (Ad-hoc Group Conference Call) Đối chiếu Android từ Chat & Danh bạ | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu | **HOÀN THÀNH** ✅ | Tích hợp Wazo Calld Conference API (`POST /users/me/conferences/adhoc`), loại bỏ phòng tĩnh 8001; Hỗ trợ gọi nhóm từ thanh tiêu đề nhóm chat và từ tab Gọi nhóm trong Danh bạ (`CallsView.vue`). |
+| **55** | Tối ưu Hóa Toàn diện Giao diện Tab Gọi nhóm & Bố cục Danh bạ | Tinh chỉnh UI/UX & Responsive | **HOÀN THÀNH** ✅ | Khắc phục rớt dòng tab header; Nâng cấp thanh công cụ chọn thành viên; Custom checkbox vuông bo góc; Ẩn nút 1-1 khi chọn nhóm; Mở rộng chiều cao danh bạ lên 620px. |
+| **56** | Phục hồi Kích thước Bàn phím / Đàm thoại, Căn Liền kề Tab Gọi nhóm & Phân quyền Admin Quản trị Nhóm | Tiêu chuẩn Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Phục hồi bàn phím 300px và đàm thoại 420px; Căn tab Gọi nhóm liền kề; Tăng tương phản badge; Phân quyền chỉ Admin mới được thêm/xóa thành viên, đổi tên và xóa nhóm. |
+| **57** | Khôi phục Bố cục Calls View Nhỏ Gọn (Compact Grid 1200px), Căn Đều 5 Tab 100% & Tinh chỉnh Nút Quản lý Nhóm bằng SVG Vector Hiện đại | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Trả container về `max-width: 1200px` và lưới `300px 420px 440px` cân đối chuẩn ban đầu; Căn đều 5 tab bộ lọc (`flex: 1; justify-content: center;`) triệt tiêu hoàn toàn khoảng trống thừa sau Gọi nhóm; Nâng cấp 2 nút Thêm thành viên và Xóa nhóm bằng SVG vector sắc nét trên nền pill pastel hiện đại. |
 
 ---
 
@@ -3034,6 +3038,49 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `491ms`.
+
+---
+
+## BƯỚC 57: KHÔI PHỤC BỐ CỤC CALLS VIEW NHỎ GỌN (COMPACT GRID 1200PX), CĂN ĐỀU 5 TAB 100% & TINH CHỈNH NÚT QUẢN LÝ NHÓM BẰNG SVG VECTOR HIỆN ĐẠI
+
+### 1. Bối cảnh & Yêu cầu từ Người dùng
+1. **Phục hồi kích thước danh bạ ban đầu & Triệt tiêu khoảng trống thừa (`CallsView.vue`)**:
+   - Khi tăng độ rộng danh bạ lên màn hình lớn (`max-width: 1560px` và cột `1fr`), thẻ danh bạ bị kéo dài quá mức (~800px), tạo ra khoảng cách quá xa từ tab "Gọi nhóm" tới cuối thanh tab (khoảng trống thừa lớn), đồng thời thông tin liên hệ và trạng thái bị giãn cách xa nhau mất cân đối.
+   - Yêu cầu người dùng: Để lại kích thước ban đầu của view danh bạ để xem lại bố cục nhỏ gọn, đồng thời xử lý triệt để khoảng trống cách xa từ tab Gọi nhóm tới cuối thanh tab.
+2. **Tinh chỉnh giao diện 2 nút Thêm thành viên và Xóa nhóm trong Modal Thành viên (`MessagesView.vue`)**:
+   - Giao diện cũ của 2 nút trong modal quản lý nhóm còn thô, sử dụng emoji trực tiếp (`➕`, `🗑️`) và nút xóa hiển thị màu xám/hồng chưa tinh tế.
+   - Yêu cầu người dùng: Tinh chỉnh lại 2 nút Thêm thành viên và Xóa nhóm cho đẹp, hiện đại và chuẩn chỉ.
+
+### 2. Chi tiết Triển khai Kỹ thuật
+
+#### A. Khôi phục Bố cục Gọn gàng & Căn đều 5 Tab trên `CallsView.vue`
+1. **Khôi phục Kích thước Container và Lưới 3 Cột**:
+   - Trả container `.calls-view` về kích thước chuẩn nhỏ gọn ban đầu: `max-width: 1200px; margin: 0 auto; padding: 0 10px;`.
+   - Cố định tỷ lệ 3 cột của `.calls-grid-layout`: `grid-template-columns: 300px 420px 440px;` (Bàn phím 300px, Đàm thoại 420px, Danh bạ 440px). Cột danh bạ có độ rộng vừa vặn 440px, các thành phần hiển thị khít khao, không bị co kéo hay kéo giãn quá mức.
+2. **Căn Đều 5 Tab Bộ lọc Chiếm Trọn 100% Thanh Tab (`.panel-tabs-bar` & `.panel-tab-btn`)**:
+   - Thiết lập `.panel-tab-btn` với `flex: 1; justify-content: center; gap: 4px; padding: 8px 6px; font-size: 0.78rem;`.
+   - Cả 5 tab (`Tất cả`, `Yêu thích`, `Trực tuyến`, `Ngoại tuyến`, `Gọi nhóm`) tự động chia đều chiều rộng thanh tab (mỗi tab chiếm đúng 20%), căn giữa chữ và badge.
+   - Triệt tiêu 100% khoảng trống thừa bên phải sau tab "Gọi nhóm", mang lại giao diện thanh thoát và liền mạch.
+
+#### B. Nâng cấp 2 Nút Quản trị Nhóm bằng SVG Vector & Giao diện Soft Pill trên `MessagesView.vue`
+1. **Thay thế Emoji bằng SVG Vector Sắc nét**:
+   - Nút **Thêm thành viên**: Tích hợp SVG biểu tượng dấu cộng nét đậm (`stroke-width="2.2"`).
+   - Nút **Xóa nhóm**: Tích hợp SVG biểu tượng thùng rác gọn gàng (`stroke-width="2"`).
+2. **Thiết kế Bố cục Lưới 2 Cột Đối xứng (2-Column Action Bar Grid)**:
+   - Áp dụng `.group-actions-bar-grid`: `display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; margin: 14px 0;`.
+   - Cả 2 nút chiếm tỷ lệ 50-50 cân đối hoàn hảo trong modal.
+3. **Phong cách Màu sắc Soft Pill Hiện đại**:
+   - **Nút Thêm thành viên** (`.btn-add-member`):
+     - Nền: Xanh dương nhạt (`#eff6ff`), Viền: `#bfdbfe`, Chữ & Icon: `#1d4ed8`.
+     - Hover: Nền `#dbeafe`, Viền `#93c5fd`.
+   - **Nút Xóa nhóm** (`.btn-delete-group`):
+     - Nền: Đỏ nhạt êm dịu (`#fef2f2`), Viền: `#fecaca`, Chữ & Icon: `#dc2626`.
+     - Hover: Nền `#fee2e2`, Viền `#fca5a5`.
+     - Trạng thái `:disabled`: Độ mờ `0.5`, con trỏ `not-allowed`.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `572ms`.
+
 
 
 

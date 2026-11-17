@@ -411,15 +411,25 @@
             <!-- Cụm 2 nút Thêm thành viên và Xóa nhóm đặt song song cho Admin -->
             <div v-if="currentIsAdmin" class="group-actions-bar-grid">
               <button class="btn-group-action btn-add-member" @click="openAddMoreToGroup">
-                ➕ Thêm thành viên
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>Thêm thành viên</span>
               </button>
               <button
                 class="btn-group-action btn-delete-group"
                 :disabled="isDeletingGroup"
                 @click="handleDeleteGroupRoom"
               >
-                <span v-if="isDeletingGroup">⏳ Đang xóa...</span>
-                <span v-else>🗑️ Xóa nhóm</span>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  <line x1="10" y1="11" x2="10" y2="17"></line>
+                  <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+                <span v-if="isDeletingGroup">Đang xóa...</span>
+                <span v-else>Xóa nhóm</span>
               </button>
             </div>
             <!-- Banner nhắc nhở phân quyền khi người dùng là thành viên thường -->
@@ -2428,15 +2438,17 @@ const getRoomStatusClass = (room) => {
 .group-actions-bar-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px;
+  width: 100%;
+  margin: 14px 0;
+  box-sizing: border-box;
 }
 
 .btn-group-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   padding: 10px 14px;
   border-radius: 8px;
   font-size: 0.84rem;
@@ -2444,15 +2456,18 @@ const getRoomStatusClass = (room) => {
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .btn-group-action.btn-add-member {
-  background: #3b82f6;
-  color: #ffffff;
-  border: 1px solid #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
 }
 .btn-group-action.btn-add-member:hover {
-  background: #2563eb;
+  background: #dbeafe;
+  border-color: #93c5fd;
 }
 
 .btn-group-action.btn-delete-group {
@@ -2461,12 +2476,11 @@ const getRoomStatusClass = (room) => {
   border: 1px solid #fecaca;
 }
 .btn-group-action.btn-delete-group:hover:not(:disabled) {
-  background: #dc2626;
-  color: #ffffff;
-  border-color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
 }
 .btn-group-action.btn-delete-group:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 

@@ -1465,9 +1465,9 @@ onUnmounted(() => {
 
 <style scoped>
 .calls-view {
-  max-width: 1560px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 0 16px;
+  padding: 0 10px;
 }
 
 .view-header {
@@ -1585,10 +1585,10 @@ onUnmounted(() => {
    ADAPTIVE 3-TIER GRID SYSTEM
    ========================================================================= */
 
-/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 300px, Đàm thoại 420px, Danh bạ 1fr mở rộng) */
+/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 300px, Đàm thoại 420px, Danh bạ 440px) */
 .calls-grid-layout {
   display: grid;
-  grid-template-columns: 300px 420px 1fr;
+  grid-template-columns: 300px 420px 440px;
   grid-template-areas: 'dialer status contacts';
   gap: 20px;
   align-items: start;
@@ -2192,30 +2192,26 @@ onUnmounted(() => {
   display: flex;
   background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
-  padding: 4px 8px 0;
-  gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.panel-tabs-bar::-webkit-scrollbar {
-  display: none;
+  padding: 4px 6px 0;
+  gap: 2px;
 }
 
 .panel-tab-btn {
+  flex: 1;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 8px 10px;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 6px;
   border: none;
   background: transparent;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: #64748b;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   transition: all 0.2s ease;
   white-space: nowrap;
-  flex-shrink: 0;
   border-radius: 6px 6px 0 0;
 }
 
