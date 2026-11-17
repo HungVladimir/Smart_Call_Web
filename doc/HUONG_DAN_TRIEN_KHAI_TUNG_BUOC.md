@@ -63,6 +63,7 @@
 | **47** | Phát triển Nhóm Chat Wazo Chatd Thuần API, Triệt tiêu Local In-Memory & Quản lý Thành viên | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khắc phục nút Tạo nhóm; Triệt tiêu mock in-memory; Tích hợp 100% Wazo Chatd API POST /users/me/rooms tạo phòng nhóm thật; Tách biệt Modal Tạo nhóm và Modal Thành viên; Quản lý activeRoomId trong RAM. |
 | **48** | Khắc phục Nhảy Thứ tự Phòng Chat, Tự động Làm mới Danh bạ & Phân quyền Admin Nhóm Chat | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Tải trước song song tin nhắn gần nhất và sắp xếp phòng chat cố định từ đầu; Tự động refresh danh bạ khi click/chuyển tab Gọi điện; Tra cứu an toàn Stale-While-Revalidate khi gọi lại từ Lịch sử; Đồng bộ Quản trị viên (Admin) duy nhất cho phòng nhóm từ Wazo; Thay thế chữ trạng thái bằng chấm tròn status góc Avatar; Phân quyền chỉ Admin mới có quyền Đổi tên nhóm và Xóa thành viên. |
 | **49** | Nâng cấp 9 Hạng mục Nghiệp vụ: Tab Trực tuyến, Nhận diện Mobile App, Điều khiển Cuộc gọi, Chuyển tiếp Lịch sử Nhóm & Đăng nhập Đơn Thiết bị | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Bổ sung tab 🟢 Trực tuyến và icon 📱 cho user online bằng mobile app; Ẩn nút điều khiển khi rảnh rỗi và loại bỏ chức năng loa ngoài; Tự động xóa số trên bàn phím khi gọi thành công; Kế thừa và chuyển tiếp tin nhắn khi mở rộng nhóm; Xử lý trạng thái bị mời rời nhóm kèm khóa chat; Khung chat đa dòng chống tràn thanh cuộn; Đăng nhập 1 thiết bị bằng Wazo Presence & Auth Heartbeat; Cập nhật tên nhóm động theo Plan B. |
+| **50** | Khắc phục Nhảy Nhầm Phòng Nhóm từ Danh bạ, Nhận diện Android Presence & Chuyển tiếp Tin nhắn Nhóm Đối xứng | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khóa chặt điều kiện `r.isDirect && r.members.length === 2` khi mở chat từ Danh bạ; Nhận diện từ khóa `smartcall-android` trong presence status bật cờ `isMobileApp` và hiện icon 📱; Chuyển tiếp tin nhắn kèm FWD Metadata giải mã đối xứng đa chiều trên Wazo server (A/B/C đăng nhập đều thấy đúng tin của mình màu xanh bên phải và tin đồng nghiệp bên trái). |
 
 ---
 
@@ -2743,6 +2744,32 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `576ms`.
+
+---
+
+## BƯỚC 50: KHẮC PHỤC NHẢY NHẦM PHÒNG NHÓM, NHẬN DIỆN ANDROID PRESENCE & CHUYỂN TIẾP ĐỐI XỨNG ĐA CHIỀU
+
+### 1. Bối cảnh và Yêu cầu Nghiệp vụ
+1. **Khắc phục lỗi nhảy nhầm vào phòng nhóm khi bấm Nhắn tin từ Danh bạ**: Khi người dùng A ở màn hình Danh bạ bấm icon nhắn tin cho B, nếu B đang tham gia các phòng nhóm (như ABC, ABCD), hệ thống lọc phòng chỉ theo điều kiện `m.ext === ext` nên bắt nhầm vào phòng nhóm thay vì phòng 1-1 giữa A và B. Yêu cầu sửa để luôn nhảy vào đúng phòng 1-1, nếu chưa có thì tạo phòng 1-1 mới.
+2. **Nhận diện chính xác Online từ ứng dụng di động Android**: Theo dữ liệu log máy chủ Wazo Chatd do người dùng kiểm tra thực tế: client web có `status: "Sẵn sàng"`, trong khi ứng dụng di động có `status: "Sẵn sàng [smartcall-android-...]"` (mặc dù trường `mobile: false`). Yêu cầu bóc tách từ khóa `smartcall-android` để kích hoạt cờ `isMobileApp = true` và hiển thị icon `📱`.
+3. **Chuyển tiếp Lịch sử Tin nhắn Đa chiều Đối xứng (Symmetric FWD)**: Khi tạo nhóm mới hoặc mở rộng nhóm, trước đây tất cả tin nhắn sao chép đều mang `user_uuid` của người tạo nhóm nên bị dạt hết sang màu xanh (hoặc bên người khác bị coi là do 1 người gửi). Yêu cầu khắc phục để tin nhắn của ai thì khi người đó đăng nhập sẽ hiển thị là "Tôi" màu xanh bên phải, tin của đồng nghiệp hiển thị tên đồng nghiệp màu trắng bên trái.
+
+### 2. Các Tệp Mã Nguồn Đã Chỉnh Sửa
+- `src/views/CallsView.vue`:
+  - Trong `handleMessage(contact)`, bổ sung truyền `uuid: contact.uuid || ''` qua query parameter sang route `/messages`.
+- `src/services/contactService.js`:
+  - Trong `loadPresencesForContacts()` và `updateSinglePresence()`, bổ sung kiểm tra chuỗi `statusStr.includes('smartcall-android') || statusStr.includes('android')` để kích hoạt `c.isMobileApp = isMob`.
+- `src/views/MessagesView.vue`:
+  - Trong `checkDirectChatRoute()`, khóa chặt điều kiện tra cứu phòng trong RAM bắt buộc phải thỏa mãn: `r.isDirect && (r.ext === ext || (r.members && r.members.length === 2 && r.members.some(m => m.ext === ext)))`.
+- `src/services/chatService.js`:
+  - Trong `getDirectRoom()`: Bổ sung điều kiện `r.isDirect` trong RAM và lọc chính xác phòng 1-1 trên server Wazo (`users.length === 2` và không chứa chữ "nhóm"/"group") trước khi quyết định tạo phòng mới.
+  - Trong `createGroupRoom()`: Nhúng thẻ siêu dữ liệu chuyển tiếp: `💬 [FWD:user_uuid=${origUuid}|sender=${origSender}|time=${timeStr}] ${m.text}`.
+  - Trong `getRoomMessages()` và `handleIncomingMessage()`: Bổ sung bộ phân giải Regex giải mã `FWD`, lấy đúng tác giả gốc và tính toán `isMine = (origUserUuid === myUserUuid)`.
+- `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể và ghi chép chi tiết Bước 50.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `530ms`.
+
 
 
 

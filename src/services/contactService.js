@@ -548,7 +548,15 @@ class ContactService {
         c.status = st.key
         c.statusLabel = st.label
         const p = c.uuid && this.presences[c.uuid]
-        c.isMobileApp = Boolean(p && (p.mobile === true || p.lines?.some((l) => l.mobile)))
+        const statusStr = String(p?.status || '').toLowerCase()
+        c.isMobileApp = Boolean(
+          p && (
+            statusStr.includes('smartcall-android') ||
+            statusStr.includes('android') ||
+            p.mobile === true ||
+            p.lines?.some((l) => l.mobile)
+          ),
+        )
       })
     } catch (e) {
       logger.warn('API', 'Không thể nạp trạng thái presence từ chatd:', e.message)
@@ -568,7 +576,15 @@ class ContactService {
           if (c.uuid === uuid) {
             const st = this.statusOf(c.uuid)
             const p = this.presences[uuid]
-            const isMob = Boolean(p && (p.mobile === true || p.lines?.some((l) => l.mobile)))
+            const statusStr = String(p?.status || '').toLowerCase()
+            const isMob = Boolean(
+              p && (
+                statusStr.includes('smartcall-android') ||
+                statusStr.includes('android') ||
+                p.mobile === true ||
+                p.lines?.some((l) => l.mobile)
+              ),
+            )
             if (c.status !== st.key || c.statusLabel !== st.label || c.isMobileApp !== isMob) {
               c.status = st.key
               c.statusLabel = st.label

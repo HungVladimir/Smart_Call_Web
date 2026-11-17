@@ -1,5 +1,71 @@
-Update lại giúp tôi.
-1. Tôi đang muốn thêm tab thẻ online nữa vào thành 3 thẻ ( tất cả, favorite, online). và kiểm tra cho tôi xem có cách nào xác định xem họ online bằng app trên phone hay là online bằng web được không? Nếu check được thì mới thêm button điện thoại, web không cần thêm cũng được, chỉ cần xác định xem có phải online bằng điện thoại không thì mới thêm icon điện thoại ngày sau tên user .
-4. Oke, vậy check giúp tôi nếu add thêm người thì sẽ tạo cuộc trò chuyện mới lưu giữ lại toàn bộ tin nhắn từ nhóm cũ, và hiện thị đúng xem có được không?
-6. ý tôi không phải là xóa và thu hồi tin nhắn, ý tôi là xóa hẳn cuộc trò chuyện ấy chứ không phải recall tin nhắn, như kiểu mình nhắn với rất nhiều người, hoặc những nhóm mình tạo ra lâu ngày, hoặc những nhóm mà mình bị kick ra, có rất nhiều nhóm rác, nên tôi đang hỏi có thể thêm button xóa cuộc trò chuyện được không? Và người A xóa cuộc trò chuyện thì người B cũng bijh mất cuộc trò chuyện đó đúng không? Check xem có api xóa cuộc trò chuyện không? nếu không có thì thôi? nếu có thì check giúp tôi
-8. Vậy là nó lưu local hay gì? tôi đang chưa hình dung? tóm lại thử giúp tôi, nếu tôi test lần này mà không được thì sẽ xóa tính năng bắt buộc đăng nhập 1 thiết bị đi
+tôi có 1 số update như sau:
+1. Chỉnh lại cho tôi luồng khi click vào nhắn tin cho 1 người ở danh bạ, nhưng lúc này trong phần message đang có rất nhiều cuộc trò chuyện với người đó, ví dụ A muốn nhắn cho B, nhưng trong list tin nhắn có cuộc trò chuyện của (ABC , ABCD, AB), thì lúc này khi click vào icon nhắn tin ở danh bạ thì phải chuyển tới cuộc trò chuyện 2 người (AB), nếu chưa có thì tạo cuộc trò chuyện mới chỉ có AB, nếu có rồi thì phải nhảy vào cuộc trò chuyện đó
+2. Tôi vừa tìm ra được cách get xem đâu là mobile đâu là online ở web, trong quá trình debug, tôi check đoạn load lên thì thấy nếu ở web thì status: "Sẵn sàng" còn nếu từ phone thì  status: "Sẵn sàng [smartcall-android-e82a33dd-983f-4da8-a09c-7e982eff7699]". tôi nghĩ check xem nó có từ khóa smartcall-android không là biết được nó có phải đăng nhập từ app không? tôi sẽ gửi log bên dưới
+3. Tôi đang có vấn đề về việc khi tạo 1 nhóm mới, hiện tại tin nhắn sẽ được copy sang room mới, nhưng dưới dạng tin nhắn 1 chiều, là tất cả tin nhắn đó là tôi gửi, ví dụ room cũ đang 3 người nói chuyện với nhau, sang room mới thì chỉ có tin nhắm 1 chiều do tôi copy sang, như thế không hay lắm, check xem có thể làm đẹp như kiểu tin nhắn của B thì cũng hiện thị B nhắn, tin nhắn của C là C nhắn, khi login acc B thì cũng nhìn thấy tin nhắn của chính mình màu xanh, túm lại như cuộc trò chuyện thật bê sang, có làm được như thế không?
+
+
+3: 
+{uuid: "50042256-5b07-4180-8ada-90cae9ab2b3d", tenant_uuid: "0e9ab2d3-5a36-4c35-b1de-91e06ddde771",…}
+connected
+: 
+true
+do_not_disturb
+: 
+false
+last_activity
+: 
+"2026-11-17T07:34:38.800734+00:00"
+line_state
+: 
+"available"
+lines
+: 
+[{id: 11, state: "available"}]
+mobile
+: 
+false
+state
+: 
+"available"
+status
+: 
+"Sẵn sàng"
+tenant_uuid
+: 
+"0e9ab2d3-5a36-4c35-b1de-91e06ddde771"
+uuid
+: 
+"50042256-5b07-4180-8ada-90cae9ab2b3d"
+4
+: 
+{uuid: "1db3f6ea-08f6-4e42-9f38-573c64870fb5", tenant_uuid: "0e9ab2d3-5a36-4c35-b1de-91e06ddde771",…}
+connected
+: 
+true
+do_not_disturb
+: 
+false
+last_activity
+: 
+"2026-11-17T01:28:08.159346+00:00"
+line_state
+: 
+"unavailable"
+lines
+: 
+[{id: 9, state: "unavailable"}]
+mobile
+: 
+false
+state
+: 
+"available"
+status
+: 
+"Sẵn sàng [smartcall-android-e82a33dd-983f-4da8-a09c-7e982eff7699]"
+tenant_uuid
+: 
+"0e9ab2d3-5a36-4c35-b1de-91e06ddde771"
+uuid
+: 
+"1db3f6ea-08f6-4e42-9f38-573c64870fb5"

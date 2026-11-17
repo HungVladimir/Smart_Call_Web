@@ -136,34 +136,49 @@ class ChatService {
 
     const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
     const currentUserName = (wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || '').trim()
-    const senderUuid = data.user_uuid || data.message?.user_uuid || ''
+    let senderUuid = data.user_uuid || data.message?.user_uuid || ''
+    let senderAlias = alias
+    let finalContent = content
+    let finalTimeStr = timeStr
+    let isFwd = false
+
+    // Giải mã thẻ chuyển tiếp siêu dữ liệu (FWD Metadata) nếu có
+    const fwdRegex = /^💬 \[FWD:user_uuid=([^|]*)\|sender=([^|]*)\|time=([^\]]*)\] ([\s\S]*)$/
+    const fwdMatch = content.match(fwdRegex)
+    if (fwdMatch) {
+      isFwd = true
+      if (fwdMatch[1]) senderUuid = fwdMatch[1].trim()
+      if (fwdMatch[2]) senderAlias = fwdMatch[2].trim()
+      if (fwdMatch[3]) finalTimeStr = fwdMatch[3].trim()
+      finalContent = fwdMatch[4]
+    }
 
     let isMine = false
     if (myUserUuid && senderUuid && senderUuid === myUserUuid) {
       isMine = true
-    } else if (currentUserName && alias && alias.toLowerCase() === currentUserName.toLowerCase()) {
+    } else if (currentUserName && senderAlias && senderAlias.toLowerCase() === currentUserName.toLowerCase()) {
       isMine = true
     }
 
     // 2. Nếu là tin nhắn của chính mình, kiểm tra xem có tin tạm (prefix cmsg-) cùng nội dung hay không
     if (isMine) {
       const tempMsg = targetRoom.messages.find(
-        (m) => typeof m.id === 'string' && m.id.startsWith('cmsg-') && m.text === content,
+        (m) => typeof m.id === 'string' && m.id.startsWith('cmsg-') && m.text === finalContent,
       )
       if (tempMsg) {
         // Chỉ cập nhật ID thật và chuẩn hóa thời gian, không push trùng lặp
         tempMsg.id = msgId
-        tempMsg.time = timeStr
+        tempMsg.time = finalTimeStr
         tempMsg.timestamp = msgTimestamp
-        targetRoom.preview = content
-        targetRoom.time = timeStr
+        targetRoom.preview = finalContent
+        targetRoom.time = finalTimeStr
         targetRoom.updatedAt = msgTimestamp
         this.saveRooms()
         return
       }
     }
 
-    let senderDisplayName = alias
+    let senderDisplayName = senderAlias
     if (isMine) {
       senderDisplayName = 'Tôi'
     } else if (senderUuid) {
@@ -175,13 +190,14 @@ class ChatService {
       id: msgId,
       sender: isMine ? 'mine' : 'theirs',
       senderName: senderDisplayName,
-      text: content,
-      time: timeStr,
+      text: finalContent,
+      time: finalTimeStr,
       timestamp: msgTimestamp,
       readStatus: isMine ? 'Đã gửi' : 'Read',
       readers: [],
       user_uuid: senderUuid,
-      alias: alias,
+      alias: senderAlias,
+      isForwarded: isFwd,
     }
 
     if (!isMine) {
@@ -492,9 +508,24 @@ class ChatService {
             const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
             const currentUserName = (wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || '').trim()
 
+            const fwdRegex = /^💬 \[FWD:user_uuid=([^|]*)\|sender=([^|]*)\|time=([^\]]*)\] ([\s\S]*)$/
+
             const mapped = data.items.map((m) => {
-              const senderUuid = m.user_uuid || m.sender_uuid || (m.user && m.user.uuid) || ''
-              const senderAlias = (m.alias || '').trim()
+              let senderUuid = m.user_uuid || m.sender_uuid || (m.user && m.user.uuid) || ''
+              let senderAlias = (m.alias || '').trim()
+              let msgContent = m.content || ''
+              let msgTimeStr = formatMessageDateTime(m.created_at || Date.now())
+              let isFwd = false
+
+              // Giải mã thẻ chuyển tiếp siêu dữ liệu (FWD Metadata) nếu có
+              const fwdMatch = msgContent.match(fwdRegex)
+              if (fwdMatch) {
+                isFwd = true
+                if (fwdMatch[1]) senderUuid = fwdMatch[1].trim()
+                if (fwdMatch[2]) senderAlias = fwdMatch[2].trim()
+                if (fwdMatch[3]) msgTimeStr = fwdMatch[3].trim()
+                msgContent = fwdMatch[4] // Lấy nội dung gốc sạch sẽ
+              }
 
               let isMine = false
               if (myUserUuid && senderUuid && senderUuid === myUserUuid) {
@@ -517,13 +548,14 @@ class ChatService {
                 id: m.uuid || `msg-${Date.now()}-${Math.random()}`,
                 sender: isMine ? 'mine' : 'theirs',
                 senderName: senderDisplayName,
-                text: m.content || '',
-                time: formatMessageDateTime(m.created_at || msgTimestamp),
+                text: msgContent,
+                time: msgTimeStr,
                 timestamp: msgTimestamp,
                 readStatus: isMine ? 'Đã gửi' : 'Read',
                 readers: [],
                 user_uuid: senderUuid,
                 alias: senderAlias,
+                isForwarded: isFwd,
               }
             })
 
@@ -631,12 +663,14 @@ class ChatService {
     const isSelf = cleanExt === myExt
     const displayTitle = isSelf ? `${name || currentUserName} (Bạn)` : name || `Máy lẻ ${cleanExt}`
 
-    // 1. Kiểm tra xem đã có phòng Wazo server thật (UUID 36 ký tự) tương ứng với máy lẻ này chưa
+    // 1. Kiểm tra xem đã có phòng 1-1 Wazo server thật (UUID 36 ký tự) tương ứng với máy lẻ này chưa
     const foundReal = this.rooms.find(
       (r) =>
         !r.id.startsWith('direct-') &&
+        r.isDirect &&
         (String(r.ext || '').split('@')[0].trim() === cleanExt ||
           (r.members &&
+            r.members.length === 2 &&
             r.members.some((m) => String(m.ext || '').split('@')[0].trim() === cleanExt))),
     )
 
@@ -677,8 +711,17 @@ class ChatService {
         if (checkRes.ok) {
           const checkData = await checkRes.json()
           if (Array.isArray(checkData.items) && checkData.items.length > 0) {
-            realRoomUuid = checkData.items[0].uuid
-            logger.info('CHAT', `Tìm thấy phòng 1-1 có sẵn trên Wazo Chatd: ${realRoomUuid}`)
+            // Lọc đúng phòng 1-1 thuần túy (đúng 2 user, không phải phòng nhóm)
+            const directItem = checkData.items.find(
+              (it) =>
+                Array.isArray(it.users) &&
+                it.users.length === 2 &&
+                (!it.name || (!it.name.toLowerCase().includes('nhóm') && !it.name.toLowerCase().includes('group'))),
+            )
+            if (directItem) {
+              realRoomUuid = directItem.uuid
+              logger.info('CHAT', `Tìm thấy phòng 1-1 chuẩn xác trên Wazo Chatd: ${realRoomUuid}`)
+            }
           }
         }
 
@@ -1010,13 +1053,16 @@ class ChatService {
         }),
       })
 
-      // Chuyển tiếp tin nhắn cũ sang phòng nhóm mới
+      // Chuyển tiếp tin nhắn cũ sang phòng nhóm mới kèm FWD Metadata đối xứng
       if (Array.isArray(forwardedMessages) && forwardedMessages.length > 0) {
         const recentMsgs = forwardedMessages.slice(-25)
         for (const m of recentMsgs) {
           if (!m.text) continue
-          const sender = m.senderName || (m.sender === 'mine' ? myName : 'Thành viên')
-          const timeStr = m.time ? ` [${m.time}]` : ''
+          const origSender = m.senderName || (m.sender === 'mine' ? myName : 'Thành viên')
+          const origUuid = m.user_uuid || ''
+          const timeStr = m.time || ''
+          const fwdPayload = `💬 [FWD:user_uuid=${origUuid}|sender=${origSender}|time=${timeStr}] ${m.text}`
+
           try {
             await fetch(`${host}/api/chatd/1.0/users/me/rooms/${newRoomUuid}/messages`, {
               method: 'POST',
@@ -1027,8 +1073,8 @@ class ChatService {
               },
               signal: AbortSignal.timeout(4000),
               body: JSON.stringify({
-                content: `💬 [Chuyển tiếp từ ${sender}${timeStr}]: ${m.text}`,
-                alias: 'Hệ thống',
+                content: fwdPayload,
+                alias: origSender,
               }),
             })
           } catch (fwdErr) {

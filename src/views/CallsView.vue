@@ -952,6 +952,7 @@ const handleMessage = (contact) => {
     query: {
       ext,
       name: contact.name,
+      uuid: contact.uuid || '',
     },
   })
 }

@@ -697,12 +697,14 @@ const checkDirectChatRoute = async () => {
     const rawName = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
     const name = isSelf && !rawName.includes('(Bạn)') ? `${rawName} (Bạn)` : rawName
 
-    // 1. Tìm ngay trong RAM (0ms)
+    // 1. Tìm ngay trong RAM (0ms) - Bắt buộc phải là phòng 1-1 (isDirect)
     let target = chatService.rooms.find(
       (r) =>
-        String(r.ext || '').split('@')[0].trim() === ext ||
-        (r.members &&
-          r.members.some((m) => String(m.ext || '').split('@')[0].trim() === ext)),
+        r.isDirect &&
+        (String(r.ext || '').split('@')[0].trim() === ext ||
+          (r.members &&
+            r.members.length === 2 &&
+            r.members.some((m) => String(m.ext || '').split('@')[0].trim() === ext))),
     )
 
     if (target) {
