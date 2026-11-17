@@ -2901,6 +2901,58 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `478ms`.
 
+---
+
+## BƯỚC 54: CHUYỂN ĐỔI GỌI NHÓM TỨC THỜI (AD-HOC CONFERENCE) VÀ BỔ SUNG TAB GỌI NHÓM TRONG DANH BẠ
+
+### 1. Bối cảnh và Yêu cầu Nghiệp vụ
+- **Triệt tiêu hoàn toàn cơ chế Phòng họp tĩnh (8001)**:
+  - Trước đây, hệ thống thực hiện gọi nhóm bằng cách quay số tĩnh `8001` (Asterisk MeetMe/ConfBridge). Cơ chế này không gửi tín hiệu cuộc gọi đến (đổ chuông) tới các thành viên, người dùng phải đọc tin nhắn chat rồi tự quay số tham gia.
+  - Chuyển đổi sang kiến trúc **Ad-Hoc Conference** (`/api/calld/1.0/users/me/conferences/adhoc`), đồng bộ 100% với mã nguồn tham chiếu mẫu Android (`WazoSipCallManager.py`).
+- **Hỗ trợ 2 điểm khởi tạo Cuộc gọi nhóm linh hoạt (2 Entry Points)**:
+  1. **Khởi tạo từ Phòng Chat nhóm (`MessagesView.vue`)**: Bấm nút gọi thoại ở header phòng chat để gọi toàn bộ thành viên nhóm.
+  2. **Khởi tạo từ Tab "Gọi nhóm" trong Danh bạ (`CallsView.vue`)**: Thêm tab thứ 5 (`📞 Gọi nhóm`) bên cạnh 4 tab hiện tại (`👥 Tất cả`, `⭐ Yêu thích`, `🟢 Trực tuyến`, `⚪ Ngoại tuyến`). Cho phép người dùng tích chọn 2 hoặc nhiều nhân viên trong danh bạ và bấm `📞 Bắt đầu gọi nhóm (X người)` ngay lập tức mà không cần tạo phòng chat trước.
+- **Quy trình hoạt động Ad-hoc Conference**:
+  - Chủ phòng (Host) khởi tạo cuộc gọi: Nhánh chính đầu tiên được gọi đi (`makeCall`). Sau 700ms, hệ thống tiếp tục gọi đồng thời các nhánh thành viên phụ.
+  - Khi có người nghe máy: Gọi API `GET /api/calld/1.0/users/me/calls` để lấy `call_id` của Chủ phòng và các nhánh, sau đó tạo phòng họp Ad-hoc qua `POST /api/calld/1.0/users/me/conferences/adhoc`.
+  - Khi thành viên tiếp theo bắt máy: Gọi `PUT /api/calld/1.0/users/me/conferences/adhoc/{conference_id}/participants/{call_id}` để hòa trộn âm thanh vào nhóm.
+  - Đồng bộ trạng thái Presence: Chủ phòng phát thẻ `[GROUP:hostExt:ext1,ext2,...]` lên Presence để mọi thiết bị (Web & Mobile) tự động nhận diện cuộc gọi nhóm và hiển thị danh sách thành viên.
+  - Vòng đời cúp máy (Hangup): Khi Chủ phòng cúp máy -> Gọi `DELETE /api/calld/1.0/users/me/conferences/adhoc/{conference_id}` để giải tán phòng họp và cúp toàn bộ nhánh. Khi thành viên cúp máy -> Chỉ ngắt nhánh của người đó, phòng vẫn duy trì.
+  - Dọn sạch các kiểm tra tĩnh `8001` rải rác trong mã nguồn.
+
+### 2. Chi tiết Triển khai Kỹ thuật
+- `src/services/wazo.js`:
+  - Bổ sung các thuộc tính quản lý Gọi nhóm Ad-hoc: `activeAdhocConferenceId`, `isGroupCall`, `isGroupHost`, `groupHostExtension`, `groupParticipantExtensions`, `extensionToWazoCallIdMap`, `mergedCallIds`, `secondaryCallSessions`.
+  - Tích hợp 5 API Wazo Calld chuẩn mã nguồn tham chiếu mẫu:
+    - `getMyActiveCalls()`: `GET /api/calld/1.0/users/me/calls`.
+    - `createAdhocConference()`: `POST /api/calld/1.0/users/me/conferences/adhoc`.
+    - `addParticipantToAdhocConference()`: `PUT /api/calld/1.0/users/me/conferences/adhoc/{confId}/participants/{callId}`.
+    - `deleteAdhocConference()`: `DELETE /api/calld/1.0/users/me/conferences/adhoc/{confId}`.
+    - `hangupUserCall()`: `DELETE /api/calld/1.0/users/me/calls/{call_id}`.
+  - Xây dựng các hàm điều khiển nghiệp vụ:
+    - `startGroupCall(targetExtensions, meta)`: Lọc số máy hợp lệ, gọi nhánh chính và lên lịch gọi các nhánh phụ sau 700ms.
+    - `addParticipantsToGroupCall(extensions)`: Mời thêm nhánh mới vào nhóm đang đàm thoại.
+    - `syncActiveCallsToAdhocConference()`: Tự động ghép nối các cuộc gọi active vào phòng họp Ad-hoc.
+    - `broadcastGroupStateViaPresence()`: Phát thẻ `[GROUP:hostExt:ext1,ext2,...]` qua Presence Wazo Chatd.
+    - `_resetGroupCallState()`: Dọn sạch tài nguyên và cờ trạng thái nhóm khi kết thúc.
+  - Cập nhật `hangup()` và `_finalizeCallTermination()`: Nếu là Chủ phòng, tự động giải tán phòng họp Ad-hoc và cúp toàn bộ nhánh phụ.
+  - Lắng nghe sự kiện Presence trong `openWebSocketEvents`: Bắt thẻ `[GROUP:...]` và đồng bộ giao diện cho các thành viên tham gia.
+  - Xóa bỏ điều kiện kiểm tra tĩnh `cleanExt !== '8001'` trong `validateAndMakeCall`.
+- `src/views/CallsView.vue`:
+  - Thêm tab thứ 5: `📞 Gọi nhóm` vào thanh bộ lọc `.panel-tabs-bar`.
+  - Thêm Sticky Action Bar khi ở tab Gọi nhóm: Hiển thị số lượng đã chọn, nút "Chọn tất cả trực tuyến", "Bỏ chọn" và nút "Bắt đầu gọi nhóm (X người)".
+  - Thêm ô checkbox chọn nhân viên trên từng thẻ danh bạ, tự động loại trừ chính mình `(Bạn)`.
+  - Thêm phương thức `handleStartGroupCallFromContacts()` kích hoạt `wazoService.startGroupCall()`.
+  - Cập nhật giao diện đàm thoại (Cột 2): Hiển thị huy hiệu `👥 Cuộc gọi nhóm Ad-hoc`, tiêu đề nhóm, tóm tắt danh sách thành viên và avatar nhóm màu xanh lục.
+  - Xóa bỏ các điều kiện tĩnh `ext !== '8001'` trong `handleDial()`.
+  - Thêm bộ CSS hoàn chỉnh cho tab Gọi nhóm, action bar, checkbox và giao diện đàm thoại nhóm.
+- `src/views/MessagesView.vue`:
+  - Xóa bỏ hằng số tĩnh `const confRoomNumber = '8001'`.
+  - Trong `startVoiceCall()`: Trích xuất danh sách máy lẻ thành viên trong phòng chat nhóm, kiểm tra hợp lệ, gửi thông báo tin nhắn và kích hoạt `wazoService.startGroupCall(memberExts)`.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `538ms`.
+
 
 
 

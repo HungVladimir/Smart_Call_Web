@@ -148,18 +148,28 @@
             <template v-if="isCalling">
               <div
                 class="call-avatar"
-                :class="{ pulsing: isCalling, ringingPulse: callState === 'ringing' }"
+                :class="{ 
+                  pulsing: isCalling, 
+                  ringingPulse: callState === 'ringing',
+                  groupCallAvatar: isGroupCall
+                }"
                 :style="{ backgroundColor: activeCallAvatarBg }"
               >
                 <span>{{ activeCallAvatarText }}</span>
               </div>
 
               <div class="caller-details">
+                <div v-if="isGroupCall" class="group-call-badge-tag">
+                  👥 Cuộc gọi nhóm Ad-hoc
+                </div>
                 <h2 class="caller-title">{{ activeCallTitle }}</h2>
                 <div v-if="activeCallDept" class="caller-dept-badge">{{ activeCallDept }}</div>
                 <p class="duration-text" :class="{ ringingText: callState === 'ringing' }">
                   {{ durationText }}
                 </p>
+                <div v-if="isGroupCall && groupMembersSummary" class="group-members-summary-text">
+                  Thành viên: {{ groupMembersSummary }}
+                </div>
                 <p v-if="dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
                 <div v-if="isRecording" class="recording-indicator-tag">
                   <span class="rec-pulse-dot">●</span> {{ formattedRecordingDuration }} Đang ghi âm
@@ -349,7 +359,7 @@
             </button>
           </div>
 
-          <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ vs Trực tuyến 🟢 vs Ngoại tuyến ⚪ -->
+          <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ vs Trực tuyến 🟢 vs Ngoại tuyến ⚪ vs Gọi nhóm 📞 -->
           <div class="panel-tabs-bar">
             <button
               class="panel-tab-btn"
@@ -379,10 +389,48 @@
             >
               ⚪ Ngoại tuyến ({{ offlineCount }})
             </button>
+            <button
+              class="panel-tab-btn tab-group-call"
+              :class="{ active: activeTab === 'group_call' }"
+              @click="activeTab = 'group_call'"
+            >
+              📞 Gọi nhóm
+            </button>
           </div>
 
           <!-- Contact List Body -->
           <div class="panel-list-container">
+            <!-- Sticky Action Bar khi ở Tab Gọi nhóm -->
+            <div v-if="activeTab === 'group_call'" class="group-call-selection-bar">
+              <div class="selection-info">
+                <span class="selection-badge">Đã chọn: <strong>{{ selectedGroupExtensions.length }}</strong> người</span>
+                <button
+                  v-if="selectedGroupExtensions.length > 0"
+                  class="btn-text-action"
+                  @click="clearGroupSelection"
+                >
+                  Bỏ chọn
+                </button>
+                <button
+                  class="btn-text-action"
+                  @click="selectAllOnlineContacts"
+                >
+                  Chọn tất cả trực tuyến
+                </button>
+              </div>
+              <button
+                class="btn-start-group"
+                :disabled="selectedGroupExtensions.length < 2 || isCalling || isDialing"
+                @click="handleStartGroupCallFromContacts"
+                title="Bắt đầu cuộc gọi nhóm tới các thành viên đã chọn"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                </svg>
+                <span>Gọi nhóm ({{ selectedGroupExtensions.length }})</span>
+              </button>
+            </div>
+
             <!-- Loading State -->
             <div v-if="loadingContacts && contacts.length === 0" class="panel-state-message">
               <div class="spinner"></div>
@@ -401,6 +449,9 @@
               <p v-else-if="activeTab === 'offline'">
                 Hiện chưa có nhân viên nào đang ngoại tuyến.
               </p>
+              <p v-else-if="activeTab === 'group_call'">
+                Chưa có liên hệ nào khả dụng để gọi nhóm.
+              </p>
               <p v-else-if="searchTerm">
                 Không tìm thấy nhân viên nào phù hợp với "{{ searchTerm }}".
               </p>
@@ -413,10 +464,29 @@
                 v-for="c in filteredContacts"
                 :key="c.id"
                 class="contact-item-card"
-                :class="{ favorite: c.isFavorite }"
+                :class="{ 
+                  favorite: c.isFavorite,
+                  'group-selectable': activeTab === 'group_call',
+                  'group-selected': activeTab === 'group_call' && isContactSelectedForGroup(c)
+                }"
+                @click="activeTab === 'group_call' ? toggleGroupContactSelection(c) : null"
               >
-                <!-- Ghim yêu thích ⭐ -->
+                <!-- Checkbox khi ở tab Gọi nhóm -->
+                <div
+                  v-if="activeTab === 'group_call'"
+                  class="group-select-checkbox-wrap"
+                  @click.stop="toggleGroupContactSelection(c)"
+                >
+                  <input
+                    type="checkbox"
+                    class="group-select-checkbox"
+                    :checked="isContactSelectedForGroup(c)"
+                    :disabled="isSelf(c)"
+                  />
+                </div>
+                <!-- Ghim yêu thích ⭐ khi ở các tab thông thường -->
                 <button
+                  v-else
                   class="btn-star"
                   :class="{ active: c.isFavorite }"
                   :title="c.isFavorite ? 'Bỏ khỏi yêu thích' : 'Thêm vào yêu thích'"
@@ -615,8 +685,26 @@ const activeCallContact = computed(() => {
   )
 })
 
+const isGroupCall = computed(() => Boolean(callStore.activeCall?.isGroupCall || wazoService.isGroupCall))
+
+const groupMembersSummary = computed(() => {
+  const exts = callStore.activeCall?.groupParticipantExtensions || wazoService.groupParticipantExtensions || []
+  if (!exts || exts.length === 0) return ''
+  const myExt = callStore.myExtension || localStorage.getItem('smartcall_extension') || ''
+  const names = exts.map((ext) => {
+    if (ext === myExt) return 'Bạn'
+    const c = contacts.value.find((ct) => String(ct.number || '').trim() === String(ext).trim()) || contactService.findContactByExtension(ext)
+    return c?.name ? `${c.name} (${ext})` : `Máy lẻ ${ext}`
+  })
+  return names.join(', ')
+})
+
 const activeCallTitle = computed(() => {
   if (!callStore.activeCall) return ''
+  if (isGroupCall.value) {
+    const count = (callStore.activeCall.groupParticipantExtensions || wazoService.groupParticipantExtensions || []).length
+    return callStore.activeCall.groupTitle || `Cuộc gọi nhóm (${count > 0 ? count : 3} người)`
+  }
   const ext = callStore.activeCall.number || extension.value
   if (callStore.activeCall.status === 'ringing') {
     return `Đang đổ chuông: ${callStore.activeCall.name || activeCallContact.value?.name || `Máy lẻ ${ext}`}`
@@ -632,6 +720,7 @@ const activeCallDept = computed(() => {
 })
 
 const activeCallAvatarText = computed(() => {
+  if (isGroupCall.value) return '👥'
   const name = callStore.activeCall?.name || activeCallContact.value?.name
   if (name) return getInitials(name)
   if (callStore.activeCall?.number) return callStore.activeCall.number.slice(-2)
@@ -639,6 +728,7 @@ const activeCallAvatarText = computed(() => {
 })
 
 const activeCallAvatarBg = computed(() => {
+  if (isGroupCall.value) return '#059669'
   const name = callStore.activeCall?.name || activeCallContact.value?.name
   if (name) return getAvatarColor(name)
   return '#2563eb'
@@ -729,6 +819,89 @@ const removeVietnameseTones = (str) => {
     .trim()
 }
 
+// Quản lý chọn nhân viên cho Gọi nhóm (Tab 5)
+const selectedGroupExtensions = ref([])
+
+const isContactSelectedForGroup = (c) => {
+  const ext = String(c?.number || '').trim()
+  return Boolean(ext && selectedGroupExtensions.value.includes(ext))
+}
+
+const isSelf = (c) => {
+  const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
+  return Boolean(myExt && String(c?.number || '').trim() === myExt)
+}
+
+const toggleGroupContactSelection = (c) => {
+  if (isSelf(c)) return
+  const ext = String(c?.number || '').trim()
+  if (!ext) return
+  const idx = selectedGroupExtensions.value.indexOf(ext)
+  if (idx > -1) {
+    selectedGroupExtensions.value.splice(idx, 1)
+  } else {
+    selectedGroupExtensions.value.push(ext)
+  }
+}
+
+const clearGroupSelection = () => {
+  selectedGroupExtensions.value = []
+}
+
+const selectAllOnlineContacts = () => {
+  const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
+  const onlineExts = contacts.value
+    .filter((c) => c.status !== 'offline' && c.status !== 'unavailable' && String(c.number || '').trim() !== myExt)
+    .map((c) => String(c.number || '').trim())
+    .filter(Boolean)
+  selectedGroupExtensions.value = [...new Set([...selectedGroupExtensions.value, ...onlineExts])]
+}
+
+const handleStartGroupCallFromContacts = async () => {
+  if (selectedGroupExtensions.value.length < 2) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: '⚠️ Vui lòng chọn ít nhất 2 thành viên để bắt đầu cuộc gọi nhóm!',
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  if (isCalling.value || isDialing.value) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: '⚠️ Bạn đang có một cuộc gọi khác đang hoạt động. Vui lòng kết thúc trước khi gọi nhóm!',
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
+
+  // Chuyển sang màn hình dialer trên mobile
+  mobileTab.value = 'dialer'
+
+  const extsToCall = [...selectedGroupExtensions.value]
+  logger.info('CALL', `Khởi tạo cuộc gọi nhóm từ Danh bạ tới ${extsToCall.length} người: ${extsToCall.join(', ')}`)
+
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message: `👥 Đang khởi tạo cuộc gọi nhóm (${extsToCall.length + 1} người)...`,
+        type: 'info',
+      },
+    }),
+  )
+
+  await wazoService.startGroupCall(extsToCall, {
+    groupTitle: `Cuộc gọi nhóm (${extsToCall.length + 1} người)`,
+  })
+}
+
 // Danh sách danh bạ được lọc
 const filteredContacts = computed(() => {
   let list = contacts.value
@@ -738,6 +911,10 @@ const filteredContacts = computed(() => {
     list = list.filter((c) => c.status !== 'offline' && c.status !== 'unavailable')
   } else if (activeTab.value === 'offline') {
     list = list.filter((c) => c.status === 'offline' || c.status === 'unavailable')
+  } else if (activeTab.value === 'group_call') {
+    // Ẩn chính mình khỏi danh sách chọn gọi nhóm
+    const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
+    list = list.filter((c) => String(c.number || '').trim() !== myExt)
   }
   const q = searchTerm.value.trim()
   if (!q) return list
@@ -799,15 +976,15 @@ const handleDial = async () => {
     contactService.findContactByExtension(ext)
 
   // Tra cứu an toàn Stale-While-Revalidate nếu chưa thấy trong danh bạ hiện tại (tránh lỗi gọi lại từ Lịch sử)
-  if (!target && ext !== '8001') {
+  if (!target) {
     target = await contactService.getOrLookupContact(ext)
     if (target && !contacts.value.some((c) => c.id === target.id)) {
       contacts.value.push(target)
     }
   }
 
-  // Nếu số máy lẻ không tồn tại trong danh bạ và không phải số phòng họp hệ thống (8001)
-  if (!target && ext !== '8001') {
+  // Nếu số máy lẻ không tồn tại trong danh bạ
+  if (!target) {
     cleanCallQueryParams()
     window.dispatchEvent(
       new CustomEvent('app-toast', {
@@ -2420,5 +2597,125 @@ onUnmounted(() => {
     height: 52px;
     font-size: 1.15rem;
   }
+}
+
+/* --- Tab Gọi nhóm & Action bar --- */
+.panel-tab-btn.tab-group-call {
+  color: #2563eb;
+  font-weight: 700;
+}
+.panel-tab-btn.tab-group-call.active {
+  background: #eff6ff;
+  border-bottom-color: #2563eb;
+}
+
+.group-call-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f0fdf4;
+  border-bottom: 1px solid #bbf7d0;
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 8px;
+}
+
+.selection-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.selection-badge {
+  font-size: 0.84rem;
+  color: #166534;
+  font-weight: 600;
+}
+
+.btn-text-action {
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.btn-text-action:hover {
+  color: #1d4ed8;
+}
+
+.btn-start-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.25);
+}
+.btn-start-group:hover:not(:disabled) {
+  background: #15803d;
+  transform: translateY(-1px);
+}
+.btn-start-group:disabled {
+  background: #cbd5e1;
+  color: #94a3b8;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.group-select-checkbox-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+}
+
+.group-select-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #2563eb;
+}
+
+.contact-item-card.group-selectable {
+  cursor: pointer;
+}
+.contact-item-card.group-selected {
+  background: #f0f7ff;
+  border: 1.5px solid #3b82f6 !important;
+}
+
+.group-call-badge-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.group-members-summary-text {
+  font-size: 0.82rem;
+  color: #64748b;
+  margin-top: 4px;
+  line-height: 1.35;
+  max-width: 320px;
+  text-align: center;
+}
+
+.call-avatar.groupCallAvatar {
+  background: #059669 !important;
 }
 </style>

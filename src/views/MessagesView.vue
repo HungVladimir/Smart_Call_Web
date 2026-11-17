@@ -1200,16 +1200,51 @@ const startVoiceCall = () => {
       }),
     )
   } else {
-    const confRoomNumber = '8001'
-    const memberCount = currentRoomMembers.value.length || 3
+    // CUỘC GỌI NHÓM TỨC THỜI (AD-HOC CONFERENCE - THAY THẾ HOÀN TOÀN PHÒNG HỌP TĨNH 8001)
+    const myExt = wazoService.getMyExtension() || callStore?.myExtension || localStorage.getItem('smartcall_extension') || ''
+    const memberExts = []
+    for (const m of currentRoomMembers.value) {
+      const ext = m.extension || m.number || (m.extra && m.extra.extension)
+      if (ext && String(ext).trim() !== String(myExt).trim()) {
+        const clean = String(ext).trim()
+        if (!memberExts.includes(clean)) {
+          memberExts.push(clean)
+        }
+      }
+    }
+
+    if (memberExts.length === 0) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: '⚠️ Các thành viên trong nhóm chưa được gán số máy lẻ để thực hiện cuộc gọi nhóm',
+            type: 'warning',
+          },
+        }),
+      )
+      return
+    }
+
+    if (memberExts.length === 1) {
+      // Nếu chỉ có 1 thành viên khác trong nhóm -> Gọi trực tiếp 1-1
+      window.dispatchEvent(
+        new CustomEvent('app-action', {
+          detail: { type: 'dial', value: memberExts[0] },
+        }),
+      )
+      return
+    }
+
+    const roomTitle = currentRoom.value.title || 'Nhóm'
+    const totalCount = memberExts.length + 1
     if (
       confirm(
-        `Khởi tạo cuộc gọi hội nghị cho nhóm [${currentRoom.value.title}] (${memberCount} thành viên)?\n\nHệ thống sẽ kết nối bạn vào phòng hội nghị nội bộ số máy ${confRoomNumber} và gửi thông báo mời các thành viên tham gia.`
+        `Khởi tạo cuộc gọi nhóm tức thời tới [${roomTitle}] (${totalCount} thành viên)?\n\nHệ thống sẽ tự động gọi đồng thời và kết nối các thành viên vào cuộc gọi nhóm (Ad-hoc Conference).`
       )
     ) {
       chatService.sendMessage(
         currentRoom.value.id,
-        `🔔 [${currentUserName.value}] đã bắt đầu cuộc gọi hội nghị thoại nhóm (Số phòng họp: ${confRoomNumber}). Mọi người vui lòng nhấn nút Gọi để cùng tham gia!`,
+        `📞 [${currentUserName.value}] đã bắt đầu cuộc gọi nhóm tức thời tới các thành viên trong nhóm.`,
         'Hệ thống Tổng đài'
       )
       const target = rooms.value.find((r) => r.id === currentRoom.value.id)
@@ -1217,15 +1252,19 @@ const startVoiceCall = () => {
         target.updatedAt = Date.now()
       }
       rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-      chatService.getRooms().then((res) => {
-        rooms.value = [...res]
-        const updated = rooms.value.find((r) => r.id === currentRoom.value.id)
-        if (updated) currentRoom.value = updated
-        scrollToBottom()
+
+      // Khởi tạo cuộc gọi nhóm qua Wazo Calld Ad-hoc Conference
+      wazoService.startGroupCall(memberExts, {
+        groupTitle: roomTitle,
+        roomId: currentRoom.value.id,
       })
+
       window.dispatchEvent(
-        new CustomEvent('app-action', {
-          detail: { type: 'dial', value: confRoomNumber },
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `👥 Đang khởi tạo cuộc gọi nhóm (${totalCount} người)...`,
+            type: 'info',
+          },
         }),
       )
     }

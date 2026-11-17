@@ -44,6 +44,20 @@ class WazoService {
     this.currentSessionUuid = ''
     this._isKicked = false
     this._tokenCheckTimer = null
+
+    // Trạng thái Gọi nhóm Ad-hoc (Ad-hoc Group Conference) - Parity với Android WazoSipCallManager
+    this.activeAdhocConferenceId = ''
+    this.isGroupCall = false
+    this.isGroupHost = false
+    this.groupHostExtension = ''
+    this.groupParticipantExtensions = []
+    this.extensionToWazoCallIdMap = new Map()
+    this.mergedCallIds = new Set()
+    this.secondaryCallSessions = new Map()
+  }
+
+  getHostUrl() {
+    return this.host.startsWith('http') ? this.host : `https://${this.host}`
   }
 
   getOrCreateClientId() {
@@ -559,6 +573,38 @@ class WazoService {
           if (name.includes('presence')) {
             window.dispatchEvent(new CustomEvent('wazo-presence-updated', { detail: data }))
 
+            // Đồng bộ giao diện Gọi Nhóm cho tất cả thành viên khi nhận tag [GROUP:hostExt:1001,1002,1003]
+            const statusText = data?.status || data?.state || ''
+            if (this.hasActiveCall() && typeof statusText === 'string' && statusText.includes('[GROUP:')) {
+              const start = statusText.indexOf('[GROUP:') + 7
+              const end = statusText.indexOf(']', start)
+              if (end > start) {
+                const content = statusText.substring(start, end).trim()
+                let hostExt = ''
+                let csv = content
+                if (content.includes(':')) {
+                  const segs = content.split(':')
+                  hostExt = segs[0].trim()
+                  csv = segs.slice(1).join(':').trim()
+                }
+                const parsedExts = csv.split(',').map((s) => s.trim()).filter(Boolean)
+                const myExt = this.getMyExtension()
+                if (parsedExts.includes(myExt)) {
+                  this.isGroupCall = true
+                  this.groupHostExtension = hostExt
+                  this.isGroupHost = hostExt === myExt
+                  this.groupParticipantExtensions = parsedExts
+                  if (callStore.activeCall) {
+                    callStore.activeCall.isGroupCall = true
+                    callStore.activeCall.isGroupHost = this.isGroupHost
+                    callStore.activeCall.groupHostExtension = hostExt
+                    callStore.activeCall.groupParticipantExtensions = parsedExts
+                    callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${parsedExts.length} người)`
+                  }
+                }
+              }
+            }
+
             // Single Device Login: Nếu presence của chính user chứa Session ID mới từ thiết bị khác
             const myUuid = this.getMyUserUuid()
             const targetUuid = data?.uuid || data?.user_uuid
@@ -569,6 +615,13 @@ class WazoService {
                 return
               }
             }
+          }
+
+          // Khi có nhánh nghe máy trong cuộc gọi nhóm, tự động kích hoạt đồng bộ Ad-hoc Conference
+          if ((name === 'call_answered' || name === 'call_updated') && this.isGroupCall && this.isGroupHost) {
+            setTimeout(() => {
+              this.syncActiveCallsToAdhocConference()
+            }, 400)
           }
 
           // Chuyển tiếp tới các subscriber của websocketService (chat, call)
@@ -738,6 +791,26 @@ class WazoService {
     this.stopRemoteAudio()
     audioService.stopAllTones()
 
+    // Dọn dẹp Ad-hoc Group Call nếu phiên này là Chủ phòng
+    if (this.isGroupCall && this.isGroupHost) {
+      if (this.activeAdhocConferenceId) {
+        this.deleteAdhocConference(this.activeAdhocConferenceId)
+      }
+      for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
+        try {
+          Wazo.Phone.hangup(secSession)
+        } catch (e) {
+          /* ignore */
+        }
+      }
+    }
+    this._resetGroupCallState()
+    try {
+      this.setPresence('available', this.mySessionId)
+    } catch (e) {
+      /* ignore */
+    }
+
     if (active || incoming) {
       audioService.playCallEndedTone()
     }
@@ -897,6 +970,13 @@ class WazoService {
 
       this.startCallDurationTimer()
 
+      // Tự động đồng bộ các nhánh vào Ad-hoc Conference nếu đang gọi nhóm
+      if (this.isGroupCall && this.isGroupHost) {
+        setTimeout(() => {
+          this.syncActiveCallsToAdhocConference()
+        }, 500)
+      }
+
       // Tự động kích hoạt ghi âm máy chủ nếu bật cấu hình autoRecordCalls
       if (localStorage.getItem('smartcall_auto_record_calls') === 'true') {
         setTimeout(async () => {
@@ -1008,6 +1088,21 @@ class WazoService {
   hangup(callSession = null) {
     logger.info('CALL', 'Thao tác: Người dùng bấm Cúp máy (Hangup)')
     audioService.stopAllTones()
+
+    // 1. Nếu là Chủ phòng gọi nhóm, giải tán Ad-hoc Conference và ngắt tất cả các nhánh phụ
+    if (this.isGroupCall && this.isGroupHost) {
+      if (this.activeAdhocConferenceId) {
+        this.deleteAdhocConference(this.activeAdhocConferenceId)
+      }
+      for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
+        try {
+          Wazo.Phone.hangup(secSession)
+        } catch (e) {
+          /* ignore */
+        }
+      }
+    }
+
     const session = callSession || this.currentCallSession || callStore.activeCall?.session
     if (session) {
       try {
@@ -1192,7 +1287,7 @@ class WazoService {
 
     // 4. Kiểm tra trạng thái máy lẻ trong danh bạ
     const targetContact = contactService.findContactByExtension(cleanExt)
-    if (!targetContact && cleanExt !== '8001' && !meta.allowUnknown) {
+    if (!targetContact && !meta.allowUnknown) {
       if (contactService.currentContacts && contactService.currentContacts.length > 0) {
         logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} không tồn tại trong danh bạ hệ thống.`)
         this._isDialing = false
@@ -1320,6 +1415,11 @@ class WazoService {
       isMuted: false,
       isHeld: false,
       isRecorded: false,
+      isGroupCall: Boolean(meta.isGroupCall || this.isGroupCall),
+      isGroupHost: Boolean(meta.isGroupHost || this.isGroupHost),
+      groupHostExtension: meta.groupHostExtension || this.groupHostExtension,
+      groupParticipantExtensions: meta.groupParticipants || this.groupParticipantExtensions || [],
+      groupTitle: meta.groupTitle || '',
     }
 
     audioService.startRingbackTone()
@@ -1447,6 +1547,358 @@ class WazoService {
 
   hold(callSession = null) {
     this.setHold(true, callSession)
+  }
+
+  // =========================================================================
+  // WAZO CALLD (/api/calld/1.0) - AD-HOC CONFERENCES & GỌI NHÓM TỨC THỜI
+  // Đối ứng chuẩn 100% với Android WazoSipCallManager & wazoApiService
+  // =========================================================================
+
+  /**
+   * Truy vấn danh sách cuộc gọi hiện tại của user trên máy chủ Wazo Calld
+   * GET /api/calld/1.0/users/me/calls
+   */
+  async getMyActiveCalls() {
+    const token = this.getToken()
+    if (!token) return []
+    const host = this.getHostUrl()
+    try {
+      const res = await fetch(`${host}/api/calld/1.0/users/me/calls`, {
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+      })
+      if (!res.ok) return []
+      const data = await res.json()
+      return Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
+    } catch (e) {
+      logger.warn('CALL', 'Lỗi khi gọi getMyActiveCalls:', e)
+      return []
+    }
+  }
+
+  /**
+   * Tạo phòng họp nhóm Ad-hoc từ host_call_id và danh sách participant_call_ids
+   * POST /api/calld/1.0/users/me/conferences/adhoc
+   */
+  async createAdhocConference(hostCallId, participantCallIds = []) {
+    const token = this.getToken()
+    if (!token || !hostCallId) return null
+    const host = this.getHostUrl()
+    try {
+      logger.info('CALL', `Tạo Ad-hoc Conference với Host [${hostCallId}] và ${participantCallIds.length} nhánh...`)
+      const res = await fetch(`${host}/api/calld/1.0/users/me/conferences/adhoc`, {
+        method: 'POST',
+        headers: {
+          'X-Auth-Token': token,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          host_call_id: hostCallId,
+          participant_call_ids: participantCallIds,
+        }),
+      })
+      if (!res.ok) {
+        logger.warn('CALL', `Tạo Ad-hoc Conference thất bại (HTTP ${res.status})`)
+        return null
+      }
+      const data = await res.json()
+      logger.success('CALL', `🎉 Đã tạo Ad-hoc Conference thành công: ${data?.conference_id}`)
+      return data?.conference_id || null
+    } catch (e) {
+      logger.error('CALL', 'Lỗi khi tạo Ad-hoc Conference:', e)
+      return null
+    }
+  }
+
+  /**
+   * Thêm một participant call_id vào Ad-hoc Conference đang diễn ra
+   * PUT /api/calld/1.0/users/me/conferences/adhoc/{conference_id}/participants/{call_id}
+   */
+  async addParticipantToAdhocConference(conferenceId, callId) {
+    const token = this.getToken()
+    if (!token || !conferenceId || !callId) return false
+    const host = this.getHostUrl()
+    try {
+      const res = await fetch(`${host}/api/calld/1.0/users/me/conferences/adhoc/${conferenceId}/participants/${callId}`, {
+        method: 'PUT',
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+      })
+      logger.info('CALL', `Thêm nhánh ${callId} vào Ad-hoc Conference ${conferenceId} -> HTTP ${res.status}`)
+      return res.ok
+    } catch (e) {
+      logger.warn('CALL', 'Lỗi addParticipantToAdhocConference:', e)
+      return false
+    }
+  }
+
+  /**
+   * Xóa/Giải tán phòng họp Ad-hoc khi Chủ phòng kết thúc cuộc gọi
+   * DELETE /api/calld/1.0/users/me/conferences/adhoc/{conference_id}
+   */
+  async deleteAdhocConference(conferenceId) {
+    const token = this.getToken()
+    if (!token || !conferenceId) return false
+    const host = this.getHostUrl()
+    try {
+      const res = await fetch(`${host}/api/calld/1.0/users/me/conferences/adhoc/${conferenceId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+      })
+      logger.info('CALL', `Giải tán Ad-hoc Conference ${conferenceId} -> HTTP ${res.status}`)
+      return res.ok
+    } catch (e) {
+      logger.warn('CALL', 'Lỗi deleteAdhocConference:', e)
+      return false
+    }
+  }
+
+  /**
+   * Ngắt một nhánh cuộc gọi cụ thể
+   * DELETE /api/calld/1.0/users/me/calls/{call_id}
+   */
+  async hangupUserCall(callId) {
+    const token = this.getToken()
+    if (!token || !callId) return false
+    const host = this.getHostUrl()
+    try {
+      const res = await fetch(`${host}/api/calld/1.0/users/me/calls/${callId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+      })
+      return res.ok
+    } catch (e) {
+      return false
+    }
+  }
+
+  /**
+   * Khởi tạo cuộc gọi nhóm tức thời (Ad-hoc Group Call)
+   * Tương thích hoàn toàn với Android WazoSipCallManager.startGroupCall
+   * @param {string[]} targetExtensions - Danh sách số máy lẻ thành viên
+   * @param {object} meta - Thông tin bổ sung (groupTitle, roomId...)
+   */
+  async startGroupCall(targetExtensions = [], meta = {}) {
+    if (!targetExtensions || targetExtensions.length === 0) return { success: false, reason: 'EMPTY' }
+
+    const myExt = this.getMyExtension()
+    const cleanList = []
+    for (const ext of targetExtensions) {
+      const s = String(ext || '').trim()
+      if (s && s !== myExt && !cleanList.includes(s)) {
+        cleanList.push(s)
+      }
+    }
+
+    if (cleanList.length === 0) {
+      logger.warn('CALL', 'Danh sách máy lẻ hợp lệ để gọi nhóm rỗng.')
+      return { success: false, reason: 'NO_VALID_TARGETS' }
+    }
+
+    if (cleanList.length === 1) {
+      return this.validateAndMakeCall(cleanList[0], meta)
+    }
+
+    logger.info('CALL', `👥 Bắt đầu gọi nhóm (Ad-hoc) tới ${cleanList.length} thành viên: ${cleanList.join(', ')}`)
+
+    // Thiết lập trạng thái Host & Group
+    this.isGroupHost = true
+    this.groupHostExtension = myExt
+    this.isGroupCall = true
+    this.activeAdhocConferenceId = ''
+    this.extensionToWazoCallIdMap.clear()
+    this.mergedCallIds.clear()
+    this.secondaryCallSessions.clear()
+
+    this.groupParticipantExtensions = [myExt, ...cleanList]
+
+    const firstTarget = cleanList[0]
+    const remainingTargets = cleanList.slice(1)
+
+    // Khởi tạo cuộc gọi nhánh đầu tiên
+    const callResult = await this.validateAndMakeCall(firstTarget, {
+      ...meta,
+      isGroupCall: true,
+      isGroupHost: true,
+      groupHostExtension: myExt,
+      groupTitle: meta.groupTitle || `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`,
+      groupParticipants: this.groupParticipantExtensions,
+    })
+
+    if (!callResult || !callResult.success) {
+      this._resetGroupCallState()
+      return callResult
+    }
+
+    // Đánh dấu activeCall là groupCall
+    if (callStore.activeCall) {
+      callStore.activeCall.isGroupCall = true
+      callStore.activeCall.isGroupHost = true
+      callStore.activeCall.groupHostExtension = myExt
+      callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+      callStore.activeCall.groupTitle = meta.groupTitle || `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+    }
+
+    // Sau 700ms (khi nhánh đầu tiên đã sẵn sàng SDP), gọi các nhánh còn lại
+    setTimeout(() => {
+      if (this.hasActiveCall() && this.isGroupCall && remainingTargets.length > 0) {
+        this.addParticipantsToGroupCall(remainingTargets)
+      }
+    }, 700)
+
+    // Phát trạng thái nhóm lên Presence
+    this.broadcastGroupStateViaPresence()
+
+    return { success: true }
+  }
+
+  /**
+   * Thêm các máy lẻ vào cuộc gọi nhóm đang diễn ra
+   */
+  async addParticipantsToGroupCall(extensions = []) {
+    const myExt = this.getMyExtension()
+    const toInvite = []
+    for (const ext of extensions) {
+      const s = String(ext || '').trim()
+      if (s && s !== myExt && !this.groupParticipantExtensions.includes(s)) {
+        this.groupParticipantExtensions.push(s)
+        toInvite.push(s)
+      } else if (s && s !== myExt && !toInvite.includes(s)) {
+        toInvite.push(s)
+      }
+    }
+
+    if (toInvite.length === 0) return
+
+    logger.info('CALL', `Mời thêm thành viên vào nhóm: ${toInvite.join(', ')}`)
+    if (callStore.activeCall) {
+      callStore.activeCall.isGroupCall = true
+      callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+    }
+    this.broadcastGroupStateViaPresence()
+
+    // Khởi tạo các nhánh gọi tới từng máy lẻ qua WebRTC Phone
+    for (const ext of toInvite) {
+      try {
+        logger.info('CALL', `Đang gửi tín hiệu gọi nhánh thành viên: ${ext}...`)
+        const session = await Wazo.Phone.call(ext, false)
+        if (session) {
+          this.secondaryCallSessions.set(ext, session)
+        }
+      } catch (err) {
+        logger.warn('CALL', `Không thể gọi nhánh ${ext}:`, err.message || err)
+      }
+    }
+
+    // Sau 1200ms, đồng bộ các nhánh vào Ad-hoc Conference
+    setTimeout(() => {
+      this.syncActiveCallsToAdhocConference()
+    }, 1200)
+  }
+
+  /**
+   * Đồng bộ các cuộc gọi active vào Ad-hoc Conference qua Wazo Calld REST API
+   */
+  async syncActiveCallsToAdhocConference() {
+    if (!this.hasActiveCall() || !this.isGroupCall || !this.isGroupHost) return
+
+    const activeCalls = await this.getMyActiveCalls()
+    if (!activeCalls || activeCalls.length === 0) return
+
+    logger.info('CALL', `Đồng bộ Ad-hoc Conference từ ${activeCalls.length} cuộc gọi active trên Wazo Calld`)
+
+    // Tìm host call_id và các participant call_id
+    let hostCallId = ''
+    const participantCallIds = []
+
+    for (const callObj of activeCalls) {
+      const cid = callObj.id || callObj.call_id
+      const sipId = callObj.sip_call_id
+      if (!cid) continue
+
+      // Nếu sip_call_id trùng với currentCallSession của Host
+      if (this.currentCallSession && sipId === this.currentCallSession.sipCallId) {
+        hostCallId = cid
+      } else {
+        // Kiểm tra trong talking_to
+        if (callObj.talking_to && typeof callObj.talking_to === 'object') {
+          for (const peerId of Object.keys(callObj.talking_to)) {
+            if (!participantCallIds.includes(peerId) && peerId !== hostCallId) {
+              participantCallIds.push(peerId)
+            }
+          }
+        }
+        if (!participantCallIds.includes(cid)) {
+          participantCallIds.push(cid)
+        }
+      }
+    }
+
+    if (!hostCallId && activeCalls.length > 0) {
+      hostCallId = activeCalls[0].id || activeCalls[0].call_id
+    }
+
+    // Nếu đã có activeAdhocConferenceId: Thêm các participant chưa merge
+    if (this.activeAdhocConferenceId) {
+      for (const pId of participantCallIds) {
+        if (!this.mergedCallIds.has(pId) && pId !== hostCallId) {
+          this.mergedCallIds.add(pId)
+          await this.addParticipantToAdhocConference(this.activeAdhocConferenceId, pId)
+        }
+      }
+      return
+    }
+
+    // Chưa có conference_id: Tạo mới Ad-hoc Conference
+    const toMerge = participantCallIds.filter((id) => id !== hostCallId)
+    if (toMerge.length > 0 && hostCallId) {
+      toMerge.forEach((id) => this.mergedCallIds.add(id))
+      const confId = await this.createAdhocConference(hostCallId, toMerge)
+      if (confId) {
+        this.activeAdhocConferenceId = confId
+        if (callStore.activeCall) {
+          callStore.activeCall.activeAdhocConferenceId = confId
+        }
+        this.broadcastGroupStateViaPresence()
+      } else {
+        this.mergedCallIds.clear()
+      }
+    }
+  }
+
+  /**
+   * Phát trạng thái Gọi nhóm lên Presence của Wazo Chatd
+   * Thẻ: [GROUP:hostExt:ext1,ext2,ext3]
+   */
+  broadcastGroupStateViaPresence() {
+    if (!this.isGroupCall) return
+    const myExt = this.getMyExtension()
+    const hostExt = this.groupHostExtension || myExt
+    const exts = this.groupParticipantExtensions.length > 0 ? this.groupParticipantExtensions : [myExt]
+    const groupTag = `[GROUP:${hostExt}:${exts.join(',')}]`
+    this.setPresence('unavailable', `Đang gọi nhóm ${groupTag}`)
+  }
+
+  _resetGroupCallState() {
+    this.activeAdhocConferenceId = ''
+    this.isGroupCall = false
+    this.isGroupHost = false
+    this.groupHostExtension = ''
+    this.groupParticipantExtensions = []
+    this.extensionToWazoCallIdMap.clear()
+    this.mergedCallIds.clear()
+    this.secondaryCallSessions.clear()
   }
 
   /**
