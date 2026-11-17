@@ -91,7 +91,38 @@
                 <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" />
               </svg>
             </button>
+            <button
+              class="btn-manage-members"
+              :class="{ active: isSelectMode }"
+              :title="isSelectMode ? 'Hủy chế độ chọn tin nhắn' : 'Chọn nhiều tin nhắn để xóa'"
+              @click="toggleSelectMode"
+            >
+              {{ isSelectMode ? '✖ Hủy chọn' : '☑️ Chọn tin' }}
+            </button>
             <button class="btn-manage-members" @click="openMemberModal">👥 Thành viên</button>
+          </div>
+        </div>
+
+        <!-- Thanh công cụ chọn & xóa nhiều tin nhắn -->
+        <div v-if="isSelectMode" class="select-mode-toolbar">
+          <div class="select-mode-info">
+            <span>Đã chọn: <strong>{{ selectedMsgIds.length }}</strong> tin nhắn</span>
+          </div>
+          <div class="select-mode-actions">
+            <button class="btn-select-action" @click="selectAllMessages">
+              {{ (currentRoom.messages && selectedMsgIds.length === currentRoom.messages.length) ? 'Bỏ chọn tất cả' : 'Chọn tất cả' }}
+            </button>
+            <button
+              class="btn-select-action danger"
+              :disabled="selectedMsgIds.length === 0 || isDeletingMessages"
+              @click="handleDeleteSelectedMessages"
+            >
+              <span v-if="isDeletingMessages">⏳ Đang xóa...</span>
+              <span v-else>🗑️ Xóa đã chọn ({{ selectedMsgIds.length }})</span>
+            </button>
+            <button class="btn-select-action cancel" @click="toggleSelectMode">
+              Hủy
+            </button>
           </div>
         </div>
 
@@ -118,8 +149,21 @@
               v-for="msg in currentRoom.messages"
               :key="msg.id"
               class="msg-bubble-wrap"
-              :class="(msg.sender === 'mine' || msg.sender === 'me') ? 'mine' : 'theirs'"
+              :class="[
+                (msg.sender === 'mine' || msg.sender === 'me') ? 'mine' : 'theirs',
+                { 'in-select-mode': isSelectMode, 'is-selected': selectedMsgIds.includes(msg.id) }
+              ]"
+              @click="isSelectMode ? toggleSelectMessage(msg.id) : null"
             >
+              <div v-if="isSelectMode" class="msg-select-check" @click.stop>
+                <input
+                  type="checkbox"
+                  class="select-msg-checkbox"
+                  :value="msg.id"
+                  :checked="selectedMsgIds.includes(msg.id)"
+                  @change="toggleSelectMessage(msg.id)"
+                />
+              </div>
               <span class="msg-sender">{{ (msg.sender === 'mine' || msg.sender === 'me') ? 'Tôi' : msg.senderName }}</span>
               <div class="msg-bubble">
                 {{ msg.text }}
@@ -136,7 +180,7 @@
                     'read': msg.readStatus === 'Đã xem'
                   }"
                   title="Trạng thái tin nhắn (Nhấp để xem chi tiết)"
-                  @click="openReadIdModal(msg)"
+                  @click.stop="openReadIdModal(msg)"
                 >
                   <span v-if="msg.readStatus === 'Đang gửi...'">⏳ Đang gửi...</span>
                   <span v-else-if="msg.readStatus === 'Đã gửi'">✓ Đã gửi</span>
@@ -147,13 +191,26 @@
                 <button
                   class="btn-pin-msg"
                   title="Ghim tin nhắn này lên đầu phòng chat"
-                  @click="pinMessage(msg)"
+                  @click.stop="pinMessage(msg)"
                 >
                   📌 Ghim
+                </button>
+                <button
+                  class="btn-pin-msg btn-delete-msg"
+                  title="Xóa tin nhắn này"
+                  @click.stop="handleDeleteSingleMessage(msg)"
+                >
+                  🗑️ Xóa
                 </button>
               </div>
             </div>
           </template>
+        </div>
+
+        <!-- Banner thông báo khi phòng đã bị giải tán -->
+        <div v-if="isRoomClosed" class="kicked-banner closed-banner">
+          <span class="kicked-icon">🚫</span>
+          <span class="kicked-text">Nhóm này đã được giải tán. Toàn bộ cuộc trò chuyện đã kết thúc và không thể gửi thêm tin nhắn.</span>
         </div>
 
         <!-- Banner thông báo khi thành viên bị mời ra khỏi nhóm -->
@@ -165,18 +222,18 @@
 
         <!-- Hộp soạn thảo tin nhắn -->
         <div class="chat-input-bar">
-          <button class="btn-action" title="Đính kèm tệp" :disabled="isKickedFromCurrentRoom">📎</button>
+          <button class="btn-action" title="Đính kèm tệp" :disabled="isKickedFromCurrentRoom || isRoomClosed">📎</button>
           <textarea
             ref="chatInputRef"
             v-model="inputText"
             rows="1"
             class="chat-textarea"
-            :placeholder="isKickedFromCurrentRoom ? 'Bạn đã rời khỏi nhóm này' : 'Nhập tin nhắn (Shift+Enter để xuống dòng, Enter để gửi)...'"
-            :disabled="isKickedFromCurrentRoom"
+            :placeholder="isRoomClosed ? 'Nhóm này đã được giải tán' : (isKickedFromCurrentRoom ? 'Bạn đã rời khỏi nhóm này' : 'Nhập tin nhắn (Shift+Enter để xuống dòng, Enter để gửi)...')"
+            :disabled="isKickedFromCurrentRoom || isRoomClosed"
             @keydown.enter.exact.prevent="sendMessage"
             @input="autoResizeTextarea"
           ></textarea>
-          <button class="btn-send" :disabled="isKickedFromCurrentRoom" @click="sendMessage">Gửi ➤</button>
+          <button class="btn-send" :disabled="isKickedFromCurrentRoom || isRoomClosed" @click="sendMessage">Gửi ➤</button>
         </div>
       </div>
 
@@ -335,6 +392,15 @@
               <button class="btn-add-more-members" @click="openAddMoreToGroup">
                 ➕ Thêm thành viên vào nhóm (Tạo nhóm mở rộng)
               </button>
+              <button
+                v-if="currentIsAdmin"
+                class="btn-delete-group-room"
+                :disabled="isDeletingGroup"
+                @click="handleDeleteGroupRoom"
+              >
+                <span v-if="isDeletingGroup">⏳ Đang giải tán...</span>
+                <span v-else>🗑️ Giải tán nhóm</span>
+              </button>
             </div>
 
             <label class="form-label">
@@ -437,6 +503,118 @@ const selectedMsg = ref(null)
 const msgContainerRef = ref(null)
 const isLoadingRooms = ref(false)
 const isLoadingMessages = ref(false)
+
+const isSelectMode = ref(false)
+const selectedMsgIds = ref([])
+const isDeletingMessages = ref(false)
+const isDeletingGroup = ref(false)
+
+// Trạng thái phòng bị giải tán qua Tombstone SYSTEM:ROOM_CLOSED
+const isRoomClosed = computed(() => {
+  if (!currentRoom.value || currentRoom.value.isDirect) return false
+  if (currentRoom.value.isClosed) return true
+  const msgs = currentRoom.value.messages || []
+  if (msgs.length === 0) {
+    return Boolean(currentRoom.value.preview && currentRoom.value.preview.includes('[SYSTEM:ROOM_CLOSED'))
+  }
+  const lastMsg = msgs[msgs.length - 1]
+  return Boolean(lastMsg?.text && lastMsg.text.includes('[SYSTEM:ROOM_CLOSED'))
+})
+
+const toggleSelectMode = () => {
+  isSelectMode.value = !isSelectMode.value
+  selectedMsgIds.value = []
+}
+
+const toggleSelectMessage = (msgId) => {
+  const idx = selectedMsgIds.value.indexOf(msgId)
+  if (idx > -1) {
+    selectedMsgIds.value.splice(idx, 1)
+  } else {
+    selectedMsgIds.value.push(msgId)
+  }
+}
+
+const selectAllMessages = () => {
+  if (!currentRoom.value?.messages) return
+  if (selectedMsgIds.value.length === currentRoom.value.messages.length) {
+    selectedMsgIds.value = []
+  } else {
+    selectedMsgIds.value = currentRoom.value.messages.map((m) => m.id)
+  }
+}
+
+const handleDeleteSingleMessage = async (msg) => {
+  if (!currentRoom.value || !msg) return
+  if (!confirm('Bạn có chắc chắn muốn xóa tin nhắn này không?')) return
+
+  try {
+    await chatService.deleteMessages(currentRoom.value.id, [msg.id])
+    if (currentRoom.value.messages) {
+      currentRoom.value.messages = currentRoom.value.messages.filter((m) => m.id !== msg.id)
+    }
+    rooms.value = [...chatService.rooms]
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: '🗑️ Đã xóa tin nhắn thành công!', type: 'success' },
+      }),
+    )
+  } catch (err) {
+    alert(`Lỗi khi xóa tin nhắn: ${err.message}`)
+  }
+}
+
+const handleDeleteSelectedMessages = async () => {
+  if (!currentRoom.value || selectedMsgIds.value.length === 0) return
+  const count = selectedMsgIds.value.length
+  if (!confirm(`Bạn có chắc chắn muốn xóa ${count} tin nhắn đã chọn không?`)) return
+
+  isDeletingMessages.value = true
+  try {
+    const idsToDelete = [...selectedMsgIds.value]
+    await chatService.deleteMessages(currentRoom.value.id, idsToDelete)
+    if (currentRoom.value.messages) {
+      currentRoom.value.messages = currentRoom.value.messages.filter((m) => !idsToDelete.includes(m.id))
+    }
+    selectedMsgIds.value = []
+    isSelectMode.value = false
+    rooms.value = [...chatService.rooms]
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `🗑️ Đã xóa ${count} tin nhắn thành công!`, type: 'success' },
+      }),
+    )
+  } catch (err) {
+    alert(`Lỗi khi xóa tin nhắn: ${err.message}`)
+  } finally {
+    isDeletingMessages.value = false
+  }
+}
+
+const handleDeleteGroupRoom = async () => {
+  if (!currentRoom.value || currentRoom.value.isDirect) return
+  const groupName = currentRoom.value.title || 'Nhóm này'
+  if (!confirm(`Bạn có chắc chắn muốn giải tán nhóm "${groupName}"? Nhóm sẽ bị đóng và ẩn hoàn toàn trên toàn bộ hệ thống.`)) {
+    return
+  }
+
+  isDeletingGroup.value = true
+  try {
+    await chatService.deleteGroupRoom(currentRoom.value.id)
+    showMemberModal.value = false
+    currentRoom.value = null
+    await loadRooms()
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `🚫 Đã giải tán nhóm "${groupName}" thành công!`, type: 'success' },
+      }),
+    )
+  } catch (err) {
+    alert(`Lỗi khi giải tán nhóm: ${err.message}`)
+  } finally {
+    isDeletingGroup.value = false
+  }
+}
 
 // Trạng thái thành viên bị mời ra khỏi nhóm
 const isKickedFromCurrentRoom = computed(() => {
@@ -606,6 +784,8 @@ const loadRooms = async () => {
 
 const selectRoom = async (room) => {
   currentRoom.value = room
+  isSelectMode.value = false
+  selectedMsgIds.value = []
   room.unread = 0
   chatService.setActiveRoomId(room.id)
   chatService.saveRooms()
@@ -651,7 +831,7 @@ const unpinMessage = async () => {
 
 const sendMessage = async () => {
   const text = inputText.value.trim()
-  if (!text || !currentRoom.value || isKickedFromCurrentRoom.value) return
+  if (!text || !currentRoom.value || isKickedFromCurrentRoom.value || isRoomClosed.value) return
 
   const targetId = currentRoom.value.id
   inputText.value = ''
@@ -767,6 +947,24 @@ const onRoomsUpdated = () => {
   }
 }
 
+const onMessagesDeleted = (ev) => {
+  const { roomId, deletedIds } = ev.detail || {}
+  if (currentRoom.value && currentRoom.value.id === roomId && currentRoom.value.messages) {
+    currentRoom.value.messages = currentRoom.value.messages.filter(
+      (m) => !deletedIds.includes(m.id),
+    )
+  }
+  rooms.value = [...chatService.rooms]
+}
+
+const onRoomClosed = (ev) => {
+  const { roomId } = ev.detail || {}
+  if (currentRoom.value && currentRoom.value.id === roomId) {
+    currentRoom.value.isClosed = true
+  }
+  rooms.value = [...chatService.rooms]
+}
+
 onMounted(async () => {
   await loadRooms()
   checkDirectChatRoute()
@@ -776,6 +974,8 @@ onMounted(async () => {
   window.addEventListener('smartcall-message-received', onMessageReceived)
   window.addEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.addEventListener('smartcall-refresh-rooms', loadRooms)
+  window.addEventListener('smartcall-messages-deleted', onMessagesDeleted)
+  window.addEventListener('smartcall-room-closed', onRoomClosed)
 })
 
 onActivated(async () => {
@@ -794,6 +994,8 @@ onUnmounted(() => {
   window.removeEventListener('smartcall-message-received', onMessageReceived)
   window.removeEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.removeEventListener('smartcall-refresh-rooms', loadRooms)
+  window.removeEventListener('smartcall-messages-deleted', onMessagesDeleted)
+  window.removeEventListener('smartcall-room-closed', onRoomClosed)
 })
 
 // Các hàm tương tác Modal Tạo nhóm & Quản lý thành viên (Pure Wazo Chatd API First)
@@ -2194,5 +2396,131 @@ const getRoomStatusClass = (room) => {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Toolbar & Select Mode Styles */
+.select-mode-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.82rem;
+  color: #334155;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.select-mode-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.select-mode-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-select-action {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-select-action:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.btn-select-action.danger {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #dc2626;
+  font-weight: 600;
+}
+
+.btn-select-action.danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.btn-select-action.danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-select-action.cancel {
+  background: #e2e8f0;
+  color: #64748b;
+  border-color: #cbd5e1;
+}
+
+.msg-bubble-wrap.in-select-mode {
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+
+.msg-bubble-wrap.in-select-mode:hover {
+  background: rgba(2, 132, 199, 0.05);
+}
+
+.msg-bubble-wrap.is-selected {
+  background: rgba(2, 132, 199, 0.12) !important;
+}
+
+.msg-select-check {
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
+}
+
+.select-msg-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #0284c7;
+}
+
+.btn-delete-msg {
+  color: #ef4444 !important;
+  opacity: 0.7;
+}
+
+.btn-delete-msg:hover {
+  opacity: 1;
+}
+
+.btn-delete-group-room {
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-delete-group-room:hover:not(:disabled) {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #b91c1c;
+}
+
+.closed-banner {
+  background: #fef2f2 !important;
+  border-left: 4px solid #ef4444 !important;
+  color: #991b1b !important;
 }
 </style>

@@ -31,7 +31,10 @@ class WazoService {
     this.currentCallSession = null
     // Lấy IP từ file môi trường .env hoặc dùng mặc định máy chủ tổng đài
     this.host = import.meta.env.VITE_WAZO_HOST || '107.126.11.126:9443'
-    this.clientId = import.meta.env.VITE_WAZO_CLIENT_ID || 'webapp-vue'
+    // Client ID duy nhất cho phiên Web (đối ứng chuẩn mã nguồn tham chiếu mẫu Android)
+    this.clientId = ''
+    this.currentClientId = ''
+    this.getOrCreateClientId()
     this.listenersAttached = false
     this.isRegistered = false
     this.eventWs = null
@@ -43,14 +46,33 @@ class WazoService {
     this._tokenCheckTimer = null
   }
 
+  getOrCreateClientId() {
+    let storedClientId = ''
+    try {
+      storedClientId = sessionStorage.getItem('smartcall_client_id') || ''
+    } catch (e) {}
+    if (!storedClientId) {
+      const rand = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 10)
+      storedClientId = `smartcall-web-${rand}`
+      try {
+        sessionStorage.setItem('smartcall_client_id', storedClientId)
+      } catch (e) {}
+    }
+    this.clientId = storedClientId
+    this.currentClientId = storedClientId
+    return storedClientId
+  }
+
   init() {
     const cleanHost = (this.host || '107.126.11.126:9443').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
-    Wazo.Auth.init(this.clientId)
+    const cId = this.getOrCreateClientId()
+    Wazo.Auth.init(cId)
+    Wazo.Auth.setClientId(cId)
     Wazo.Auth.setHost(cleanHost)
     if (typeof window !== 'undefined') {
       window.Wazo = Wazo
     }
-    logger.info('AUTH', `Khởi tạo Wazo Auth SDK với host: ${cleanHost}`)
+    logger.info('AUTH', `Khởi tạo Wazo Auth SDK với host: ${cleanHost}, clientId: ${cId}`)
   }
 
   async login(username, password) {
@@ -65,6 +87,11 @@ class WazoService {
         this.currentSessionUuid = this.session.sessionUuid || ''
         if (this.currentSessionUuid) {
           localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
+        }
+        if (this.clientId) {
+          try {
+            sessionStorage.setItem('smartcall_client_id', this.clientId)
+          } catch (e) {}
         }
         if (this.session.uuid) {
           localStorage.setItem('smartcall_user_uuid', this.session.uuid)
@@ -89,8 +116,15 @@ class WazoService {
         historyService.reload()
         logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
 
-        // Thu hồi toàn bộ session cũ của user trên Wazo Auth (làm app mobile hoặc web khác bị 401 ngay lập tức)
-        this.revokeOtherDevices(this.session.uuid, this.currentSessionUuid).catch(() => {})
+        // Thu hồi session cũ và refresh token của các thiết bị khác theo chuẩn mã nguồn tham chiếu mẫu
+        // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ
+        if (this.session.uuid && this.currentSessionUuid && this.currentClientId) {
+          this.revokeOtherDevices(this.session.uuid, this.currentSessionUuid, this.currentClientId).catch((err) => {
+            logger.warn('AUTH', 'Lỗi khi thu hồi phiên thiết bị khác:', err.message)
+          })
+        } else {
+          logger.warn('AUTH', 'Chốt chặn an toàn: Bỏ qua thu hồi phiên khác do thiếu sessionUuid hoặc clientId hợp lệ.')
+        }
       }
 
       this.openWebSocketEvents()
@@ -213,6 +247,11 @@ class WazoService {
       'smartcall_session_uuid',
     ]
     sessionKeys.forEach((key) => localStorage.removeItem(key))
+    try {
+      sessionStorage.removeItem('smartcall_client_id')
+    } catch (e) {}
+    this.clientId = ''
+    this.currentClientId = ''
 
     // Xóa tất cả các cache phòng chat cục bộ để không rò rỉ sang tài khoản khác
     try {
@@ -281,17 +320,26 @@ class WazoService {
   }
 
   /**
-   * Thu hồi toàn bộ phiên làm việc của các thiết bị khác trên máy chủ Wazo Auth
-   * Bám sát 100% mã nguồn tham chiếu ứng dụng Android:
-   * GET /api/auth/0.1/users/{user_uuid}/sessions -> DELETE .../sessions/{session_uuid}
+   * Thu hồi toàn bộ phiên làm việc và refresh token của các thiết bị khác trên máy chủ Wazo Auth
+   * Bám sát 100% mã nguồn tham chiếu mẫu:
+   * - Bước 1: GET /api/auth/0.1/users/{user_uuid}/sessions -> DELETE .../sessions/{session_uuid} (loại trừ currentSessionUuid)
+   * - Bước 2: GET /api/auth/0.1/users/{user_uuid}/tokens -> DELETE .../tokens/{client_id} (loại trừ currentClientId)
    */
-  async revokeOtherDevices(userUuid, currentSessionUuid) {
+  async revokeOtherDevices(userUuid, currentSessionUuid, currentClientId) {
     const token = this.getToken()
     if (!token || !userUuid) return
+
+    // Chốt chặn an toàn: Bắt buộc phải có currentSessionUuid và currentClientId hợp lệ để tránh tự xóa phiên của chính mình
+    if (!currentSessionUuid || !currentClientId) {
+      logger.warn('AUTH', 'Chốt chặn an toàn: Bỏ qua revokeOtherDevices do thiếu sessionUuid hoặc clientId hợp lệ.')
+      return
+    }
+
     const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
 
+    // 1. Xóa toàn bộ Session cũ (làm token hiện tại của máy khác bị vô hiệu hóa 401 ngay lập tức)
     try {
-      logger.info('AUTH', `Đang kiểm tra và thu hồi các phiên đăng nhập cũ của user [${userUuid}]...`)
+      logger.info('AUTH', `[Bước 1/2] Thu hồi các sessions cũ của user [${userUuid}] (loại trừ session: ${currentSessionUuid})...`)
       const res = await fetch(`${host}/api/auth/0.1/users/${userUuid}/sessions`, {
         headers: {
           'X-Auth-Token': token,
@@ -300,33 +348,71 @@ class WazoService {
         signal: AbortSignal.timeout(5000),
       })
 
-      if (!res.ok) {
-        logger.warn('AUTH', `Không thể lấy danh sách sessions từ Wazo Auth (${res.status})`)
-        return
-      }
-
-      const data = await res.json()
-      const items = Array.isArray(data.items) ? data.items : []
-      for (const s of items) {
-        const sUuid = s.uuid
-        if (sUuid && sUuid !== currentSessionUuid) {
-          try {
-            const delRes = await fetch(`${host}/api/auth/0.1/users/${userUuid}/sessions/${sUuid}`, {
-              method: 'DELETE',
-              headers: {
-                'X-Auth-Token': token,
-                Accept: 'application/json',
-              },
-              signal: AbortSignal.timeout(4000),
-            })
-            logger.info('AUTH', `Đã thu hồi session cũ: ${sUuid} -> Status: ${delRes.status}`)
-          } catch (delErr) {
-            logger.warn('AUTH', `Lỗi khi thu hồi session ${sUuid}:`, delErr.message)
+      if (res.ok) {
+        const data = await res.json()
+        const items = Array.isArray(data.items) ? data.items : []
+        for (const s of items) {
+          const sUuid = s.uuid
+          if (sUuid && sUuid !== currentSessionUuid) {
+            try {
+              const delRes = await fetch(`${host}/api/auth/0.1/users/${userUuid}/sessions/${sUuid}`, {
+                method: 'DELETE',
+                headers: {
+                  'X-Auth-Token': token,
+                  Accept: 'application/json',
+                },
+                signal: AbortSignal.timeout(4000),
+              })
+              logger.info('AUTH', `Đã thu hồi session cũ: ${sUuid} -> Status: ${delRes.status}`)
+            } catch (delErr) {
+              logger.warn('AUTH', `Lỗi khi thu hồi session ${sUuid}:`, delErr.message)
+            }
           }
         }
+      } else {
+        logger.warn('AUTH', `Không thể lấy danh sách sessions từ Wazo Auth (${res.status})`)
       }
     } catch (err) {
-      logger.warn('AUTH', `Lỗi trong quá trình thu hồi phiên khác:`, err.message)
+      logger.warn('AUTH', `Lỗi trong quá trình thu hồi sessions cũ:`, err.message)
+    }
+
+    // 2. Xóa toàn bộ Refresh Token cũ (ngăn máy khác tự động dùng refresh_token xin token mới)
+    try {
+      logger.info('AUTH', `[Bước 2/2] Thu hồi các refresh tokens cũ của user [${userUuid}] (loại trừ clientId: ${currentClientId})...`)
+      const resTokens = await fetch(`${host}/api/auth/0.1/users/${userUuid}/tokens`, {
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(5000),
+      })
+
+      if (resTokens.ok) {
+        const dataTokens = await resTokens.json()
+        const itemsTokens = Array.isArray(dataTokens.items) ? dataTokens.items : []
+        for (const t of itemsTokens) {
+          const cId = t.client_id || t.clientId
+          if (cId && cId !== currentClientId) {
+            try {
+              const delRes = await fetch(`${host}/api/auth/0.1/users/${userUuid}/tokens/${encodeURIComponent(cId)}`, {
+                method: 'DELETE',
+                headers: {
+                  'X-Auth-Token': token,
+                  Accept: 'application/json',
+                },
+                signal: AbortSignal.timeout(4000),
+              })
+              logger.info('AUTH', `Đã xóa refresh_token của client cũ: ${cId} -> Status: ${delRes.status}`)
+            } catch (delErr) {
+              logger.warn('AUTH', `Lỗi khi xóa refresh_token của client ${cId}:`, delErr.message)
+            }
+          }
+        }
+      } else {
+        logger.warn('AUTH', `Không thể lấy danh sách refresh tokens từ Wazo Auth (${resTokens.status})`)
+      }
+    } catch (err) {
+      logger.warn('AUTH', `Lỗi trong quá trình thu hồi refresh tokens cũ:`, err.message)
     }
   }
 

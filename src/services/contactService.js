@@ -550,6 +550,8 @@ class ContactService {
         const p = c.uuid && this.presences[c.uuid]
         const statusStr = String(p?.status || '').toLowerCase()
         c.isMobileApp = Boolean(
+          st.key !== 'offline' &&
+          st.key !== 'unavailable' &&
           p && (
             statusStr.includes('smartcall-android') ||
             statusStr.includes('android') ||
@@ -578,6 +580,8 @@ class ContactService {
             const p = this.presences[uuid]
             const statusStr = String(p?.status || '').toLowerCase()
             const isMob = Boolean(
+              st.key !== 'offline' &&
+              st.key !== 'unavailable' &&
               p && (
                 statusStr.includes('smartcall-android') ||
                 statusStr.includes('android') ||

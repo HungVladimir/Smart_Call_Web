@@ -349,7 +349,7 @@
             </button>
           </div>
 
-          <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ vs Trực tuyến 🟢 -->
+          <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ vs Trực tuyến 🟢 vs Ngoại tuyến ⚪ -->
           <div class="panel-tabs-bar">
             <button
               class="panel-tab-btn"
@@ -372,6 +372,13 @@
             >
               🟢 Trực tuyến ({{ onlineCount }})
             </button>
+            <button
+              class="panel-tab-btn"
+              :class="{ active: activeTab === 'offline' }"
+              @click="activeTab = 'offline'"
+            >
+              ⚪ Ngoại tuyến ({{ offlineCount }})
+            </button>
           </div>
 
           <!-- Contact List Body -->
@@ -390,6 +397,9 @@
               </p>
               <p v-else-if="activeTab === 'online'">
                 Hiện chưa có nhân viên nào đang trực tuyến.
+              </p>
+              <p v-else-if="activeTab === 'offline'">
+                Hiện chưa có nhân viên nào đang ngoại tuyến.
               </p>
               <p v-else-if="searchTerm">
                 Không tìm thấy nhân viên nào phù hợp với "{{ searchTerm }}".
@@ -439,10 +449,25 @@
                           class="self-badge"
                         >(Bạn)</span>
                         <span
-                          v-if="c.isMobileApp"
-                          class="mobile-phone-icon"
-                          title="Đang trực tuyến bằng ứng dụng điện thoại"
-                        >📱</span>
+                          v-if="c.isMobileApp && c.status !== 'offline' && c.status !== 'unavailable'"
+                          class="mobile-phone-badge"
+                          title="Đang trực tuyến bằng ứng dụng di động"
+                        >
+                          <svg
+                            class="phone-svg-icon"
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2.2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+                            <line x1="12" y1="18" x2="12.01" y2="18"></line>
+                          </svg>
+                        </span>
                       </strong>
                     </div>
                   </div>
@@ -689,6 +714,10 @@ const onlineCount = computed(() => {
   return contacts.value.filter((c) => c.status !== 'offline' && c.status !== 'unavailable').length
 })
 
+const offlineCount = computed(() => {
+  return contacts.value.filter((c) => c.status === 'offline' || c.status === 'unavailable').length
+})
+
 // Chuẩn hóa xóa dấu Tiếng Việt phục vụ tìm kiếm chính xác
 const removeVietnameseTones = (str) => {
   return (str || '')
@@ -707,6 +736,8 @@ const filteredContacts = computed(() => {
     list = list.filter((c) => c.isFavorite)
   } else if (activeTab.value === 'online') {
     list = list.filter((c) => c.status !== 'offline' && c.status !== 'unavailable')
+  } else if (activeTab.value === 'offline') {
+    list = list.filter((c) => c.status === 'offline' || c.status === 'unavailable')
   }
   const q = searchTerm.value.trim()
   if (!q) return list
@@ -2123,10 +2154,16 @@ onUnmounted(() => {
   vertical-align: middle;
 }
 
-.mobile-phone-icon {
+.mobile-phone-badge {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 5px;
+  color: #10b981;
+}
+
+.phone-svg-icon {
   display: inline-block;
-  font-size: 0.85rem;
-  margin-left: 4px;
   vertical-align: middle;
 }
 

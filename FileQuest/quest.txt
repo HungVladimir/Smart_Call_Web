@@ -1,37 +1,8 @@
-Tôi đang gặp 1 chút vấn đề về login logout khi acc đăng nhập từ chỗ khác. luồng web của mình thì oke rồi, login vào phát bên kia báo rồi out bình thường, nhưng còn 1 case, tôi login acc A vào app mobile, sau đó login acc A vào web trên máy tính, thì ở điện thoại đang không bị logout, tôi hỏi thì họ có cơ chế thu hồi token gì đó vì mỗi điện thoại có 1 token, tôi sẽ gửi đoạn code bên android, hãy nhìn vào đó để refer xem mình có handle được case đấy không, có làm được case đăng nhập trên app trước, sau đó mình login ở web thì app bị đăng xuất không nhé
-private void revokeOtherDevices(final String newToken, final String userUuid, final String currentSessionUuid, final String currentClientId) {
-        // 1. Xóa toàn bộ Session cũ (làm token hiện tại của máy cũ/web bị vô hiệu hóa 401 ngay lập tức)
-        ApiClient.getService().getUserSessions(newToken, userUuid).enqueue(new Callback<JsonObject>() {
-            @Override
-            public void onResponse(@NonNull Call<JsonObject> call, @NonNull Response<JsonObject> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().has("items")) {
-                    JsonArray items = response.body().getAsJsonArray("items");
-                    for (JsonElement el : items) {
-                        JsonObject obj = el.getAsJsonObject();
-                        String sUuid = obj.has("uuid") && !obj.get("uuid").isJsonNull() ? obj.get("uuid").getAsString() : "";
-                        if (!sUuid.isEmpty() && !sUuid.equals(currentSessionUuid)) {
-                            ApiClient.getService().deleteUserSession(newToken, userUuid, sUuid)
-                                    .enqueue(new Callback<Void>() {
-                                        @Override
-                                        public void onResponse(@NonNull Call<Void> c, @NonNull Response<Void> r) {
-                                            Log.d(TAG, "Đã thu hồi session cũ: " + sUuid + " -> code: " + r.code());
-                                        }
-                                        @Override
-                                        public void onFailure(@NonNull Call<Void> c, @NonNull Throwable t) {}
-                                    });
-                        }
-                    }
-                }
-            }
+1. Hiện tại tôi test tính năng logout đang có vấn đề, tôi login ở app trước, sau đó login ở web bằng máy tính, thì ở app không bị out ra, cả 2 vẫn cùng chạy, check lại giúp tôi, và còn hiện tượng tôi đang dùng ở web, bỗng dưng bị thông báo đã đăng nhập chỗ khác trong khi không ai đăng nhập vào,...
+2. Tìm icon khác hiện thị điện thoại giúp tôi, icon giờ đang xấu và lệch quá, thêm 1 tab nữa là offline giúp tôi , giờ sẽ có 4 tab tất cả, yêu thích, online, offline
+3. sau khi xóa 1 người ra khỏi nhóm hoặc thêm nhóm mới, thì nhóm cũ vẫn hiện trong list tin nhắn, có cách nào thêm cờ không, như kiểu khi thêm hoặc xóa thì thêm 1 tin nhắn gửi vào room đó như kiểu nhóm này đã bị xóa, và khi load message thấy nhóm nào có tin nhắn cuối cùng là nhóm bị xóa thì không hiển thị nữa, tương tự với chứ năng delete nhóm , cách đấy có ổn không nhỉ? phân tích giúp tôi, như thế là mọi acc login trên mọi thiêt bị đều sẽ ẩn đi được như xóa thật đúng không?
+4. Đọc lại guide call api giúp tôi, đọc kỹ phần api cho gọi nhóm, bên android họ đã call được gọi nhóm rồi, đầu tiên họ sẽ chọn liên hệ và ấn gọi, ví dụ A gọi cho B và C, thì B và C sẽ nhận cuộc gọi từ A, và do A là máy chủ  nên nếu A ngắt cuộc gọi thì 2 người kia sẽ cũng bị tắt, như kiểu dùng số của A là host ấy, Còn nếu như A gọi cho B và C, và B ấn tắt cuộc gọi thì check thấy 2 người vẫn đang call nên vẫn call tiếp, và history của 2 người kia thì đều hiện thị A gọi tới , số giây , time thì tùy từng máy nghe bao lâu. Nhưng mình hoàn toàn có thể sửa history custom thành cuộc gọi nhóm gồm ABC,....
 
-            @Override
-            public void onFailure(@NonNull Call<JsonObject> call, @NonNull Throwable t) {}
-        });
-		
-		 @Headers("Accept: application/json")
-    @DELETE("api/auth/0.1/users/{user_uuid}/sessions/{session_uuid}")
-    Call<Void> deleteUserSession(
-            @Header("X-Auth-Token") String token,
-            @Path("user_uuid") String userUuid,
-            @Path("session_uuid") String sessionUuid
-    );
+Và tôi đã cũng có toàn bộ prj bên android, tôi cũng sẽ gửi cho để refer, hãy đọc thật kỹ prj.
+Còn về phần call nhóm và login bên app sẽ tập trung và các class LoginActivity, InCallActivity, WazoSipCallManager, WazoApiService thì phải, 
+File text chứa full prj android tôi đã chưa thành dạng bậc thang theo từng level prj, do nó copy vào text nên sẽ phải tự động nhận diện . tôi sẽ gửi file ở câu sau

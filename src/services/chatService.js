@@ -100,6 +100,53 @@ class ChatService {
 
     if (!roomUuid || !content) return
 
+    // 0. Xử lý Tombstone giải tán / đóng phòng thời gian thực
+    if (content.includes('[SYSTEM:ROOM_CLOSED')) {
+      logger.info('CHAT', `Phòng [${roomUuid}] đã bị giải tán qua Tombstone SYSTEM:ROOM_CLOSED. Tự động ẩn phòng.`)
+      const targetRoom = (this.rooms || []).find((r) => r.id === roomUuid)
+      if (targetRoom) {
+        targetRoom.isClosed = true
+      }
+      this.rooms = (this.rooms || []).filter((r) => r.id !== roomUuid)
+      if (this.activeRoomId === roomUuid) {
+        this.setActiveRoomId(null)
+      }
+      this.saveRooms()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId: roomUuid } }))
+      }
+      return
+    }
+
+    // 0.1. Xử lý Tombstone xóa tin nhắn thời gian thực
+    if (content.includes('[SYSTEM:MSG_DELETED:ids="')) {
+      const delMatch = content.match(/\[SYSTEM:MSG_DELETED:ids="([^"]+)"/)
+      if (delMatch && delMatch[1]) {
+        const deletedIds = delMatch[1].split(',').map((s) => s.trim()).filter(Boolean)
+        const targetRoom = (this.rooms || []).find((r) => r.id === roomUuid)
+        if (targetRoom && targetRoom.messages) {
+          targetRoom.messages = targetRoom.messages.filter((m) => !deletedIds.includes(m.id))
+          if (targetRoom.messages.length > 0) {
+            const last = targetRoom.messages[targetRoom.messages.length - 1]
+            targetRoom.preview = last.text
+            targetRoom.time = last.time
+            targetRoom.updatedAt = last.timestamp
+          } else {
+            targetRoom.preview = 'Cuộc trò chuyện'
+          }
+          this.saveRooms()
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('smartcall-messages-deleted', {
+              detail: { roomId: roomUuid, deletedIds },
+            }),
+          )
+        }
+      }
+      return
+    }
+
     if (!this.rooms || this.rooms.length === 0) {
       this.rooms = this.loadSavedRooms()
     }
@@ -151,6 +198,18 @@ class ChatService {
       if (fwdMatch[2]) senderAlias = fwdMatch[2].trim()
       if (fwdMatch[3]) finalTimeStr = fwdMatch[3].trim()
       finalContent = fwdMatch[4]
+    }
+
+    // Nhận diện và làm sạch thẻ đổi tên nhóm (ROOM_RENAME) chuẩn hệ thống
+    const renameMatch = finalContent.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/)
+    if (renameMatch && renameMatch[1]) {
+      targetRoom.title = renameMatch[1].trim()
+      finalContent = finalContent.replace(/\[SYSTEM:ROOM_RENAME:title="[^"]+"\]\s*/, '')
+    } else if (finalContent.includes('đã đổi tên nhóm thành: "')) {
+      const legacyMatch = finalContent.match(/đã đổi tên nhóm thành: "([^"]+)"/)
+      if (legacyMatch && legacyMatch[1]) {
+        targetRoom.title = legacyMatch[1].trim()
+      }
     }
 
     let isMine = false
@@ -211,17 +270,10 @@ class ChatService {
 
     targetRoom.messages.push(newMsg)
     targetRoom.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-    targetRoom.preview = content
+    targetRoom.preview = finalContent
     targetRoom.time = timeStr
     targetRoom.updatedAt = msgTimestamp
 
-    // Plan B: Nhận diện tin nhắn đổi tên nhóm thời gian thực qua WebSocket
-    if (content.includes('đã đổi tên nhóm thành: "')) {
-      const match = content.match(/đã đổi tên nhóm thành: "([^"]+)"/)
-      if (match && match[1]) {
-        targetRoom.title = match[1].trim()
-      }
-    }
 
     const activeRoomId = this.activeRoomId || (typeof localStorage !== 'undefined' ? localStorage.getItem('smartcall_active_room_id') : null)
     if (activeRoomId !== roomUuid && !isMine) {
@@ -338,13 +390,19 @@ class ChatService {
                 }
               } else {
                 displayTitle = room.name || 'Phòng thảo luận nhóm'
-                // Plan B: Nhận diện tên nhóm cập nhật mới nhất từ tin nhắn hệ thống
+                // Nhận diện tên nhóm cập nhật mới nhất từ Tag hệ thống chuyên biệt
                 if (existing?.messages && existing.messages.length > 0) {
                   const renameMsg = [...existing.messages].reverse().find(
-                    (m) => m.text && m.text.includes('đã đổi tên nhóm thành: "'),
+                    (m) =>
+                      m.text &&
+                      (m.text.includes('[SYSTEM:ROOM_RENAME:title="') ||
+                        /\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/.test(m.text) ||
+                        m.text.includes('đã đổi tên nhóm thành: "')),
                   )
                   if (renameMsg) {
-                    const match = renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
+                    const match =
+                      renameMsg.text.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/) ||
+                      renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
                     if (match && match[1]) {
                       displayTitle = match[1].trim()
                     }
@@ -448,11 +506,22 @@ class ChatService {
             // Sắp xếp các phòng theo thứ tự tin nhắn mới nhất lên đầu chuẩn 100%
             serverRooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
+            // Lọc bỏ hoàn toàn các phòng đã bị giải tán (Tombstone SYSTEM:ROOM_CLOSED)
+            const activeServerRooms = serverRooms.filter((r) => {
+              if (r.isClosed) return false
+              const lastMsg = r.messages?.[r.messages.length - 1]
+              const preview = r.preview || ''
+              const isClosed =
+                (lastMsg?.text && lastMsg.text.includes('[SYSTEM:ROOM_CLOSED')) ||
+                preview.includes('[SYSTEM:ROOM_CLOSED')
+              return !isClosed
+            })
+
             // Giữ lại các phòng chat 1-1 local nếu CHƯA có phòng server nào tương ứng
             const directRooms = (this.rooms || []).filter(
               (r) => r.id && r.id.startsWith('direct-'),
             )
-            const merged = [...serverRooms]
+            const merged = [...activeServerRooms]
             for (const dr of directRooms) {
               const hasMatch = merged.some(
                 (m) => m.id === dr.id || (dr.ext && m.ext === dr.ext),
@@ -508,9 +577,47 @@ class ChatService {
             const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
             const currentUserName = (wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || '').trim()
 
+            // Sắp xếp tin nhắn theo thứ tự thời gian tăng dần (cũ trước, mới sau)
+            const sortedItems = [...data.items].sort(
+              (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime(),
+            )
+
+            // 1. Quét thu thập tất cả các ID tin nhắn đã bị xóa bằng Tombstone MSG_DELETED
+            const deletedIdsSet = new Set()
+            for (const item of sortedItems) {
+              const c = item.content || ''
+              if (c.includes('[SYSTEM:MSG_DELETED:ids="')) {
+                const match = c.match(/\[SYSTEM:MSG_DELETED:ids="([^"]+)"/)
+                if (match && match[1]) {
+                  match[1].split(',').forEach((id) => {
+                    const cleanId = id.trim()
+                    if (cleanId) deletedIdsSet.add(cleanId)
+                  })
+                }
+              }
+            }
+
+            // 2. Lọc bỏ các tin nhắn có ID bị xóa và bản thân các tin nhắn tombstone MSG_DELETED / ROOM_CLOSED
+            const visibleItems = sortedItems.filter((item) => {
+              const itemId = item.uuid || item.id
+              if (itemId && deletedIdsSet.has(itemId)) return false
+              if (item.content && (item.content.includes('[SYSTEM:MSG_DELETED:ids=') || item.content.includes('[SYSTEM:ROOM_CLOSED'))) return false
+              return true
+            })
+
+            // 3. Kiểm tra xem phòng có bị giải tán bằng Tombstone SYSTEM:ROOM_CLOSED không (từ tin nhắn mới nhất)
+            const lastRaw = sortedItems[sortedItems.length - 1]
+            if (lastRaw?.content && lastRaw.content.includes('[SYSTEM:ROOM_CLOSED')) {
+              if (localRoom) {
+                localRoom.isClosed = true
+                localRoom.preview = 'Nhóm này đã được giải tán.'
+              }
+            }
+
             const fwdRegex = /^💬 \[FWD:user_uuid=([^|]*)\|sender=([^|]*)\|time=([^\]]*)\] ([\s\S]*)$/
 
-            const mapped = data.items.map((m) => {
+            let latestRenamedTitle = null
+            const mapped = visibleItems.map((m) => {
               let senderUuid = m.user_uuid || m.sender_uuid || (m.user && m.user.uuid) || ''
               let senderAlias = (m.alias || '').trim()
               let msgContent = m.content || ''
@@ -525,6 +632,13 @@ class ChatService {
                 if (fwdMatch[2]) senderAlias = fwdMatch[2].trim()
                 if (fwdMatch[3]) msgTimeStr = fwdMatch[3].trim()
                 msgContent = fwdMatch[4] // Lấy nội dung gốc sạch sẽ
+              }
+
+              // Giải mã thẻ đổi tên nhóm (ROOM_RENAME) chuẩn hệ thống
+              const renameMatch = msgContent.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/)
+              if (renameMatch && renameMatch[1]) {
+                latestRenamedTitle = renameMatch[1].trim()
+                msgContent = msgContent.replace(/\[SYSTEM:ROOM_RENAME:title="[^"]+"\]\s*/, '')
               }
 
               let isMine = false
@@ -621,14 +735,24 @@ class ChatService {
                     }
                   }
 
-                  // Plan B: Phân giải tên nhóm mới nhất từ tin nhắn đổi tên
-                  const renameMsg = [...mapped].reverse().find(
-                    (m) => m.text && m.text.includes('đã đổi tên nhóm thành: "'),
-                  )
-                  if (renameMsg) {
-                    const match = renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
-                    if (match && match[1]) {
-                      localRoom.title = match[1].trim()
+                  // Phân giải tên nhóm mới nhất từ tin nhắn đổi tên chuẩn Tag hệ thống
+                  if (latestRenamedTitle) {
+                    localRoom.title = latestRenamedTitle
+                  } else {
+                    const renameMsg = [...mapped].reverse().find(
+                      (m) =>
+                        m.text &&
+                        (m.text.includes('[SYSTEM:ROOM_RENAME:title="') ||
+                          /\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/.test(m.text) ||
+                          m.text.includes('đã đổi tên nhóm thành: "')),
+                    )
+                    if (renameMsg) {
+                      const match =
+                        renameMsg.text.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/) ||
+                        renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
+                      if (match && match[1]) {
+                        localRoom.title = match[1].trim()
+                      }
                     }
                   }
                 }
@@ -883,22 +1007,28 @@ class ChatService {
       }
     }
 
+    const isSystemDeleter = text.includes('[SYSTEM:MSG_DELETED:ids=')
+    let displayText = text
+    if (text.includes('[SYSTEM:ROOM_RENAME:title="')) {
+      displayText = text.replace(/\[SYSTEM:ROOM_RENAME:title="[^"]+"\]\s*/, '')
+    }
+
     const newMsg = {
       id: tempId,
       sender: 'mine',
       senderName: 'Tôi',
       dept: '',
-      text,
+      text: displayText,
       time: timeStr,
       timestamp: msgTimestamp,
       readStatus: 'Đang gửi...',
       readers: [],
     }
 
-    if (room) {
+    if (room && !isSystemDeleter) {
       if (!room.messages) room.messages = []
       room.messages.push(newMsg)
-      room.preview = text
+      room.preview = displayText
       room.time = timeStr
       room.updatedAt = msgTimestamp
       this.saveRooms()
@@ -932,7 +1062,7 @@ class ChatService {
             if (serverMsg.created_at) {
               newMsg.time = formatMessageDateTime(serverMsg.created_at)
               newMsg.timestamp = new Date(serverMsg.created_at).getTime()
-              if (room) {
+              if (room && !isSystemDeleter) {
                 room.time = newMsg.time
                 room.updatedAt = newMsg.timestamp
               }
@@ -1112,9 +1242,10 @@ class ChatService {
     room.updatedAt = Date.now()
     this.saveRooms()
 
-    // Gửi tin nhắn thông báo hệ thống lên server Wazo
+    // Gửi tin nhắn thông báo hệ thống lên server Wazo theo chuẩn Tag hệ thống chuyên biệt
+    const renameTag = `🔔 [SYSTEM:ROOM_RENAME:title="${cleanTitle}"] [${myName}] đã đổi tên nhóm thành: "${cleanTitle}"`
     try {
-      await this.sendMessage(roomId, `✏️ [${myName}] đã đổi tên nhóm thành: "${cleanTitle}"`, 'Hệ thống')
+      await this.sendMessage(roomId, renameTag, 'Hệ thống')
     } catch (e) {
       logger.warn('CHAT', `Lỗi gửi tin nhắn thông báo đổi tên: ${e.message}`)
     }
@@ -1147,6 +1278,7 @@ class ChatService {
     )
     const removedName = removedMember?.name || 'Một thành viên'
     const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Quản trị viên'
+    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
 
     const remainingUuids = remainingMembers.map((m) => m.id || m.uuid).filter(Boolean)
 
@@ -1160,6 +1292,27 @@ class ChatService {
       /* ignore */
     }
 
+    // Đóng phòng cũ bằng Tombstone SYSTEM:ROOM_CLOSED chuẩn Wazo API
+    try {
+      await this.sendMessage(
+        roomId,
+        `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|new_room=${newRoom.id}|name="${room.title}"] Nhóm đã được chuyển sang phòng mới.`,
+        'Hệ thống',
+      )
+    } catch (e) {
+      /* ignore */
+    }
+
+    // Ẩn phòng cũ ngay lập tức khỏi RAM
+    this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
+    if (this.activeRoomId === roomId) {
+      this.setActiveRoomId(newRoom.id)
+    }
+    this.saveRooms()
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
+    }
+
     // Gửi tin nhắn thông báo cập nhật vào phòng mới
     try {
       await this.sendMessage(newRoom.id, `👋 [${myName}] đã cập nhật thành viên: [${removedName}] đã rời nhóm thảo luận.`, 'Hệ thống')
@@ -1168,6 +1321,82 @@ class ChatService {
     }
 
     return newRoom
+  }
+
+  /**
+   * Giải tán / Xóa phòng nhóm bằng Tombstone System Message
+   * Lưu trên Wazo server, các thiết bị khi tải phòng sẽ tự động ẩn phòng đã đóng
+   * @param {string} roomId - UUID phòng chat
+   */
+  async deleteGroupRoom(roomId) {
+    const room = (this.rooms || []).find((r) => r.id === roomId)
+    if (!room) throw new Error('Không tìm thấy phòng chat')
+
+    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
+    const roomTitle = room.title || 'Nhóm thảo luận'
+    const tombstoneMsg = `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.`
+
+    try {
+      await this.sendMessage(roomId, tombstoneMsg, 'Hệ thống')
+    } catch (e) {
+      logger.warn('CHAT', `Lỗi gửi tombstone giải tán phòng: ${e.message}`)
+    }
+
+    // Ẩn phòng ngay lập tức khỏi RAM
+    this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
+    if (this.activeRoomId === roomId) {
+      this.setActiveRoomId(null)
+    }
+    this.saveRooms()
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
+    }
+    return true
+  }
+
+  /**
+   * Xóa một hoặc nhiều tin nhắn bằng Tombstone System Message
+   * Lọc bỏ hoàn toàn các tin nhắn có ID bị xóa khi hiển thị lịch sử chat
+   * @param {string} roomId
+   * @param {string|string[]} messageIds
+   */
+  async deleteMessages(roomId, messageIds) {
+    const ids = Array.isArray(messageIds) ? messageIds : [messageIds]
+    const validIds = ids.filter(Boolean)
+    if (validIds.length === 0) return
+
+    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
+    const idsStr = validIds.join(',')
+    const delText = `🚫 [SYSTEM:MSG_DELETED:ids="${idsStr}"|by="${myUserUuid}"]`
+
+    // Xóa ngay lập tức trên UI/RAM (Optimistic 0ms)
+    const room = (this.rooms || []).find((r) => r.id === roomId)
+    if (room && room.messages) {
+      room.messages = room.messages.filter((m) => !validIds.includes(m.id))
+      if (room.messages.length > 0) {
+        const last = room.messages[room.messages.length - 1]
+        room.preview = last.text
+        room.time = last.time
+        room.updatedAt = last.timestamp
+      } else {
+        room.preview = 'Cuộc trò chuyện'
+      }
+      this.saveRooms()
+    }
+
+    try {
+      await this.sendMessage(roomId, delText, 'Hệ thống')
+    } catch (e) {
+      logger.warn('CHAT', `Lỗi khi gửi tombstone xóa tin nhắn: ${e.message}`)
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('smartcall-messages-deleted', {
+          detail: { roomId, deletedIds: validIds },
+        }),
+      )
+    }
   }
 
   /**

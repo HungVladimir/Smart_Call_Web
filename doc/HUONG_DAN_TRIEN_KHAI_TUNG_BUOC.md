@@ -65,6 +65,7 @@
 | **49** | Nâng cấp 9 Hạng mục Nghiệp vụ: Tab Trực tuyến, Nhận diện Mobile App, Điều khiển Cuộc gọi, Chuyển tiếp Lịch sử Nhóm & Đăng nhập Đơn Thiết bị | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Bổ sung tab 🟢 Trực tuyến và icon 📱 cho user online bằng mobile app; Ẩn nút điều khiển khi rảnh rỗi và loại bỏ chức năng loa ngoài; Tự động xóa số trên bàn phím khi gọi thành công; Kế thừa và chuyển tiếp tin nhắn khi mở rộng nhóm; Xử lý trạng thái bị mời rời nhóm kèm khóa chat; Khung chat đa dòng chống tràn thanh cuộn; Đăng nhập 1 thiết bị bằng Wazo Presence & Auth Heartbeat; Cập nhật tên nhóm động theo Plan B. |
 | **50** | Khắc phục Nhảy Nhầm Phòng Nhóm từ Danh bạ, Nhận diện Android Presence & Chuyển tiếp Tin nhắn Nhóm Đối xứng | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khóa chặt điều kiện `r.isDirect && r.members.length === 2` khi mở chat từ Danh bạ; Nhận diện từ khóa `smartcall-android` trong presence status bật cờ `isMobileApp` và hiện icon 📱; Chuyển tiếp tin nhắn kèm FWD Metadata giải mã đối xứng đa chiều trên Wazo server (A/B/C đăng nhập đều thấy đúng tin của mình màu xanh bên phải và tin đồng nghiệp bên trái). |
 | **51** | Triển khai Thu hồi Phiên Thiết bị cũ (Session Revocation) Chuẩn Wazo Auth API Đối chiếu Android | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Tích hợp 2 API Wazo Auth: `GET /users/{uuid}/sessions` và `DELETE /users/{uuid}/sessions/{session_uuid}`; Tự động xóa các session cũ khi đăng nhập trên Web làm App Mobile bị ngắt token (401) ngay lập tức; Rút ngắn heartbeat kiểm tra token xuống 5 giây để phản ứng tức thì khi App Mobile thu hồi session của Web. |
+| **52** | Khắc phục Triệt để Session Revocation 2 Chiều (Web $\leftrightarrow$ Android), Tab Ngoại tuyến, SVG Icon & Tombstone Xóa Phòng / Tin nhắn | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã nguồn tham chiếu mẫu | **HOÀN THÀNH** ✅ | Gán `Wazo.Auth.setClientId(clientId)` cấp `sessionUuid`, xóa 2 bước Session + Refresh Token theo chuẩn mã tham chiếu mẫu; Thay icon 📱 bằng SVG smartphone sắc nét; Thêm tab thứ 4 ⚪ Ngoại tuyến; Chuẩn hóa tag hệ thống `[SYSTEM:ROOM_RENAME]` đổi tên nhóm; Áp dụng Tombstone `[SYSTEM:ROOM_CLOSED]` giải tán phòng ẩn đồng bộ đa máy; Tính năng chọn & xóa nhiều tin nhắn và xóa nhanh bằng Tombstone `[SYSTEM:MSG_DELETED]`. |
 
 ---
 
@@ -2800,6 +2801,65 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `469ms`.
+
+---
+
+## BƯỚC 52: KHẮC PHỤC TRIỆT ĐỂ SESSION REVOCATION 2 CHIỀU (WEB $\leftrightarrow$ ANDROID), TAB NGOẠI TUYẾN, SVG ICON & TOMBSTONE XÓA PHÒNG / TIN NHẮN
+
+### 1. Bối cảnh và Yêu cầu Nghiệp vụ
+1. **Khắc phục triệt để lỗi Thu hồi Phiên (Session Revocation) hai chiều**:
+   - Web tự kick chính mình sau 5 giây do `@wazo/sdk` thiếu lệnh gán `Wazo.Auth.setClientId(clientId)` trong `init()`, khiến Wazo server không cấp `session_uuid` và `this.currentSessionUuid` bị rỗng dẫn đến Web tự gửi lệnh xóa chính session của mình.
+   - Ứng dụng di động không bị văng khi Web đăng nhập do máy chủ Wazo Auth vẫn duy trì `refresh_token` của Android, Android tự động gửi `refreshWazoToken` cấp lại token mới. Đối chiếu mã nguồn tham chiếu mẫu, hệ thống cần thực hiện đủ cả 2 bước: xóa Session cũ (`DELETE .../sessions/{sUuid}`) VÀ xóa Refresh Token cũ (`DELETE .../tokens/{clientId}`).
+   - Bổ sung chốt chặn an toàn: nếu không có sessionUuid hoặc clientId hợp lệ thì không thực hiện xóa hàng loạt.
+2. **Giao diện Danh bạ (`CallsView.vue`)**:
+   - Thay thế emoji `📱` bằng icon SVG vector Smartphone sắc nét, căn lề thẳng hàng với tên nhân viên.
+   - Thêm tab thứ 4: **"⚪ Ngoại tuyến ({{ offlineCount }})"**, hoàn thiện 4 tab lọc danh bạ: Tất cả, Yêu thích, Trực tuyến, Ngoại tuyến.
+3. **Cơ chế Đổi tên & Xóa / Giải tán phòng chat bằng Tombstone Message (`chatService.js` & `MessagesView.vue`)**:
+   - Máy chủ Wazo Chatd không cung cấp API `DELETE /rooms/{uuid}`.
+   - Chuẩn hóa Tag hệ thống đổi tên nhóm: `🔔 [SYSTEM:ROOM_RENAME:title="Tên nhóm mới"] [${myName}] đã đổi tên nhóm thành: "${cleanTitle}"`, bóc tách bằng regex `\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]` để cập nhật tên nhóm, tránh người dùng chat vu vơ làm tự đổi tên.
+   - Cơ chế giải tán / xóa phòng bằng Tombstone message: `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${room.title}"] Nhóm này đã được giải tán.`, tự động lọc ẩn hoàn toàn phòng có tin nhắn cuối cùng chứa `[SYSTEM:ROOM_CLOSED]`.
+   - Tính năng "Chọn & Xóa tin nhắn" và xóa nhanh tin nhắn bằng Tombstone message: `🚫 [SYSTEM:MSG_DELETED:ids="${msgIds}"|by="${myUserUuid}"]`, lọc bỏ các tin nhắn có ID bị xóa khi hiển thị lịch sử chat.
+
+### 2. Các Tệp Mã Nguồn Đã Chỉnh Sửa
+- `src/services/wazo.js`:
+  - Thêm phương thức `getOrCreateClientId()` quản lý Client ID duy nhất cho phiên Web (`smartcall-web-${randomUUID}`) lưu trong `sessionStorage`, bảo toàn ID đồng nhất qua các lần F5/reload trang.
+  - Trong `init()`: Tự động khởi tạo/lấy Client ID và gọi `Wazo.Auth.setClientId(clientId)` để Requester của Wazo SDK gửi `client_id`, đảm bảo máy chủ Wazo Auth cấp `session_uuid` và `refresh_token`.
+  - Trong `login()`: Lưu trữ `currentSessionUuid`, đồng bộ `sessionStorage.setItem('smartcall_client_id', this.clientId)`, thêm chốt chặn an toàn chỉ gọi `revokeOtherDevices` khi đủ `currentSessionUuid` và `currentClientId`.
+  - Cập nhật toàn diện `revokeOtherDevices(userUuid, currentSessionUuid, currentClientId)`:
+    - Bước 1: Xóa toàn bộ Session cũ của user ngoại trừ `currentSessionUuid` (`GET /api/auth/0.1/users/{uuid}/sessions` $\rightarrow$ `DELETE .../sessions/{sUuid}`).
+    - Bước 2: Xóa toàn bộ Refresh Token cũ của các client khác ngoại trừ `currentClientId` (`GET /api/auth/0.1/users/{uuid}/tokens` $\rightarrow$ `DELETE .../tokens/{clientId}`).
+  - Trong `logout()`: Xóa sạch `currentSessionUuid`, `currentClientId` và dọn `sessionStorage`.
+- `src/views/CallsView.vue`:
+  - Thay thế emoji `📱` bằng thẻ SVG vector `phone-svg-icon` kèm class `mobile-phone-badge`, hiển thị gọn gàng thẳng hàng với tên liên hệ.
+  - Bổ sung điều kiện chỉ hiển thị icon smartphone khi nhân viên thực sự trực tuyến (`c.status !== 'offline' && c.status !== 'unavailable'`), tránh hiện badge "đang trực tuyến bằng di động" trên liên hệ ngoại tuyến.
+  - Thêm tab thứ 4: `⚪ Ngoại tuyến ({{ offlineCount }})`.
+  - Bổ sung `offlineCount` đếm các liên hệ có trạng thái `offline` hoặc `unavailable`.
+  - Bổ sung điều kiện lọc `activeTab === 'offline'` cho danh sách `filteredContacts` và cập nhật thông báo empty state.
+- `src/services/contactService.js`:
+  - Chuẩn hóa cờ `isMobileApp` chỉ kích hoạt khi liên hệ có trạng thái khác `offline` và `unavailable`, đồng bộ xuyên suốt cả lần tải đầu tiên và các sự kiện presence thời gian thực.
+- `src/services/chatService.js`:
+  - Trong `renameGroup()`: Gửi tin nhắn định dạng chuẩn Tag hệ thống `🔔 [SYSTEM:ROOM_RENAME:title="${cleanTitle}"] [${myName}] đã đổi tên nhóm thành: "${cleanTitle}"`.
+  - Trong `handleIncomingMessage()`: Bóc tách bằng regex `\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]` cập nhật tên nhóm, đồng thời làm sạch nội dung hiển thị trong `newMsg.text` và `room.preview` tránh lộ thẻ kỹ thuật thô.
+  - Triển khai `deleteGroupRoom(roomId)`: Gửi Tombstone `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.`, ẩn phòng khỏi RAM và phát sự kiện `smartcall-room-closed`.
+  - Trong `removeMemberFromGroup()`: Gửi Tombstone `[SYSTEM:ROOM_CLOSED]` đóng phòng cũ sau khi tạo phòng mới, đồng thời ẩn phòng cũ khỏi RAM và phát sự kiện `smartcall-room-closed`.
+  - Trong `getRooms()`: Lọc bỏ hoàn toàn các phòng có tin nhắn cuối cùng hoặc preview chứa `[SYSTEM:ROOM_CLOSED]`.
+  - Triển khai `deleteMessages(roomId, messageIds)`: Gửi Tombstone `🚫 [SYSTEM:MSG_DELETED:ids="${msgIds}"|by="${myUserUuid}"]`, lập tức lọc bỏ các ID bị xóa khỏi `room.messages` và phát sự kiện `smartcall-messages-deleted`.
+  - Trong `sendMessage()`: Không đưa tin nhắn Tombstone `[SYSTEM:MSG_DELETED]` vào danh sách hiển thị và không cập nhật preview phòng.
+  - Trong `getRoomMessages()`:
+    - Sắp xếp tin nhắn theo thứ tự thời gian tăng dần (`sortedItems`) trước khi xử lý, đảm bảo xác định chính xác tin nhắn mới nhất bất kể thứ tự trả về của server.
+    - Quét an toàn các thẻ `[SYSTEM:MSG_DELETED:ids="..."]` không phụ thuộc trạng thái regex toàn cục (`/g`), lọc bỏ các tin nhắn tương ứng và ẩn cả tin nhắn tombstone xóa lẫn giải tán phòng khỏi bong bóng chat.
+- `src/views/MessagesView.vue`:
+  - Thêm nút "☑️ Chọn tin" / "✖ Hủy chọn" trên thanh tiêu đề phòng chat (`chat-header-actions`).
+  - Thêm thanh công cụ `select-mode-toolbar` hiển thị số lượng đã chọn, nút "Chọn tất cả", "🗑️ Xóa đã chọn" và "Hủy".
+  - Thêm checkbox chọn tin nhắn trong mỗi bong bóng tin nhắn khi ở chế độ chọn, ngăn chặn lan truyền sự kiện (`@click.stop`) trên các nút phụ.
+  - Thêm nút "🗑️ Xóa" nhanh trên từng tin nhắn (`handleDeleteSingleMessage`) với hộp thoại xác nhận.
+  - Thêm nút "🗑️ Giải tán nhóm" trong Modal Thành viên cho Quản trị viên (`handleDeleteGroupRoom`).
+  - Thêm cờ `isRoomClosed` và banner thông báo phòng đã giải tán, tự động khóa ô nhập tin nhắn và giữ banner hiển thị khi phòng đang mở.
+  - Đăng ký lắng nghe sự kiện `smartcall-messages-deleted` và `smartcall-room-closed` để cập nhật giao diện thời gian thực.
+- `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể và ghi chép chi tiết Bước 52.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `471ms`.
 
 
 
