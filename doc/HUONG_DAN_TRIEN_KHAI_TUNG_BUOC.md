@@ -71,6 +71,7 @@
 | **55** | Tối ưu Hóa Toàn diện Giao diện Tab Gọi nhóm & Bố cục Danh bạ | Tinh chỉnh UI/UX & Responsive | **HOÀN THÀNH** ✅ | Khắc phục rớt dòng tab header; Nâng cấp thanh công cụ chọn thành viên; Custom checkbox vuông bo góc; Ẩn nút 1-1 khi chọn nhóm; Mở rộng chiều cao danh bạ lên 620px. |
 | **56** | Phục hồi Kích thước Bàn phím / Đàm thoại, Căn Liền kề Tab Gọi nhóm & Phân quyền Admin Quản trị Nhóm | Tiêu chuẩn Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Phục hồi bàn phím 300px và đàm thoại 420px; Căn tab Gọi nhóm liền kề; Tăng tương phản badge; Phân quyền chỉ Admin mới được thêm/xóa thành viên, đổi tên và xóa nhóm. |
 | **57** | Khôi phục Bố cục Calls View Nhỏ Gọn (Compact Grid 1200px), Căn Đều 5 Tab 100% & Tinh chỉnh Nút Quản lý Nhóm bằng SVG Vector Hiện đại | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Trả container về `max-width: 1200px` và lưới `300px 420px 440px` cân đối chuẩn ban đầu; Căn đều 5 tab bộ lọc (`flex: 1; justify-content: center;`) triệt tiêu hoàn toàn khoảng trống thừa sau Gọi nhóm; Nâng cấp 2 nút Thêm thành viên và Xóa nhóm bằng SVG vector sắc nét trên nền pill pastel hiện đại. |
+| **58** | Khôi phục Kích thước Rộng Rãi Calls View, Đồng bộ Chiều cao 3 Cột (Stretch) & Căn Đều 5 Mục Tab | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Khôi phục `max-width: 1560px` và lưới `300px 420px 1fr`; Áp dụng `align-items: stretch` và `min-height: 500px` cho danh bạ triệt tiêu co ngắn khi ít liên hệ; Giữ tỷ lệ chia đều `flex: 1` hiển thị đầy đủ cả 5 tab không bị che khuất hay tràn dòng. |
 
 ---
 
@@ -3080,6 +3081,63 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `572ms`.
+
+---
+
+## BƯỚC 58: KHÔI PHỤC KÍCH THƯỚC RỘNG RÃI CALLS VIEW, ĐỒNG BỘ CHIỀU CAO 3 CỘT (STRETCH) & CĂN ĐỀU 5 MỤC TAB
+
+### 1. Bối cảnh & Yêu cầu từ Người dùng
+1. **Khôi phục chiều dài và chiều rộng của Bàn phím, Đàm thoại và Danh bạ như ban nãy**:
+   - Khi co cụm về kích thước 1200px với cột danh bạ cố định 440px:
+     - Thẻ danh bạ bị co hẹp, làm cho 5 tab không đủ không gian và tab thứ 5 (*Gọi nhóm*) bị che khuất khỏi màn hình.
+     - Đồng thời, khi người dùng lọc tab chỉ có ít liên hệ (ví dụ: tab *Ngoại tuyến* chỉ có 1 nhân viên), thẻ danh bạ bị co cụt lủn về chiều cao (chỉ cao ~240px trong khi bàn phím và khung đàm thoại cao ~500px), gây mất cân đối thị giác nghiêm trọng.
+   - Yêu cầu người dùng: Để lại chiều dài và chiều rộng của bàn phím, call và danh bạ rộng rãi như ban nãy, đồng thời vẫn giữ tỷ lệ chia đều để hiển thị trọn vẹn cả 5 mục.
+
+### 2. Chi tiết Triển khai Kỹ thuật (`src/views/CallsView.vue`)
+1. **Khôi phục Chiều Rộng Mở Rộng 3 Cột Desktop**:
+   - Container `.calls-view`: `max-width: 1560px; margin: 0 auto; padding: 0 16px;`.
+   - Lưới 3 cột `.calls-grid-layout`: `grid-template-columns: 300px 420px 1fr;`.
+     - Cột 1 (Bàn phím): Cố định `300px`.
+     - Cột 2 (Đàm thoại): Cố định `420px`.
+     - Cột 3 (Danh bạ): Mở rộng `1fr` (~700px - 800px) tận dụng tối đa bề ngang desktop.
+2. **Đồng bộ Chiều Cao Cả 3 Cột (Khắc phục Co Cụt Chiều Dài)**:
+   - Áp dụng `align-items: stretch;` trên `.calls-grid-layout`.
+   - Cập nhật `.contacts-panel-card`:
+     ```css
+     .contacts-panel-card {
+       background: white;
+       border-radius: 12px;
+       border: 1px solid #e2e8f0;
+       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+       overflow: hidden;
+       display: flex;
+       flex-direction: column;
+       height: 100%;
+       min-height: 500px;
+     }
+     ```
+   - Thẻ Danh bạ luôn luôn duy trì chiều cao tối thiểu 500px và co giãn bằng đúng chiều cao của Bàn phím số và Khung đàm thoại, chấm dứt hoàn toàn hiện tượng thẻ bị cụt ngắn khi danh sách có ít người.
+3. **Duy trì Tỷ lệ Chia Đều cho Cả 5 Mục Tab**:
+   - `.panel-tabs-bar`: `padding: 4px 8px 0; gap: 4px;`.
+   - `.panel-tab-btn`:
+     ```css
+     .panel-tab-btn {
+       flex: 1;
+       display: inline-flex;
+       align-items: center;
+       justify-content: center;
+       gap: 4px;
+       padding: 8px 8px;
+       font-size: 0.8rem;
+       font-weight: 600;
+       white-space: nowrap;
+     }
+     ```
+   - Nhờ bề ngang cột danh bạ rộng `1fr`, mỗi tab nhận đều ~140px - 160px. Cả 5 tab (*Tất cả*, *Yêu thích*, *Trực tuyến*, *Ngoại tuyến*, *Gọi nhóm*) hiển thị đầy đủ, sắc nét, không bị che khuất và trải đều 100% thanh tab.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `532ms`.
+
 
 
 
