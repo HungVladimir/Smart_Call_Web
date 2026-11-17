@@ -2884,25 +2884,27 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 - `src/services/chatService.js`:
   - Mở rộng hàm `deleteRoom(roomId)`: Xử lý đóng và giải tán cả cuộc trò chuyện trực tiếp 1-1 (`isDirect`) lẫn phòng nhóm (`!isDirect`) bằng thông điệp Tombstone `🚫 [SYSTEM:ROOM_CLOSED]`. Cập nhật mảng `this.rooms`, lưu RAM và phát sự kiện `smartcall-room-closed` cùng `smartcall-rooms-updated`.
   - Bổ sung hàm `deleteMultipleRooms(roomIds)`: Nhận mảng UUID phòng chat, tuần tự gửi Tombstone đóng từng phòng và trả về số lượng phòng đã xóa thành công.
+  - Phân định rõ ràng cơ chế phòng 1-1 vs phòng nhóm:
+    - **Phòng nhóm**: Khi giải tán bằng Tombstone `[SYSTEM:ROOM_CLOSED]`, phòng cũ bị đóng vĩnh viễn cho toàn bộ thành viên. Khi tạo nhóm mới với cùng danh sách thành viên, Wazo Chatd server cấp một Room UUID mới tinh, hoạt động độc lập và bắt đầu lại từ đầu.
+    - **Cuộc trò chuyện 1-1**: Khi xóa, phòng được ẩn khỏi danh sách tin nhắn. Khi người dùng từ Danh bạ mở lại để nhắn tin, phòng 1-1 được phục hồi (`isClosed = false`), tin nhắn mới gửi đi sẽ tự động kích hoạt phòng xuất hiện trở lại trên danh sách tin nhắn của cả hai bên.
   - Giữ lại `deleteGroupRoom(roomId)` làm alias trỏ về `deleteRoom(roomId)` để tương thích ngược 100%.
 - `src/views/MessagesView.vue`:
   - **Cột Danh sách Cuộc trò chuyện (`chat-rooms-col`)**:
-    - Thêm cụm nút `rooms-header-actions` trên tiêu đề: nút "☑️ Chọn" / "✖ Hủy" (`btn-manage-rooms`) đứng trước nút "+ Tạo nhóm".
-    - Thêm thanh công cụ `room-select-toolbar` khi `isRoomSelectMode = true` với thông tin số lượng, nút "Tất cả / Bỏ chọn" và nút "🗑️ Xóa (N)".
+    - Chuẩn hóa header `rooms-header`: Sử dụng icon vector SVG cho nút "Chọn / Hủy" (`btn-manage-rooms`) và nút "Tạo nhóm" (`btn-new-room`), đồng bộ chiều cao 30px và hiệu ứng hover tinh tế, triệt tiêu hoàn toàn emoji `☑️` thô lệch.
+    - Thêm `align-items: center;` vào `.room-item`, triệt tiêu hoàn toàn lỗi flexbox kéo giãn nút thùng rác thành hình chữ nhật đứng.
+    - Chuẩn hóa nút xóa nhanh hover (`btn-delete-room-hover`): Thiết kế dạng icon button vuông bo góc 28x28px tinh gọn, sử dụng SVG vector thùng rác sắc nét, ẩn mặc định và chỉ hiện mờ khi hover dòng chat, hover trực tiếp vào nút đổi nền đỏ nhạt (`#fee2e2`) và icon màu đỏ (`#ef4444`).
+    - Thêm thanh công cụ `room-select-toolbar` khi `isRoomSelectMode = true` với thông tin số lượng, nút "Tất cả / Bỏ chọn" và nút "Xóa (N)".
     - Thêm checkbox `select-room-checkbox` vào từng `room-item` khi ở chế độ chọn; Thêm hiệu ứng highlight nền xanh nhạt `.is-selected`.
-    - Thêm nút xóa nhanh hover `btn-delete-room-hover` khi ở chế độ thường.
   - **Khung Chat Bên phải (`chat-main-col`)**:
     - Gỡ bỏ hoàn toàn chế độ chọn tin nhắn trong khung chat, giữ nguyên các nút gọi thoại, gọi video, thành viên và ghim tin nhắn.
   - **Script setup**:
     - Khởi tạo các reactive state: `isRoomSelectMode`, `selectedRoomIds`, `isDeletingRooms`.
     - Thêm các hàm xử lý: `toggleRoomSelectMode`, `toggleSelectRoom`, `selectAllRooms`, `handleDeleteSingleRoom`, `handleDeleteSelectedRooms`.
     - Ngăn chặn mở phòng chat khi đang ở chế độ chọn (`selectRoom`).
-  - **CSS Scoped**:
-    - Thay thế toàn bộ style chọn tin nhắn cũ bằng hệ thống style hoàn chỉnh cho `rooms-header-actions`, `btn-manage-rooms`, `room-select-toolbar`, `btn-select-mini`, `room-item.in-select-mode`, `room-item.is-selected`, `select-room-checkbox`, `btn-delete-room-hover`.
 - `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể (Bước 53) và ghi chép chi tiết kỹ thuật.
 
 ### 3. Kết quả Kiểm tra Biên dịch:
-- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `729ms`.
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `747ms`.
 
 
 

@@ -609,8 +609,13 @@ class ChatService {
             const lastRaw = sortedItems[sortedItems.length - 1]
             if (lastRaw?.content && lastRaw.content.includes('[SYSTEM:ROOM_CLOSED')) {
               if (localRoom) {
-                localRoom.isClosed = true
-                localRoom.preview = 'Nhóm này đã được giải tán.'
+                if (!localRoom.isDirect) {
+                  localRoom.isClosed = true
+                  localRoom.preview = 'Nhóm này đã được giải tán.'
+                } else {
+                  localRoom.isClosed = false
+                  localRoom.preview = 'Cuộc trò chuyện mới'
+                }
               }
             }
 

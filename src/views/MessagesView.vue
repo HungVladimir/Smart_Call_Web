@@ -13,9 +13,23 @@
               :title="isRoomSelectMode ? 'Hủy chọn cuộc trò chuyện' : 'Chọn cuộc trò chuyện để xóa'"
               @click="toggleRoomSelectMode"
             >
-              {{ isRoomSelectMode ? '✖ Hủy' : '☑️ Chọn' }}
+              <svg v-if="!isRoomSelectMode" class="btn-manage-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 11 12 14 22 4"></polyline>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+              </svg>
+              <svg v-else class="btn-manage-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+              <span>{{ isRoomSelectMode ? 'Hủy' : 'Chọn' }}</span>
             </button>
-            <button class="btn-new-room" @click="openCreateGroupModal()">+ Tạo nhóm</button>
+            <button class="btn-new-room" @click="openCreateGroupModal()">
+              <svg class="btn-new-room-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>Tạo nhóm</span>
+            </button>
           </div>
         </div>
 
@@ -34,7 +48,7 @@
               @click="handleDeleteSelectedRooms"
             >
               <span v-if="isDeletingRooms">⏳ Đang xóa...</span>
-              <span v-else>🗑️ Xóa ({{ selectedRoomIds.length }})</span>
+              <span v-else>Xóa ({{ selectedRoomIds.length }})</span>
             </button>
           </div>
         </div>
@@ -103,7 +117,12 @@
               title="Xóa cuộc trò chuyện này"
               @click.stop="handleDeleteSingleRoom(room)"
             >
-              🗑️
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+              </svg>
             </button>
           </div>
         </div>
@@ -1277,28 +1296,80 @@ const getRoomStatusClass = (room) => {
 }
 
 .rooms-header {
-  padding: 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid #e2e8f0;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 54px;
+  box-sizing: border-box;
 }
 
 .rooms-header h2 {
   font-size: 1.15rem;
   color: #1e293b;
   margin: 0;
+  font-weight: 700;
+}
+
+.rooms-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-manage-rooms {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.btn-manage-rooms:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.btn-manage-rooms.active {
+  background: #fee2e2;
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+.btn-manage-rooms.active:hover {
+  background: #fecaca;
 }
 
 .btn-new-room {
   background: #1e88e5;
   color: white;
   border: none;
-  padding: 5px 12px;
+  height: 30px;
+  padding: 0 12px;
   border-radius: 6px;
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  transition: background 0.15s ease;
+}
+
+.btn-new-room:hover {
+  background: #1976d2;
 }
 
 .room-list {
@@ -1309,6 +1380,7 @@ const getRoomStatusClass = (room) => {
 .room-item {
   padding: 12px 16px;
   display: flex;
+  align-items: center; /* Căn giữa theo chiều dọc để các nút không bị kéo giãn */
   gap: 12px;
   border-bottom: 1px solid #f1f5f9;
   cursor: pointer;
@@ -2406,36 +2478,6 @@ const getRoomStatusClass = (room) => {
 }
 
 /* Toolbar & Select Mode for Conversations (Cột danh sách phòng bên trái) */
-.rooms-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.btn-manage-rooms {
-  background: #ffffff;
-  color: #475569;
-  border: 1px solid #cbd5e1;
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-manage-rooms:hover {
-  background: #f1f5f9;
-  border-color: #94a3b8;
-}
-
-.btn-manage-rooms.active {
-  background: #e0f2fe;
-  color: #0284c7;
-  border-color: #38bdf8;
-  font-weight: 600;
-}
-
 .room-select-toolbar {
   padding: 8px 14px;
   background: #f8fafc;
@@ -2516,19 +2558,25 @@ const getRoomStatusClass = (room) => {
 }
 
 .btn-delete-room-hover {
-  background: transparent;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  border-radius: 6px;
   border: none;
-  font-size: 0.95rem;
+  background: transparent;
+  color: #94a3b8;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease, transform 0.1s ease;
-  padding: 4px;
-  border-radius: 4px;
-  margin-left: 4px;
+  transition: all 0.15s ease;
+  padding: 0;
+  margin-left: auto;
   align-self: center;
-  display: flex;
+  flex-shrink: 0;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
 }
 
 .room-item:hover .btn-delete-room-hover {
@@ -2537,7 +2585,8 @@ const getRoomStatusClass = (room) => {
 
 .btn-delete-room-hover:hover {
   opacity: 1 !important;
-  transform: scale(1.15);
+  background: #fee2e2;
+  color: #ef4444;
 }
 
 .btn-delete-group-room {
