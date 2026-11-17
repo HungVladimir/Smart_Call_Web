@@ -64,6 +64,7 @@
 | **48** | Khắc phục Nhảy Thứ tự Phòng Chat, Tự động Làm mới Danh bạ & Phân quyền Admin Nhóm Chat | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Tải trước song song tin nhắn gần nhất và sắp xếp phòng chat cố định từ đầu; Tự động refresh danh bạ khi click/chuyển tab Gọi điện; Tra cứu an toàn Stale-While-Revalidate khi gọi lại từ Lịch sử; Đồng bộ Quản trị viên (Admin) duy nhất cho phòng nhóm từ Wazo; Thay thế chữ trạng thái bằng chấm tròn status góc Avatar; Phân quyền chỉ Admin mới có quyền Đổi tên nhóm và Xóa thành viên. |
 | **49** | Nâng cấp 9 Hạng mục Nghiệp vụ: Tab Trực tuyến, Nhận diện Mobile App, Điều khiển Cuộc gọi, Chuyển tiếp Lịch sử Nhóm & Đăng nhập Đơn Thiết bị | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Bổ sung tab 🟢 Trực tuyến và icon 📱 cho user online bằng mobile app; Ẩn nút điều khiển khi rảnh rỗi và loại bỏ chức năng loa ngoài; Tự động xóa số trên bàn phím khi gọi thành công; Kế thừa và chuyển tiếp tin nhắn khi mở rộng nhóm; Xử lý trạng thái bị mời rời nhóm kèm khóa chat; Khung chat đa dòng chống tràn thanh cuộn; Đăng nhập 1 thiết bị bằng Wazo Presence & Auth Heartbeat; Cập nhật tên nhóm động theo Plan B. |
 | **50** | Khắc phục Nhảy Nhầm Phòng Nhóm từ Danh bạ, Nhận diện Android Presence & Chuyển tiếp Tin nhắn Nhóm Đối xứng | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khóa chặt điều kiện `r.isDirect && r.members.length === 2` khi mở chat từ Danh bạ; Nhận diện từ khóa `smartcall-android` trong presence status bật cờ `isMobileApp` và hiện icon 📱; Chuyển tiếp tin nhắn kèm FWD Metadata giải mã đối xứng đa chiều trên Wazo server (A/B/C đăng nhập đều thấy đúng tin của mình màu xanh bên phải và tin đồng nghiệp bên trái). |
+| **51** | Triển khai Thu hồi Phiên Thiết bị cũ (Session Revocation) Chuẩn Wazo Auth API Đối chiếu Android | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Tích hợp 2 API Wazo Auth: `GET /users/{uuid}/sessions` và `DELETE /users/{uuid}/sessions/{session_uuid}`; Tự động xóa các session cũ khi đăng nhập trên Web làm App Mobile bị ngắt token (401) ngay lập tức; Rút ngắn heartbeat kiểm tra token xuống 5 giây để phản ứng tức thì khi App Mobile thu hồi session của Web. |
 
 ---
 
@@ -2769,6 +2770,37 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `530ms`.
+
+---
+
+## BƯỚC 51: TRIỂN KHAI THU HỒI PHIÊN THIẾT BỊ CŨ (SESSION REVOCATION) CHUẨN WAZO AUTH API
+
+### 1. Bối cảnh và Yêu cầu Nghiệp vụ
+- Khi người dùng đăng nhập tài khoản A trên ứng dụng di động Android, sau đó đăng nhập tài khoản A trên SmartCall Web (máy tính), ứng dụng trên điện thoại cần phải bị đăng xuất ngay lập tức.
+- Đối chiếu mã nguồn tham chiếu ứng dụng Android trong `FileQuest/quest.txt`:
+  - Gọi `GET /api/auth/0.1/users/{user_uuid}/sessions` để lấy danh sách toàn bộ session.
+  - Lặp qua danh sách, gọi `DELETE /api/auth/0.1/users/{user_uuid}/sessions/{session_uuid}` với mọi session khác `currentSessionUuid`.
+- Khi một session bị `DELETE`, Wazo Auth lập tức vô hiệu hóa token (Revoke Token). Bất kỳ thiết bị nào (App Android hoặc trình duyệt khác) giữ token cũ sẽ nhận lỗi 401 Unauthorized và tự động đăng xuất.
+
+### 2. Các Tệp Mã Nguồn Đã Chỉnh Sửa
+- `src/services/wazo.js`:
+  - Trong constructor: Bổ sung trường `this.currentSessionUuid = ''`.
+  - Trong hàm `login()`:
+    - Trích xuất `currentSessionUuid = this.session.sessionUuid`.
+    - Lưu vào `localStorage.setItem('smartcall_session_uuid', currentSessionUuid)`.
+    - Kích hoạt gọi hàm `this.revokeOtherDevices(this.session.uuid, currentSessionUuid)`.
+  - Xây dựng phương thức `revokeOtherDevices(userUuid, currentSessionUuid)`:
+    - Gọi `GET /api/auth/0.1/users/{userUuid}/sessions`.
+    - Lọc các session `s.uuid !== currentSessionUuid`.
+    - Gọi `DELETE /api/auth/0.1/users/{userUuid}/sessions/{s.uuid}` để hủy phiên trên Wazo Auth.
+  - Trong `restoreSession()`: Khôi phục và duy trì `this.currentSessionUuid`.
+  - Trong `logout()`: Dọn sạch `this.currentSessionUuid` và xóa `smartcall_session_uuid`.
+  - Trong `startTokenHeartbeat()`: Rút ngắn chu kỳ kiểm tra token từ 15 giây xuống 5 giây (`5000ms`) để Web phản ứng tức thì khi App Mobile thu hồi session của Web.
+- `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể và ghi chép chi tiết Bước 51.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `469ms`.
+
 
 
 

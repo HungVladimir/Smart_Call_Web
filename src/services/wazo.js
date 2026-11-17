@@ -38,6 +38,7 @@ class WazoService {
     this._durationInterval = null
     this._isDialing = false
     this.mySessionId = ''
+    this.currentSessionUuid = ''
     this._isKicked = false
     this._tokenCheckTimer = null
   }
@@ -61,6 +62,10 @@ class WazoService {
       if (this.session && this.session.token) {
         localStorage.setItem('smartcall_wazo_token', this.session.token)
         localStorage.setItem('smartcall_wazo_refreshToken', this.session.refreshToken || '')
+        this.currentSessionUuid = this.session.sessionUuid || ''
+        if (this.currentSessionUuid) {
+          localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
+        }
         if (this.session.uuid) {
           localStorage.setItem('smartcall_user_uuid', this.session.uuid)
           callStore.myUserUuid = this.session.uuid
@@ -83,6 +88,9 @@ class WazoService {
         callStore.myUserName = this.getMyUserName()
         historyService.reload()
         logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
+
+        // Thu hồi toàn bộ session cũ của user trên Wazo Auth (làm app mobile hoặc web khác bị 401 ngay lập tức)
+        this.revokeOtherDevices(this.session.uuid, this.currentSessionUuid).catch(() => {})
       }
 
       this.openWebSocketEvents()
@@ -121,6 +129,10 @@ class WazoService {
         logger.info('AUTH', 'Đang khôi phục phiên làm việc Wazo từ Token lưu trữ...')
         this.session = await Wazo.Auth.validateToken(token, refreshToken)
         if (this.session) {
+          this.currentSessionUuid = this.session.sessionUuid || localStorage.getItem('smartcall_session_uuid') || ''
+          if (this.currentSessionUuid) {
+            localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
+          }
           if (this.session.uuid) {
             localStorage.setItem('smartcall_user_uuid', this.session.uuid)
             callStore.myUserUuid = this.session.uuid
@@ -198,6 +210,7 @@ class WazoService {
       'smartcall_logged_in',
       'smartcall_active_room_id',
       'smartcall_offline_mode',
+      'smartcall_session_uuid',
     ]
     sessionKeys.forEach((key) => localStorage.removeItem(key))
 
@@ -211,6 +224,7 @@ class WazoService {
     } catch (e) {}
     this.stopTokenHeartbeat()
     this.mySessionId = ''
+    this.currentSessionUuid = ''
     this._isKicked = false
     this.disconnectPhone()
     callStore.isRegistered = false
@@ -266,6 +280,56 @@ class WazoService {
     window.dispatchEvent(new CustomEvent('smartcall-session-kicked'))
   }
 
+  /**
+   * Thu hồi toàn bộ phiên làm việc của các thiết bị khác trên máy chủ Wazo Auth
+   * Bám sát 100% mã nguồn tham chiếu ứng dụng Android:
+   * GET /api/auth/0.1/users/{user_uuid}/sessions -> DELETE .../sessions/{session_uuid}
+   */
+  async revokeOtherDevices(userUuid, currentSessionUuid) {
+    const token = this.getToken()
+    if (!token || !userUuid) return
+    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+
+    try {
+      logger.info('AUTH', `Đang kiểm tra và thu hồi các phiên đăng nhập cũ của user [${userUuid}]...`)
+      const res = await fetch(`${host}/api/auth/0.1/users/${userUuid}/sessions`, {
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(5000),
+      })
+
+      if (!res.ok) {
+        logger.warn('AUTH', `Không thể lấy danh sách sessions từ Wazo Auth (${res.status})`)
+        return
+      }
+
+      const data = await res.json()
+      const items = Array.isArray(data.items) ? data.items : []
+      for (const s of items) {
+        const sUuid = s.uuid
+        if (sUuid && sUuid !== currentSessionUuid) {
+          try {
+            const delRes = await fetch(`${host}/api/auth/0.1/users/${userUuid}/sessions/${sUuid}`, {
+              method: 'DELETE',
+              headers: {
+                'X-Auth-Token': token,
+                Accept: 'application/json',
+              },
+              signal: AbortSignal.timeout(4000),
+            })
+            logger.info('AUTH', `Đã thu hồi session cũ: ${sUuid} -> Status: ${delRes.status}`)
+          } catch (delErr) {
+            logger.warn('AUTH', `Lỗi khi thu hồi session ${sUuid}:`, delErr.message)
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn('AUTH', `Lỗi trong quá trình thu hồi phiên khác:`, err.message)
+    }
+  }
+
   startTokenHeartbeat() {
     this.stopTokenHeartbeat()
     this._tokenCheckTimer = setInterval(async () => {
@@ -276,7 +340,7 @@ class WazoService {
           this.handleSessionKicked()
         }
       }
-    }, 15000)
+    }, 5000)
   }
 
   stopTokenHeartbeat() {
