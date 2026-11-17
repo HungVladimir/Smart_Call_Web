@@ -18,7 +18,7 @@ export const callStore = reactive({
   myUserUuid: localStorage.getItem('smartcall_user_uuid') || '',
   myUserName: localStorage.getItem('smartcall_username') || '',
   myDepartment: localStorage.getItem('smartcall_department') || localStorage.getItem('smartcall_user_department') || '',
-  // activeCall: { session, number, name, dept, direction: 'outbound'|'inbound', status: 'ringing'|'connected'|'held', startTime, duration, isMuted, isHeld, isSpeaker }
+  // activeCall: { session, number, name, dept, direction: 'outbound'|'inbound', status: 'ringing'|'connected'|'held', startTime, duration, isMuted, isHeld }
   activeCall: null,
   // incomingCall: { rawSession, session, number, extension, name, dept, sipUri }
   incomingCall: null,
@@ -37,6 +37,9 @@ class WazoService {
     this.eventWs = null
     this._durationInterval = null
     this._isDialing = false
+    this.mySessionId = ''
+    this._isKicked = false
+    this._tokenCheckTimer = null
   }
 
   init() {
@@ -91,12 +94,15 @@ class WazoService {
         logger.warn('SIP', 'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)', phoneErr.message)
       }
 
-      // Tự động đồng bộ trạng thái Trực tuyến (Available) lên Wazo Chatd
+      // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên Wazo Chatd
+      this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+      this._isKicked = false
       try {
-        await this.setPresence('available', 'Sẵn sàng')
+        await this.setPresence('available', this.mySessionId)
       } catch (presErr) {
         /* ignore */
       }
+      this.startTokenHeartbeat()
 
       return this.session
     } catch (error) {
@@ -143,11 +149,14 @@ class WazoService {
           } catch (phoneErr) {
             logger.warn('SIP', 'Khôi phục WebRTC phone cảnh báo', phoneErr.message)
           }
+          this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+          this._isKicked = false
           try {
-            await this.setPresence('available', 'Sẵn sàng')
+            await this.setPresence('available', this.mySessionId)
           } catch (presErr) {
             /* ignore */
           }
+          this.startTokenHeartbeat()
           return true
         }
       } catch (e) {
@@ -200,6 +209,9 @@ class WazoService {
         }
       })
     } catch (e) {}
+    this.stopTokenHeartbeat()
+    this.mySessionId = ''
+    this._isKicked = false
     this.disconnectPhone()
     callStore.isRegistered = false
     callStore.myExtension = ''
@@ -240,9 +252,56 @@ class WazoService {
   }
 
   handleSessionKicked() {
-    if (!this.isLogged()) return
+    if (!this.isLogged() || this._isKicked) return
+    this._isKicked = true
     logger.warn('AUTH', 'Phiên làm việc bị hủy hoặc tài khoản đăng nhập nơi khác.')
+    this.stopTokenHeartbeat()
+    this.disconnectPhone()
+    if (this.eventWs) {
+      try {
+        this.eventWs.close()
+      } catch (e) {}
+      this.eventWs = null
+    }
     window.dispatchEvent(new CustomEvent('smartcall-session-kicked'))
+  }
+
+  startTokenHeartbeat() {
+    this.stopTokenHeartbeat()
+    this._tokenCheckTimer = setInterval(async () => {
+      if (this.isLogged() && !this._isKicked) {
+        const isHealthy = await this.verifyTokenHealth()
+        if (!isHealthy) {
+          logger.warn('AUTH', 'Token không còn hợp lệ trên Wazo Auth, phiên đã kết thúc!')
+          this.handleSessionKicked()
+        }
+      }
+    }, 15000)
+  }
+
+  stopTokenHeartbeat() {
+    if (this._tokenCheckTimer) {
+      clearInterval(this._tokenCheckTimer)
+      this._tokenCheckTimer = null
+    }
+  }
+
+  async verifyTokenHealth() {
+    const token = this.getToken()
+    if (!token) return false
+    try {
+      const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+      const res = await fetch(`${host}/api/auth/0.1/token/${token}`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(3500),
+      })
+      if (res.status === 401 || res.status === 404) {
+        return false
+      }
+      return true
+    } catch (e) {
+      return true // Lỗi mạng tạm thời, không kick nhầm
+    }
   }
 
   async changePassword(oldPassword, newPassword) {
@@ -349,6 +408,17 @@ class WazoService {
           // Phát sự kiện presence cho toàn hệ thống
           if (name.includes('presence')) {
             window.dispatchEvent(new CustomEvent('wazo-presence-updated', { detail: data }))
+
+            // Single Device Login: Nếu presence của chính user chứa Session ID mới từ thiết bị khác
+            const myUuid = this.getMyUserUuid()
+            const targetUuid = data?.uuid || data?.user_uuid
+            if (myUuid && targetUuid === myUuid && data?.status && String(data.status).startsWith('sess_')) {
+              if (this.mySessionId && data.status !== this.mySessionId) {
+                logger.warn('AUTH', `Tài khoản vừa đăng nhập phiên mới (${data.status}) trên thiết bị khác!`)
+                this.handleSessionKicked()
+                return
+              }
+            }
           }
 
           // Chuyển tiếp tới các subscriber của websocketService (chat, call)
@@ -549,17 +619,24 @@ class WazoService {
       logger.warn('SIP', '🔴 Wazo WebRTC SIP Phone: Unregistered!')
       window.dispatchEvent(new CustomEvent('wazo-unregistered'))
 
-      if (this.isLogged() && localStorage.getItem('smartcall_offline_mode') !== 'true') {
-        setTimeout(async () => {
-          if (this.isLogged() && !this.isRegistered) {
-            try {
-              logger.info('SIP', 'Đang tự động kết nối lại WebRTC Phone sau khi mất đăng ký...')
-              await this.connectPhone()
-            } catch (err) {
-              logger.warn('SIP', 'Tự động kết nối lại WebRTC Phone thất bại:', err)
-            }
+      if (this.isLogged() && !this._isKicked && localStorage.getItem('smartcall_offline_mode') !== 'true') {
+        this.verifyTokenHealth().then((isValid) => {
+          if (!isValid) {
+            logger.warn('SIP', 'Phiên SIP bị ngắt do token không còn hợp lệ hoặc phiên đã chuyển sang thiết bị khác!')
+            this.handleSessionKicked()
+            return
           }
-        }, 5000)
+          setTimeout(async () => {
+            if (this.isLogged() && !this.isRegistered && !this._isKicked) {
+              try {
+                logger.info('SIP', 'Đang tự động kết nối lại WebRTC Phone sau khi mất đăng ký...')
+                await this.connectPhone()
+              } catch (err) {
+                logger.warn('SIP', 'Tự động kết nối lại WebRTC Phone thất bại:', err)
+              }
+            }
+          }, 5000)
+        })
       }
     })
 
@@ -664,7 +741,6 @@ class WazoService {
           duration: 0,
           isMuted: false,
           isHeld: false,
-          isSpeaker: false,
           isRecorded: false,
         }
       }
@@ -850,7 +926,6 @@ class WazoService {
       duration: 0,
       isMuted: false,
       isHeld: false,
-      isSpeaker: false,
       isRecorded: false,
     }
     callStore.incomingCall = null
@@ -1094,7 +1169,6 @@ class WazoService {
       duration: 0,
       isMuted: false,
       isHeld: false,
-      isSpeaker: false,
       isRecorded: false,
     }
 
@@ -1195,11 +1269,6 @@ class WazoService {
         },
       }),
     )
-  }
-
-  toggleSpeaker() {
-    if (!callStore.activeCall) return
-    callStore.activeCall.isSpeaker = !callStore.activeCall.isSpeaker
   }
 
   sendDTMF(tone, callSession = null) {

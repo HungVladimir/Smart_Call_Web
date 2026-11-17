@@ -62,6 +62,7 @@
 | **46** | Chuyển đổi Toàn diện sang Wazo Server-Side Recording & Triệt tiêu Local Storage Nghiệp vụ | Tiêu chuẩn chất lượng Mục 7 GEMINI.md & API Server First | **HOÀN THÀNH** ✅ | Loại bỏ 100% IndexedDB và thu âm client; Chuyển toàn bộ sang REST API Wazo Calld (/users/me/calls/{id}/record/start, stop) và Call-Logd stream media; Chặn ghi âm khi đang ringing; Giao diện thuần API thật. |
 | **47** | Phát triển Nhóm Chat Wazo Chatd Thuần API, Triệt tiêu Local In-Memory & Quản lý Thành viên | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khắc phục nút Tạo nhóm; Triệt tiêu mock in-memory; Tích hợp 100% Wazo Chatd API POST /users/me/rooms tạo phòng nhóm thật; Tách biệt Modal Tạo nhóm và Modal Thành viên; Quản lý activeRoomId trong RAM. |
 | **48** | Khắc phục Nhảy Thứ tự Phòng Chat, Tự động Làm mới Danh bạ & Phân quyền Admin Nhóm Chat | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Tải trước song song tin nhắn gần nhất và sắp xếp phòng chat cố định từ đầu; Tự động refresh danh bạ khi click/chuyển tab Gọi điện; Tra cứu an toàn Stale-While-Revalidate khi gọi lại từ Lịch sử; Đồng bộ Quản trị viên (Admin) duy nhất cho phòng nhóm từ Wazo; Thay thế chữ trạng thái bằng chấm tròn status góc Avatar; Phân quyền chỉ Admin mới có quyền Đổi tên nhóm và Xóa thành viên. |
+| **49** | Nâng cấp 9 Hạng mục Nghiệp vụ: Tab Trực tuyến, Nhận diện Mobile App, Điều khiển Cuộc gọi, Chuyển tiếp Lịch sử Nhóm & Đăng nhập Đơn Thiết bị | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Bổ sung tab 🟢 Trực tuyến và icon 📱 cho user online bằng mobile app; Ẩn nút điều khiển khi rảnh rỗi và loại bỏ chức năng loa ngoài; Tự động xóa số trên bàn phím khi gọi thành công; Kế thừa và chuyển tiếp tin nhắn khi mở rộng nhóm; Xử lý trạng thái bị mời rời nhóm kèm khóa chat; Khung chat đa dòng chống tràn thanh cuộn; Đăng nhập 1 thiết bị bằng Wazo Presence & Auth Heartbeat; Cập nhật tên nhóm động theo Plan B. |
 
 ---
 
@@ -2695,6 +2696,54 @@ Triển khai toàn diện 13 hạng mục nâng cấp theo kế hoạch chuẩn 
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `574ms`.
+
+---
+
+## BƯỚC 49: NÂNG CẤP TOÀN DIỆN 9 HẠNG MỤC NGHIỆP VỤ (CUỘC GỌI, HIỆN DIỆN DI ĐỘNG, TIN NHẮN NHÓM & PHIÊN LÀM VIỆC)
+
+### 1. Bối cảnh và Yêu cầu Nghiệp vụ
+Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall Web tiếp tục được hoàn thiện với 9 yêu cầu nghiệp vụ chuyên sâu:
+1. **Danh bạ 3 Tab & Nhận diện Mobile App (📱):** Thêm tab `🟢 Trực tuyến` bên cạnh `Tất cả` và `Yêu thích`. Nhận diện trạng thái trực tuyến qua ứng dụng di động (`presence.mobile === true` theo chuẩn Wazo Chatd) để hiển thị icon `📱` ngay sau tên liên hệ. Trình duyệt Web thông thường không hiện icon điện thoại.
+2. **Ẩn Nút Điều khiển Cuộc gọi khi Rảnh & Gỡ bỏ Loa ngoài:** Khi chưa có cuộc gọi hoạt động (`!isCalling`), ẩn toàn bộ hàng nút Mic, Hold, Record, Hangup để giữ giao diện thoáng và tránh thao tác nhầm. Loại bỏ nút Loa ngoài và mã nguồn liên quan do Web không điều khiển được loa trong/loa ngoài vật lý.
+3. **Xóa Số trên Bàn phím sau khi Gọi Thành công:** Trong hàm `handleDial()`, chỉ xóa trắng trường số điện thoại khi cuộc gọi kết nối/đổ chuông thành công (`res.success === true`). Các trường hợp máy bận, ngoại tuyến, DND hoặc lỗi vẫn giữ nguyên số để người dùng tiện kiểm tra hoặc bấm lại.
+4. **Kế thừa & Chuyển tiếp Lịch sử Tin nhắn khi Tạo/Mở rộng Nhóm:** Khi nâng cấp từ chat 1-1 lên nhóm hoặc thêm thành viên mới vào nhóm chat, hệ thống tự động chuyển tiếp toàn bộ tin nhắn trước đó sang phòng nhóm mới trên máy chủ Wazo, giúp thành viên mới nắm trọn vẹn ngữ cảnh công việc.
+5. **Xử lý Trạng thái Thành viên Bị Mời Rời Nhóm:** Khi thành viên A bị xóa khỏi nhóm, phòng mới được tạo cho các thành viên còn lại. Ở phía thành viên A, hiển thị banner cảnh báo "Bạn đã được Quản trị viên mời ra khỏi nhóm thảo luận", khóa khung nhập tin nhắn và cung cấp nút "Đã hiểu & Rời nhóm" để người dùng chủ động dọn dẹp danh sách phòng.
+6. **Xác nhận Không có API Xóa Phòng:** Đối soát kỹ tài liệu Wazo Chatd REST API 1.0, máy chủ không hỗ trợ `DELETE /users/me/rooms/{uuid}`. Tuân thủ tuyệt đối quy tắc người dùng đã thống nhất: Không dùng mock hay xoá cục bộ sai lệch máy chủ.
+7. **Khung Soạn thảo Đa dòng & Chống Tràn Thanh cuộn Ngang:** Sửa bong bóng tin nhắn `.msg-bubble` với thuộc tính `white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere` chống tràn chiều ngang. Thay thế ô `<input>` bằng `<textarea>` tự động co giãn chiều cao theo nội dung (tối đa 120px), hỗ trợ gõ danh sách xuống dòng bằng `Shift+Enter` và gửi bằng `Enter`.
+8. **Đăng nhập Một Thiết bị Thuần Server Wazo (Single Device Login):** Loại bỏ cơ chế vòng lặp tự động re-register SIP 5s gây xung đột giữa 2 trình duyệt; Sử dụng Session ID trên Presence và kiểm tra tính hợp lệ của Token qua Wazo Auth Heartbeat để phát hiện đăng nhập nơi khác và ngắt phiên ngay lập tức.
+9. **Cập nhật Động Tên Nhóm Toàn Hệ thống (Plan B):** Vì Wazo Chatd không có endpoint `PUT /rooms/{uuid}`, hệ thống triển khai Phương án B: Gửi tin nhắn thông báo hệ thống lên server Wazo và tự động phân giải tên mới nhất trong `getRooms()`, `getRoomMessages()` và sự kiện WebSocket `handleIncomingMessage`, đảm bảo mọi thiết bị hiển thị đồng bộ 100%.
+
+### 2. Các Tệp Mã Nguồn Đã Chỉnh Sửa
+- `src/services/wazo.js`:
+  - Khởi tạo `mySessionId` và `_isKicked`.
+  - Tích hợp `startTokenHeartbeat()` kiểm tra `HEAD /api/auth/0.1/token/${token}` mỗi 15s.
+  - Xử lý sự kiện `ON_UNREGISTERED` kiểm tra token trước khi reconnect để ngắt phiên ngay khi bị chiếm quyền.
+  - Lắng nghe sự kiện presence trên WebSocket để phát hiện phiên mới từ tài khoản của mình.
+  - Gỡ bỏ hoàn toàn `toggleSpeaker()` và thuộc tính `isSpeaker`.
+- `src/services/contactService.js`:
+  - Bổ sung trường `isMobileApp` trong `getContacts()`.
+  - Cập nhật `isMobileApp = Boolean(p && (p.mobile === true || p.lines?.some(l => l.mobile)))` trong `loadPresencesForContacts()` và `updateSinglePresence()`.
+- `src/views/CallsView.vue`:
+  - Thêm tab `🟢 Trực tuyến` và tính toán `onlineCount`.
+  - Hiển thị icon `📱` sau tên liên hệ nếu `isMobileApp === true`.
+  - Bao bọc `.controls-row` với `v-if="isCalling"`.
+  - Xóa nút Loa ngoài khỏi giao diện và xóa `isSpeaker`, `toggleSpeaker`.
+  - Xóa `extension.value = ''` khi gọi thành công trong `handleDial()`.
+- `src/services/chatService.js`:
+  - Bổ sung phân giải tên nhóm từ tin nhắn đổi tên trong `getRooms()` và `getRoomMessages()`.
+  - Bắt sự kiện đổi tên nhóm thời gian thực trong `handleIncomingMessage()`.
+  - Hỗ trợ tham số `forwardedMessages` trong `createGroupRoom()` để chuyển tiếp tin nhắn cũ sang phòng mới.
+  - Trong `removeMemberFromGroup()`, chuyển tiếp toàn bộ tin nhắn cũ sang phòng mới cho các thành viên còn lại và gửi thông báo vào phòng cũ.
+- `src/views/MessagesView.vue`:
+  - Thay `<input>` bằng `<textarea class="chat-textarea">` tự co giãn, Shift+Enter xuống dòng, Enter gửi tin nhắn.
+  - Cập nhật `.msg-bubble` chống tràn thanh cuộn ngang.
+  - Bổ sung `kicked-banner` và hàm `confirmLeaveKickedRoom` khi bị mời rời nhóm.
+  - Truyền `pendingForwardMessages` khi tạo nhóm mới hoặc mở rộng nhóm từ cuộc trò chuyện 1-1.
+- `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể và ghi chép chi tiết Bước 49.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `576ms`.
+
 
 
 

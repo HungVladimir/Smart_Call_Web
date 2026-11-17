@@ -374,6 +374,7 @@ class ContactService {
             statusLabel: 'Ngoại tuyến',
             unreadCount: 0,
             isFavorite: isFav,
+            isMobileApp: false,
           }
         })
 
@@ -441,6 +442,7 @@ class ContactService {
             statusLabel: 'Ngoại tuyến',
             unreadCount: 0,
             isFavorite: isFav,
+            isMobileApp: false,
           }
         })
 
@@ -545,6 +547,8 @@ class ContactService {
         const st = this.statusOf(c.uuid)
         c.status = st.key
         c.statusLabel = st.label
+        const p = c.uuid && this.presences[c.uuid]
+        c.isMobileApp = Boolean(p && (p.mobile === true || p.lines?.some((l) => l.mobile)))
       })
     } catch (e) {
       logger.warn('API', 'Không thể nạp trạng thái presence từ chatd:', e.message)
@@ -563,9 +567,12 @@ class ContactService {
         this.currentContacts.forEach((c) => {
           if (c.uuid === uuid) {
             const st = this.statusOf(c.uuid)
-            if (c.status !== st.key || c.statusLabel !== st.label) {
+            const p = this.presences[uuid]
+            const isMob = Boolean(p && (p.mobile === true || p.lines?.some((l) => l.mobile)))
+            if (c.status !== st.key || c.statusLabel !== st.label || c.isMobileApp !== isMob) {
               c.status = st.key
               c.statusLabel = st.label
+              c.isMobileApp = isMob
               changed = true
             }
           }

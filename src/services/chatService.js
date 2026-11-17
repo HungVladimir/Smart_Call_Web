@@ -199,6 +199,14 @@ class ChatService {
     targetRoom.time = timeStr
     targetRoom.updatedAt = msgTimestamp
 
+    // Plan B: Nhận diện tin nhắn đổi tên nhóm thời gian thực qua WebSocket
+    if (content.includes('đã đổi tên nhóm thành: "')) {
+      const match = content.match(/đã đổi tên nhóm thành: "([^"]+)"/)
+      if (match && match[1]) {
+        targetRoom.title = match[1].trim()
+      }
+    }
+
     const activeRoomId = this.activeRoomId || (typeof localStorage !== 'undefined' ? localStorage.getItem('smartcall_active_room_id') : null)
     if (activeRoomId !== roomUuid && !isMine) {
       targetRoom.unread = (targetRoom.unread || 0) + 1
@@ -314,6 +322,18 @@ class ChatService {
                 }
               } else {
                 displayTitle = room.name || 'Phòng thảo luận nhóm'
+                // Plan B: Nhận diện tên nhóm cập nhật mới nhất từ tin nhắn hệ thống
+                if (existing?.messages && existing.messages.length > 0) {
+                  const renameMsg = [...existing.messages].reverse().find(
+                    (m) => m.text && m.text.includes('đã đổi tên nhóm thành: "'),
+                  )
+                  if (renameMsg) {
+                    const match = renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
+                    if (match && match[1]) {
+                      displayTitle = match[1].trim()
+                    }
+                  }
+                }
               }
 
               // Chuẩn hóa updatedAt theo timestamp của tin nhắn gần nhất
@@ -566,6 +586,17 @@ class ChatService {
                       localRoom.members.forEach((m) => {
                         m.isAdmin = Boolean(m.id === localRoom.adminUuid || m.uuid === localRoom.adminUuid)
                       })
+                    }
+                  }
+
+                  // Plan B: Phân giải tên nhóm mới nhất từ tin nhắn đổi tên
+                  const renameMsg = [...mapped].reverse().find(
+                    (m) => m.text && m.text.includes('đã đổi tên nhóm thành: "'),
+                  )
+                  if (renameMsg) {
+                    const match = renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
+                    if (match && match[1]) {
+                      localRoom.title = match[1].trim()
                     }
                   }
                 }
@@ -903,9 +934,10 @@ class ChatService {
    * Tạo phòng chat nhóm mới chuẩn 100% qua Wazo Chatd API (POST /api/chatd/1.0/users/me/rooms)
    * @param {string} groupName - Tên nhóm
    * @param {Array<string>} memberUserUuids - Danh sách User UUID của các thành viên được chọn
+   * @param {Array<Object>} forwardedMessages - Danh sách tin nhắn cũ cần chuyển tiếp sang nhóm mới
    * @returns {Promise<Object>} Phòng nhóm mới được tạo
    */
-  async createGroupRoom(groupName, memberUserUuids = []) {
+  async createGroupRoom(groupName, memberUserUuids = [], forwardedMessages = []) {
     const cleanName = (groupName || '').trim() || 'Nhóm thảo luận mới'
     const myUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
     const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Người dùng'
@@ -962,7 +994,7 @@ class ChatService {
     const newRoomUuid = roomData.uuid || roomData.id
     logger.info('CHAT', `Tạo nhóm thành công trên Wazo server với UUID: ${newRoomUuid}`)
 
-    // Gửi tin nhắn khởi tạo nhóm chào mừng các thành viên
+    // Gửi tin nhắn khởi tạo nhóm chào mừng các thành viên & chuyển tiếp lịch sử (nếu có)
     try {
       await fetch(`${host}/api/chatd/1.0/users/me/rooms/${newRoomUuid}/messages`, {
         method: 'POST',
@@ -977,8 +1009,35 @@ class ChatService {
           alias: myName,
         }),
       })
+
+      // Chuyển tiếp tin nhắn cũ sang phòng nhóm mới
+      if (Array.isArray(forwardedMessages) && forwardedMessages.length > 0) {
+        const recentMsgs = forwardedMessages.slice(-25)
+        for (const m of recentMsgs) {
+          if (!m.text) continue
+          const sender = m.senderName || (m.sender === 'mine' ? myName : 'Thành viên')
+          const timeStr = m.time ? ` [${m.time}]` : ''
+          try {
+            await fetch(`${host}/api/chatd/1.0/users/me/rooms/${newRoomUuid}/messages`, {
+              method: 'POST',
+              headers: {
+                'X-Auth-Token': token,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+              },
+              signal: AbortSignal.timeout(4000),
+              body: JSON.stringify({
+                content: `💬 [Chuyển tiếp từ ${sender}${timeStr}]: ${m.text}`,
+                alias: 'Hệ thống',
+              }),
+            })
+          } catch (fwdErr) {
+            /* ignore individual message failure */
+          }
+        }
+      }
     } catch (msgErr) {
-      logger.warn('CHAT', `Không thể gửi tin nhắn chào mừng: ${msgErr.message}`)
+      logger.warn('CHAT', `Không thể gửi tin nhắn khởi tạo/chuyển tiếp: ${msgErr.message}`)
     }
 
     // Làm mới danh sách phòng từ server
@@ -1046,11 +1105,18 @@ class ChatService {
     const remainingUuids = remainingMembers.map((m) => m.id || m.uuid).filter(Boolean)
 
     logger.info('CHAT', `Đang cập nhật nhóm sau khi xóa [${removedName}]...`)
-    const newRoom = await this.createGroupRoom(room.title, remainingUuids)
+    const newRoom = await this.createGroupRoom(room.title, remainingUuids, room.messages || [])
 
-    // Gửi tin nhắn thông báo xóa thành viên
+    // Gửi thông báo đến phòng cũ để thành viên bị xóa nhận biết trạng thái
     try {
-      await this.sendMessage(newRoom.id, `👋 [${myName}] đã xóa [${removedName}] khỏi nhóm thảo luận.`, 'Hệ thống')
+      await this.sendMessage(roomId, `⚠️ Bạn [${removedName}] đã được Quản trị viên (${myName}) mời ra khỏi nhóm thảo luận.`, 'Hệ thống')
+    } catch (e) {
+      /* ignore */
+    }
+
+    // Gửi tin nhắn thông báo cập nhật vào phòng mới
+    try {
+      await this.sendMessage(newRoom.id, `👋 [${myName}] đã cập nhật thành viên: [${removedName}] đã rời nhóm thảo luận.`, 'Hệ thống')
     } catch (e) {
       /* ignore */
     }

@@ -203,8 +203,8 @@
               </div>
             </template>
 
-            <!-- Hàng 4 nút điều khiển cuộc gọi -->
-            <div class="controls-row">
+            <!-- Hàng nút điều khiển cuộc gọi (chỉ hiển thị khi đang có cuộc gọi hoạt động) -->
+            <div v-if="isCalling" class="controls-row">
               <!-- Nút Tắt/Bật Micro (Mute) -->
               <button
                 class="control-btn"
@@ -270,30 +270,6 @@
                 </svg>
                 <svg v-else class="ctrl-svg-icon" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z" />
-                </svg>
-              </button>
-
-              <!-- Nút Loa ngoài (Speaker) -->
-              <button
-                class="control-btn"
-                :class="{ active: isSpeaker }"
-                :disabled="!isCalling"
-                :title="isSpeaker ? 'Tắt loa ngoài' : 'Bật loa ngoài'"
-                @click="toggleSpeaker"
-              >
-                <svg
-                  class="ctrl-svg-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"
-                  />
                 </svg>
               </button>
 
@@ -373,7 +349,7 @@
             </button>
           </div>
 
-          <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ -->
+          <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ vs Trực tuyến 🟢 -->
           <div class="panel-tabs-bar">
             <button
               class="panel-tab-btn"
@@ -388,6 +364,13 @@
               @click="activeTab = 'favorites'"
             >
               ⭐ Yêu thích ({{ favoriteCount }})
+            </button>
+            <button
+              class="panel-tab-btn"
+              :class="{ active: activeTab === 'online' }"
+              @click="activeTab = 'online'"
+            >
+              🟢 Trực tuyến ({{ onlineCount }})
             </button>
           </div>
 
@@ -404,6 +387,9 @@
               <p v-if="activeTab === 'favorites'">
                 Chưa có liên hệ nào trong mục Yêu thích. Hãy bấm biểu tượng ⭐ trên thẻ nhân viên để
                 ghim nhanh.
+              </p>
+              <p v-else-if="activeTab === 'online'">
+                Hiện chưa có nhân viên nào đang trực tuyến.
               </p>
               <p v-else-if="searchTerm">
                 Không tìm thấy nhân viên nào phù hợp với "{{ searchTerm }}".
@@ -452,6 +438,11 @@
                           v-if="c.number && String(c.number).trim() === String(callStore.myExtension || '1001').trim()"
                           class="self-badge"
                         >(Bạn)</span>
+                        <span
+                          v-if="c.isMobileApp"
+                          class="mobile-phone-icon"
+                          title="Đang trực tuyến bằng ứng dụng điện thoại"
+                        >📱</span>
                       </strong>
                     </div>
                   </div>
@@ -547,7 +538,6 @@ const isCalling = computed(() => Boolean(callStore.activeCall))
 const callState = computed(() => (callStore.activeCall ? callStore.activeCall.status : 'idle'))
 const isHeld = computed(() => Boolean(callStore.activeCall?.isHeld))
 const isMuted = computed(() => Boolean(callStore.activeCall?.isMuted))
-const isSpeaker = computed(() => Boolean(callStore.activeCall?.isSpeaker))
 const isDialing = computed(() => Boolean(wazoService._isDialing))
 
 const isRecording = computed(() => recordStore.isRecording)
@@ -695,6 +685,10 @@ const favoriteCount = computed(() => {
   return contacts.value.filter((c) => c.isFavorite).length
 })
 
+const onlineCount = computed(() => {
+  return contacts.value.filter((c) => c.status !== 'offline' && c.status !== 'unavailable').length
+})
+
 // Chuẩn hóa xóa dấu Tiếng Việt phục vụ tìm kiếm chính xác
 const removeVietnameseTones = (str) => {
   return (str || '')
@@ -711,6 +705,8 @@ const filteredContacts = computed(() => {
   let list = contacts.value
   if (activeTab.value === 'favorites') {
     list = list.filter((c) => c.isFavorite)
+  } else if (activeTab.value === 'online') {
+    list = list.filter((c) => c.status !== 'offline' && c.status !== 'unavailable')
   }
   const q = searchTerm.value.trim()
   if (!q) return list
@@ -849,7 +845,10 @@ const handleDial = async () => {
       name: target?.name || route.query?.name,
       dept: target?.dept || route.query?.dept,
     })
-    if (res && !res.success) {
+    if (res && res.success) {
+      extension.value = ''
+      cleanCallQueryParams()
+    } else {
       cleanCallQueryParams()
     }
   } catch (err) {
@@ -1103,10 +1102,6 @@ const toggleMute = () => {
 
 const toggleHold = () => {
   wazoService.toggleHold()
-}
-
-const toggleSpeaker = () => {
-  wazoService.toggleSpeaker()
 }
 
 // Helper Avatar
@@ -2123,6 +2118,13 @@ onUnmounted(() => {
   border: 1px solid #a7f3d0;
   border-radius: 4px;
   padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.mobile-phone-icon {
+  display: inline-block;
+  font-size: 0.85rem;
   margin-left: 4px;
   vertical-align: middle;
 }

@@ -156,16 +156,27 @@
           </template>
         </div>
 
+        <!-- Banner thông báo khi thành viên bị mời ra khỏi nhóm -->
+        <div v-if="isKickedFromCurrentRoom" class="kicked-banner">
+          <span class="kicked-icon">⚠️</span>
+          <span class="kicked-text">Bạn đã được Quản trị viên mời ra khỏi nhóm thảo luận này. Bạn không thể gửi thêm tin nhắn.</span>
+          <button class="btn-leave-kicked-room" @click="confirmLeaveKickedRoom">Đã hiểu & Rời nhóm</button>
+        </div>
+
         <!-- Hộp soạn thảo tin nhắn -->
         <div class="chat-input-bar">
-          <button class="btn-action" title="Đính kèm tệp">📎</button>
-          <input
+          <button class="btn-action" title="Đính kèm tệp" :disabled="isKickedFromCurrentRoom">📎</button>
+          <textarea
+            ref="chatInputRef"
             v-model="inputText"
-            type="text"
-            placeholder="Nhập tin nhắn..."
-            @keyup.enter="sendMessage"
-          />
-          <button class="btn-send" @click="sendMessage">Gửi ➤</button>
+            rows="1"
+            class="chat-textarea"
+            :placeholder="isKickedFromCurrentRoom ? 'Bạn đã rời khỏi nhóm này' : 'Nhập tin nhắn (Shift+Enter để xuống dòng, Enter để gửi)...'"
+            :disabled="isKickedFromCurrentRoom"
+            @keydown.enter.exact.prevent="sendMessage"
+            @input="autoResizeTextarea"
+          ></textarea>
+          <button class="btn-send" :disabled="isKickedFromCurrentRoom" @click="sendMessage">Gửi ➤</button>
         </div>
       </div>
 
@@ -416,6 +427,8 @@ const showCreateGroupModal = ref(false)
 const showMemberModal = ref(false)
 const showReadModal = ref(false)
 const inputText = ref('')
+const chatInputRef = ref(null)
+const pendingForwardMessages = ref([])
 const newGroupTitle = ref('')
 const groupContactSearch = ref('')
 const selectedGroupMemberUuids = ref([])
@@ -424,6 +437,51 @@ const selectedMsg = ref(null)
 const msgContainerRef = ref(null)
 const isLoadingRooms = ref(false)
 const isLoadingMessages = ref(false)
+
+// Trạng thái thành viên bị mời ra khỏi nhóm
+const isKickedFromCurrentRoom = computed(() => {
+  if (!currentRoom.value || currentRoom.value.isDirect) return false
+  if (currentRoom.value.isKicked) return true
+  const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || ''
+  const myExt = wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
+  const msgs = currentRoom.value.messages || []
+  return msgs.some((m) => {
+    if (!m.text) return false
+    const t = m.text.toLowerCase()
+    return (
+      t.includes('mời ra khỏi nhóm') &&
+      ((myName && t.includes(myName.toLowerCase())) || (myExt && t.includes(myExt)))
+    )
+  })
+})
+
+const autoResizeTextarea = () => {
+  const el = chatInputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+}
+
+const confirmLeaveKickedRoom = () => {
+  if (!currentRoom.value) return
+  const rId = currentRoom.value.id
+  chatService.rooms = chatService.rooms.filter((r) => r.id !== rId)
+  chatService.saveRooms(true)
+  rooms.value = [...chatService.rooms]
+  if (rooms.value.length > 0) {
+    selectRoom(rooms.value[0])
+  } else {
+    currentRoom.value = null
+  }
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: {
+        message: 'Đã dọn dẹp và rời khỏi nhóm chat.',
+        type: 'info',
+      },
+    }),
+  )
+}
 
 // Phân quyền Quản trị viên vs Người dùng thường
 const currentIsAdmin = computed(() => {
@@ -593,10 +651,13 @@ const unpinMessage = async () => {
 
 const sendMessage = async () => {
   const text = inputText.value.trim()
-  if (!text || !currentRoom.value) return
+  if (!text || !currentRoom.value || isKickedFromCurrentRoom.value) return
 
   const targetId = currentRoom.value.id
   inputText.value = ''
+  if (chatInputRef.value) {
+    chatInputRef.value.style.height = 'auto'
+  }
 
   // Cập nhật ngay tức thì trên mảng rooms để giao diện nhảy Top 1 lập tức
   const target = rooms.value.find((r) => r.id === targetId)
@@ -734,10 +795,11 @@ onUnmounted(() => {
 })
 
 // Các hàm tương tác Modal Tạo nhóm & Quản lý thành viên (Pure Wazo Chatd API First)
-const openCreateGroupModal = (initialContact = null) => {
+const openCreateGroupModal = (initialContact = null, messagesToForward = []) => {
   newGroupTitle.value = ''
   groupContactSearch.value = ''
   selectedGroupMemberUuids.value = []
+  pendingForwardMessages.value = Array.isArray(messagesToForward) ? [...messagesToForward] : []
 
   // Đảm bảo danh bạ đã nạp đầy đủ
   if (!contactService.currentContacts || contactService.currentContacts.length === 0) {
@@ -783,7 +845,11 @@ const submitCreateGroup = async () => {
       title = `Nhóm [${chosenNames.join(', ')}...]`
     }
 
-    const createdRoom = await chatService.createGroupRoom(title, selectedGroupMemberUuids.value)
+    const createdRoom = await chatService.createGroupRoom(
+      title,
+      selectedGroupMemberUuids.value,
+      pendingForwardMessages.value,
+    )
     showCreateGroupModal.value = false
     await loadRooms()
     if (createdRoom) {
@@ -864,12 +930,14 @@ const handleRemoveMember = async (member) => {
 const upgradeDirectToGroup = () => {
   showMemberModal.value = false
   const directContact = currentDirectContact.value
-  openCreateGroupModal(directContact)
+  const msgs = currentRoom.value?.messages || []
+  openCreateGroupModal(directContact, msgs)
 }
 
 const openAddMoreToGroup = () => {
   showMemberModal.value = false
-  openCreateGroupModal()
+  const msgs = currentRoom.value?.messages || []
+  openCreateGroupModal(null, msgs)
   // Chọn sẵn tất cả thành viên của phòng nhóm hiện tại
   if (currentRoom.value?.members) {
     const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || ''
@@ -1332,6 +1400,10 @@ const getRoomStatusClass = (room) => {
   border-radius: 12px;
   font-size: 0.9rem;
   line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 
 .msg-bubble-wrap.mine .msg-bubble {
@@ -1411,6 +1483,45 @@ const getRoomStatusClass = (room) => {
   text-decoration: underline;
 }
 
+/* Kicked Member Banner */
+.kicked-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #fef2f2;
+  border-top: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 0.85rem;
+}
+
+.kicked-icon {
+  font-size: 1.2rem;
+}
+
+.kicked-text {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.btn-leave-kicked-room {
+  background: #dc2626;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.btn-leave-kicked-room:hover {
+  background: #b91c1c;
+}
+
 /* Input Bar */
 .chat-input-bar {
   background: white;
@@ -1418,19 +1529,25 @@ const getRoomStatusClass = (room) => {
   border-top: 1px solid #e2e8f0;
   display: flex;
   gap: 10px;
-  align-items: center;
+  align-items: flex-end;
 }
 
-.chat-input-bar input {
+.chat-input-bar textarea.chat-textarea {
   flex: 1;
   border: 1px solid #cbd5e1;
-  border-radius: 20px;
+  border-radius: 18px;
   padding: 10px 16px;
   outline: none;
   font-size: 0.9rem;
+  font-family: inherit;
+  resize: none;
+  line-height: 1.4;
+  max-height: 120px;
+  min-height: 40px;
+  box-sizing: border-box;
 }
 
-.chat-input-bar input:focus {
+.chat-input-bar textarea.chat-textarea:focus {
   border-color: #1e88e5;
 }
 
@@ -1442,6 +1559,8 @@ const getRoomStatusClass = (room) => {
   border-radius: 20px;
   font-weight: 600;
   cursor: pointer;
+  align-self: flex-end;
+  height: 40px;
 }
 
 /* Modals */
