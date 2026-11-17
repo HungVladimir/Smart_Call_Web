@@ -37,7 +37,7 @@
                 id="login-username"
                 type="text"
                 v-model="username"
-                placeholder="Ví dụ: alice hoặc bob (Tài khoản Wazo)"
+                placeholder="Ví dụ: alice hoặc bob (Tài khoản tổng đài)"
                 required
                 autocomplete="username"
                 :disabled="loading"
@@ -143,12 +143,12 @@
               <line x1="12" y1="16" x2="12" y2="12" />
               <line x1="12" y1="8" x2="12.01" y2="8" />
             </svg>
-            <span>Lần đầu truy cập: mở <a :href="`https://${serverHost}/`" target="_blank" class="hint-link">https://{{ serverHost }}/</a> để xác nhận tin cậy chứng chỉ Wazo.</span>
+            <span>Lần đầu truy cập: mở <a :href="`https://${serverHost}/`" target="_blank" class="hint-link">https://{{ serverHost }}/</a> để xác nhận tin cậy chứng chỉ máy chủ.</span>
           </div>
         </form>
       </div>
 
-      <!-- Modal Quên / Đặt lại mật khẩu qua Email (Wazo Auth API) -->
+      <!-- Modal Quên / Đặt lại mật khẩu qua Email (Auth API) -->
       <div v-if="showForgotModal" class="forgot-modal-backdrop" @click.self="showForgotModal = false">
         <div class="forgot-modal-card">
           <div class="forgot-modal-header">
@@ -157,7 +157,7 @@
           </div>
           <div class="forgot-modal-body">
             <p class="forgot-desc">
-              Nhập tên đăng nhập hoặc địa chỉ email tài khoản Wazo của bạn. Hệ thống sẽ phát liên kết đặt lại mật khẩu đến hòm thư email công ty.
+              Nhập tên đăng nhập hoặc địa chỉ email tài khoản tổng đài của bạn. Hệ thống sẽ phát liên kết đặt lại mật khẩu đến hòm thư email công ty.
             </p>
             <div class="form-group">
               <label class="input-label" for="resetInput">Tên đăng nhập hoặc Email:</label>
@@ -277,7 +277,7 @@ const handleLogin = async () => {
 
   try {
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout máy chủ Wazo')), 15000),
+      setTimeout(() => reject(new Error('Timeout máy chủ tổng đài')), 15000),
     )
     const session = await Promise.race([wazoService.login(u, p), timeoutPromise])
 

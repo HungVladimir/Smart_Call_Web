@@ -65,7 +65,7 @@
                 {{ isSipOnline ? `Trực tuyến — Máy lẻ ${userExtension}` : 'Chế độ ngoại tuyến (Offline / Thử nghiệm)' }}
               </div>
               <div class="summary-desc">
-                {{ isSipOnline ? 'Đã kết nối an toàn với máy chủ Wazo Platform qua cổng bảo mật WSS.' : 'Các tính năng danh bạ, tin nhắn nội bộ và mô phỏng đàm thoại vẫn hoạt động trơn tru.' }}
+                {{ isSipOnline ? 'Đã kết nối an toàn với máy chủ tổng đài qua cổng bảo mật WSS.' : 'Các tính năng danh bạ, tin nhắn nội bộ và mô phỏng đàm thoại vẫn hoạt động trơn tru.' }}
               </div>
             </div>
           </div>

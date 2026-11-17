@@ -273,7 +273,7 @@
     <div v-if="showCreateGroupModal" class="modal-overlay" @click.self="showCreateGroupModal = false">
       <div class="modal-card">
         <div class="modal-head">
-          <span>👥 TẠO NHÓM CHAT MỚI (WAZO CHATD)</span>
+          <span>👥 TẠO NHÓM CHAT MỚI</span>
           <button class="btn-close" @click="showCreateGroupModal = false">✖</button>
         </div>
 
@@ -333,7 +333,7 @@
           <div class="select-counter-hint" :class="{ valid: selectedGroupMemberUuids.length >= 2 }">
             Đã chọn: <strong>{{ selectedGroupMemberUuids.length }}</strong> đồng nghiệp
             <span v-if="selectedGroupMemberUuids.length < 2"> (Cần chọn thêm ít nhất {{ 2 - selectedGroupMemberUuids.length }} người để tạo nhóm)</span>
-            <span v-else> (Đủ điều kiện tạo phòng nhóm Wazo)</span>
+            <span v-else> (Đủ điều kiện tạo nhóm)</span>
           </div>
         </div>
 
@@ -438,7 +438,7 @@
             </div>
 
             <label class="form-label">
-              DANH SÁCH THÀNH VIÊN TRÊN MÁY CHỦ WAZO ({{ currentRoomMembers.length }} THÀNH VIÊN):
+              DANH SÁCH THÀNH VIÊN NHÓM ({{ currentRoomMembers.length }} THÀNH VIÊN):
             </label>
             <div class="member-list-box">
               <div
@@ -470,7 +470,11 @@
                     title="Xóa thành viên khỏi nhóm"
                     @click="handleRemoveMember(m)"
                   >
-                    ✖ Xóa
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    <span>Xóa</span>
                   </button>
                 </div>
               </div>
@@ -1108,7 +1112,7 @@ const submitCreateGroup = async () => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `🎉 Đã tạo nhóm chat [${title}] thành công trên máy chủ Wazo!`,
+          message: `🎉 Đã tạo nhóm chat [${title}] thành công!`,
           type: 'success',
         },
       }),
@@ -2167,14 +2171,20 @@ const getRoomStatusClass = (room) => {
 }
 
 .btn-remove-member {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: #fee2e2;
   color: #ef4444;
   border: 1px solid #fecaca;
-  padding: 3px 8px;
-  border-radius: 4px;
+  padding: 4px 9px;
+  border-radius: 6px;
   font-size: 0.75rem;
   cursor: pointer;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1;
 }
 
 .btn-remove-member:hover {

@@ -283,12 +283,12 @@
                 </svg>
               </button>
 
-              <!-- Nút Ghi âm (Record trên tổng đài Wazo) -->
+              <!-- Nút Ghi âm (Record trên tổng đài) -->
               <button
                 class="control-btn btn-record"
                 :class="{ active: isRecording, recording: isRecording }"
                 :disabled="!isCalling || callState === 'ringing'"
-                :title="isRecording ? 'Dừng ghi âm cuộc gọi trên tổng đài (bấm vào để dừng ghi âm)' : (callState === 'ringing' ? 'Chờ đối phương nhấc máy để bắt đầu ghi âm' : 'Bắt đầu ghi âm cuộc gọi trên tổng đài Wazo')"
+                :title="isRecording ? 'Dừng ghi âm cuộc gọi trên tổng đài (bấm vào để dừng ghi âm)' : (callState === 'ringing' ? 'Chờ đối phương nhấc máy để bắt đầu ghi âm' : 'Bắt đầu ghi âm cuộc gọi trên tổng đài')"
                 @click="toggleRecord"
               >
                 <span v-if="isRecording" class="rec-dot-pulse">●</span>
@@ -398,17 +398,71 @@
               <span class="tab-badge badge-offline">{{ offlineCount }}</span>
             </button>
             <button
+              class="panel-tab-btn"
+              :class="{ active: activeTab === 'department' }"
+              @click="activeTab = 'department'"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tab-svg-icon">
+                <path d="M3 21h18"></path>
+                <path d="M5 21V7l8-4v18"></path>
+                <path d="M19 21V11l-6-4"></path>
+                <line x1="9" y1="9" x2="9.01"></line>
+                <line x1="9" y1="13" x2="9" y2="13.01"></line>
+                <line x1="9" y1="17" x2="9" y2="17.01"></line>
+              </svg>
+              <span class="tab-label">Bộ phận</span>
+              <span class="tab-badge badge-dept">{{ departmentTabCount }}</span>
+            </button>
+            <button
               class="panel-tab-btn tab-group-call"
               :class="{ active: activeTab === 'group_call' }"
               @click="activeTab = 'group_call'"
             >
-              <span class="tab-icon">📞</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tab-svg-icon">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+              </svg>
               <span class="tab-label">Gọi nhóm</span>
             </button>
           </div>
 
           <!-- Contact List Body -->
           <div class="panel-list-container">
+            <!-- Thanh chọn Bộ phận / Phòng ban khi ở Tab Bộ phận -->
+            <div v-if="activeTab === 'department'" class="dept-selector-bar">
+              <div class="dept-bar-header">
+                <div class="dept-bar-title">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                  </svg>
+                  <span>Lọc theo bộ phận:</span>
+                </div>
+                <span class="dept-current-badge">{{ selectedDepartment === 'all' ? 'Tất cả bộ phận' : selectedDepartment }}</span>
+              </div>
+              <div class="dept-chips-scroll">
+                <button
+                  class="dept-chip-btn"
+                  :class="{ active: selectedDepartment === 'all' }"
+                  @click="selectedDepartment = 'all'"
+                >
+                  <span>Tất cả</span>
+                  <small class="dept-chip-count">({{ contacts.length }})</small>
+                </button>
+                <button
+                  v-for="dept in availableDepartments"
+                  :key="dept"
+                  class="dept-chip-btn"
+                  :class="{ active: selectedDepartment === dept }"
+                  @click="selectedDepartment = dept"
+                >
+                  <span>{{ dept }}</span>
+                  <small class="dept-chip-count">({{ getDepartmentCount(dept) }})</small>
+                </button>
+                <div v-if="availableDepartments.length === 0" class="dept-empty-hint">
+                  (Chưa có nhân viên nào được gán phòng ban)
+                </div>
+              </div>
+            </div>
+
             <!-- Sticky Action Bar khi ở Tab Gọi nhóm -->
             <div v-if="activeTab === 'group_call'" class="group-call-selection-bar">
               <div class="selection-info">
@@ -430,7 +484,11 @@
                     @click="clearGroupSelection"
                     title="Bỏ chọn tất cả"
                   >
-                    <span>✕ Bỏ chọn</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    <span>Bỏ chọn</span>
                   </button>
                 </div>
               </div>
@@ -450,7 +508,7 @@
             <!-- Loading State -->
             <div v-if="loadingContacts && contacts.length === 0" class="panel-state-message">
               <div class="spinner"></div>
-              <p>Đang nạp danh bạ từ máy chủ Wazo...</p>
+              <p>Đang nạp danh bạ từ máy chủ...</p>
             </div>
 
             <!-- Empty State -->
@@ -464,6 +522,9 @@
               </p>
               <p v-else-if="activeTab === 'offline'">
                 Hiện chưa có nhân viên nào đang ngoại tuyến.
+              </p>
+              <p v-else-if="activeTab === 'department'">
+                Chưa có nhân viên nào thuộc bộ phận {{ selectedDepartment === 'all' ? 'này' : `"${selectedDepartment}"` }}.
               </p>
               <p v-else-if="activeTab === 'group_call'">
                 Chưa có liên hệ nào khả dụng để gọi nhóm.
@@ -852,6 +913,30 @@ const offlineCount = computed(() => {
   return contacts.value.filter((c) => c.status === 'offline' || c.status === 'unavailable').length
 })
 
+// Quản lý lọc theo Bộ phận / Phòng ban (Tab 5)
+const selectedDepartment = ref('all')
+
+const availableDepartments = computed(() => {
+  const depts = new Set()
+  contacts.value.forEach((c) => {
+    const d = (c.dept || '').trim()
+    if (d) depts.add(d)
+  })
+  return Array.from(depts).sort((a, b) => a.localeCompare(b, 'vi'))
+})
+
+const getDepartmentCount = (dept) => {
+  if (!dept || dept === 'all') return contacts.value.length
+  return contacts.value.filter((c) => (c.dept || '').trim().toLowerCase() === dept.trim().toLowerCase()).length
+}
+
+const departmentTabCount = computed(() => {
+  if (selectedDepartment.value === 'all') {
+    return contacts.value.filter((c) => Boolean((c.dept || '').trim())).length || contacts.value.length
+  }
+  return getDepartmentCount(selectedDepartment.value)
+})
+
 // Chuẩn hóa xóa dấu Tiếng Việt phục vụ tìm kiếm chính xác
 const removeVietnameseTones = (str) => {
   return (str || '')
@@ -955,6 +1040,11 @@ const filteredContacts = computed(() => {
     list = list.filter((c) => c.status !== 'offline' && c.status !== 'unavailable')
   } else if (activeTab.value === 'offline') {
     list = list.filter((c) => c.status === 'offline' || c.status === 'unavailable')
+  } else if (activeTab.value === 'department') {
+    if (selectedDepartment.value !== 'all') {
+      const targetDept = selectedDepartment.value.trim().toLowerCase()
+      list = list.filter((c) => (c.dept || '').trim().toLowerCase() === targetDept)
+    }
   } else if (activeTab.value === 'group_call') {
     // Ẩn chính mình khỏi danh sách chọn gọi nhóm
     const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
@@ -1209,7 +1299,7 @@ const handleMessage = (contact) => {
   })
 }
 
-// Bật/tắt trạng thái Yêu thích (gọi Wazo Dird REST API)
+// Bật/tắt trạng thái Yêu thích (gọi API danh bạ máy chủ tổng đài)
 const toggleFavorite = async (contact) => {
   const newFav = await contactService.toggleFavorite(contact)
   contact.isFavorite = newFav
@@ -1225,7 +1315,7 @@ const toggleFavorite = async (contact) => {
   )
 }
 
-// Nạp danh bạ từ máy chủ Wazo
+// Nạp danh bạ từ máy chủ tổng đài
 const loadContacts = async (silent = false) => {
   if (!silent && contacts.value.length === 0) {
     loadingContacts.value = true
@@ -1234,7 +1324,7 @@ const loadContacts = async (silent = false) => {
     const fresh = await contactService.getContacts()
     contacts.value = [...fresh]
   } catch (err) {
-    console.warn('Lỗi nạp danh bạ Wazo:', err)
+    console.warn('Lỗi nạp danh bạ tổng đài:', err)
   } finally {
     loadingContacts.value = false
   }
@@ -1298,7 +1388,7 @@ const toggleRecord = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: '⏹️ Đã dừng ghi âm cuộc gọi trên máy chủ tổng đài Wazo.',
+            message: '⏹️ Đã dừng ghi âm cuộc gọi trên máy chủ tổng đài.',
             type: 'info',
           },
         }),
@@ -1331,7 +1421,7 @@ const toggleRecord = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: '🔴 Đang ghi âm cuộc gọi trực tiếp trên máy chủ tổng đài Wazo...',
+            message: '🔴 Đang ghi âm cuộc gọi trực tiếp trên máy chủ tổng đài...',
             type: 'success',
           },
         }),
@@ -2198,6 +2288,7 @@ onUnmounted(() => {
 
 .panel-tab-btn {
   flex: 1;
+  min-width: fit-content;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2213,6 +2304,7 @@ onUnmounted(() => {
   transition: all 0.2s ease;
   white-space: nowrap;
   border-radius: 6px 6px 0 0;
+  flex-shrink: 0;
 }
 
 .panel-tab-btn:hover {
@@ -2261,6 +2353,115 @@ onUnmounted(() => {
 .tab-badge.badge-offline {
   background: #f1f5f9;
   color: #334155;
+}
+
+.tab-badge.badge-dept {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.panel-tab-btn.active .tab-badge.badge-dept {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.tab-svg-icon {
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* --- Department Selector Bar --- */
+.dept-selector-bar {
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.dept-bar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dept-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.dept-current-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.dept-chips-scroll {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
+}
+.dept-chips-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.dept-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  background: #ffffff;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.dept-chip-btn:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+  border-color: #94a3b8;
+}
+
+.dept-chip-btn.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #3b82f6;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.15);
+}
+
+.dept-chip-count {
+  font-size: 0.7rem;
+  opacity: 0.85;
+}
+
+.dept-empty-hint {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 4px 0;
 }
 
 .panel-list-container {
@@ -2731,6 +2932,8 @@ onUnmounted(() => {
   padding: 4px 10px;
   border-radius: 20px;
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .selection-pill strong {
@@ -2742,6 +2945,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .btn-action-pill {
@@ -2757,6 +2961,8 @@ onUnmounted(() => {
   color: #475569;
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .btn-action-pill:hover {

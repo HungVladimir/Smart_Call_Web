@@ -4,7 +4,7 @@
     <div class="history-header">
       <div class="header-left">
         <h1>Lịch sử cuộc gọi</h1>
-        <span class="sub-title">Nhật ký thoại nội bộ Wazo Call-Logd (CDR)</span>
+        <span class="sub-title">Nhật ký cuộc gọi thoại nội bộ (CDR)</span>
       </div>
 
       <div class="header-filters">
@@ -70,7 +70,7 @@
     <!-- Trạng thái Loading -->
     <div v-if="loading" class="state-message">
       <div class="spinner"></div>
-      <p>Đang tải nhật ký cuộc gọi từ Wazo CDR...</p>
+      <p>Đang tải nhật ký cuộc gọi...</p>
     </div>
 
     <!-- Trạng thái Không có dữ liệu -->

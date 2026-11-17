@@ -91,7 +91,7 @@
         </div>
       </div>
 
-      <!-- Tab 2: Dịch vụ cuộc gọi tổng đài Wazo Confd -->
+      <!-- Tab 2: Dịch vụ cuộc gọi tổng đài -->
       <div v-show="activeTab === 'calls'" class="st-panel">
         <div class="st-toggle-row">
           <div class="st-toggle-info">
@@ -104,7 +104,7 @@
         <div class="st-toggle-row">
           <div class="st-toggle-info">
             <strong>Tự động ghi âm cuộc gọi trên tổng đài (Auto Record Calls)</strong>
-            <small>Tự động kích hoạt ghi âm cuộc gọi trên máy chủ Wazo ngay khi cuộc gọi thoại được kết nối.</small>
+            <small>Tự động kích hoạt ghi âm cuộc gọi trên máy chủ tổng đài ngay khi cuộc gọi thoại được kết nối.</small>
           </div>
           <input v-model="autoRecordCalls" type="checkbox" class="toggle-cb" @change="saveAutoRecord" />
         </div>
@@ -132,7 +132,7 @@
       <!-- Tab 3: Tài khoản & Mật khẩu -->
       <div v-show="activeTab === 'account'" class="st-panel">
         <div class="wazo-info-card">
-          <div class="info-label">Thông tin kết nối tổng đài Wazo:</div>
+          <div class="info-label">Thông tin kết nối máy chủ tổng đài:</div>
           <div class="info-content">
             <strong>Tài khoản:</strong> {{ currentUsername }} • <strong>Máy lẻ SIP:</strong> {{ currentExt }}
           </div>

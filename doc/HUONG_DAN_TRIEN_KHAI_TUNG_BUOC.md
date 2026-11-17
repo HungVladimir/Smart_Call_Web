@@ -72,6 +72,7 @@
 | **56** | Phục hồi Kích thước Bàn phím / Đàm thoại, Căn Liền kề Tab Gọi nhóm & Phân quyền Admin Quản trị Nhóm | Tiêu chuẩn Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Phục hồi bàn phím 300px và đàm thoại 420px; Căn tab Gọi nhóm liền kề; Tăng tương phản badge; Phân quyền chỉ Admin mới được thêm/xóa thành viên, đổi tên và xóa nhóm. |
 | **57** | Khôi phục Bố cục Calls View Nhỏ Gọn (Compact Grid 1200px), Căn Đều 5 Tab 100% & Tinh chỉnh Nút Quản lý Nhóm bằng SVG Vector Hiện đại | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Trả container về `max-width: 1200px` và lưới `300px 420px 440px` cân đối chuẩn ban đầu; Căn đều 5 tab bộ lọc (`flex: 1; justify-content: center;`) triệt tiêu hoàn toàn khoảng trống thừa sau Gọi nhóm; Nâng cấp 2 nút Thêm thành viên và Xóa nhóm bằng SVG vector sắc nét trên nền pill pastel hiện đại. |
 | **58** | Khôi phục Kích thước Rộng Rãi Calls View, Đồng bộ Chiều cao 3 Cột (Stretch) & Căn Đều 5 Mục Tab | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Khôi phục `max-width: 1560px` và lưới `300px 420px 1fr`; Áp dụng `align-items: stretch` và `min-height: 500px` cho danh bạ triệt tiêu co ngắn khi ít liên hệ; Giữ tỷ lệ chia đều `flex: 1` hiển thị đầy đủ cả 5 tab không bị che khuất hay tràn dòng. |
+| **59** | Triển khai Tab Bộ phận (Department Selector Bar), Khắc phục Nút Xóa Rớt 2 Dòng & Chuẩn hóa Từ khóa theo Rule mới | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Bổ sung Tab 5 `🏢 Bộ phận` với thanh chọn phòng ban động dạng chip pills; Hỗ trợ tìm kiếm kết hợp trong phạm vi bộ phận; Khóa chặt `white-space: nowrap;` kèm icon SVG cho nút xóa/bỏ chọn; Thay thế toàn bộ từ khóa tên tổng đài trong comments và giao diện UI theo rule mới. |
 
 ---
 
@@ -3137,6 +3138,66 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `532ms`.
+
+---
+
+## BƯỚC 59: TRIỂN KHAI TAB BỘ PHẬN (DEPARTMENT SELECTOR BAR), KHẮC PHỤC NÚT XÓA RỚT 2 DÒNG & CHUẨN HÓA TỪ KHÓA THEO RULE MỚI
+
+### 1. Bối cảnh & Yêu cầu từ Người dùng
+1. **Thiết kế Danh mục Bộ phận (Department)**:
+   - Các phòng ban như MES, Robot, Kỹ thuật, Kinh doanh... được gọi chung là "Bộ phận" (hoặc "Department").
+   - Khi bấm vào tab Bộ phận, hiển thị thanh view chọn phòng ban (ví dụ: Tất cả, MES, Robot, Kỹ thuật, Kinh doanh...) để người dùng chọn nhanh bộ phận cần tìm.
+   - Hỗ trợ tìm kiếm kép: khi đã chọn phòng ban (ví dụ: MES), nếu gõ tìm kiếm thì chỉ tìm nhân viên trong phạm vi bộ phận đó.
+2. **Khắc phục lỗi nút xóa bị rớt 2 dòng**:
+   - Nút xóa / bỏ chọn ở view Gọi nhóm và nút xóa thành viên trong modal nhóm bị rớt thành 2 dòng (ví dụ `✕` trên, chữ dưới), gây mất thẩm mỹ.
+   - Khóa chặt không cho rớt dòng (`white-space: nowrap;`), đồng thời thay thế bằng icon SVG vector chuẩn mượt mà.
+3. **Chuẩn hóa từ khóa theo Rule mới**:
+   - Dọn toàn bộ rác thừa và sửa tất cả comments cũng như nhãn giao diện: loại bỏ toàn bộ từ khóa tên tổng đài, thay thế bằng các thuật ngữ chuẩn "máy chủ tổng đài", "hệ thống tổng đài", "dịch vụ cuộc gọi", v.v.
+
+### 2. Chi tiết Triển khai Kỹ thuật
+
+#### A. Triển khai Tab Bộ phận & Thanh Chọn Phòng ban Linh hoạt (`CallsView.vue`)
+1. **Tab `🏢 Bộ phận` trên thanh Tab Danh bạ**:
+   - Tích hợp biểu tượng vector SVG tòa nhà sắc nét (`tab-svg-icon`).
+   - Huy hiệu `badge-dept` tự động nhảy số theo số lượng nhân viên của bộ phận đang chọn (hoặc tổng nhân viên khi chọn Tất cả).
+2. **Thanh chọn Bộ phận (Inline Department Selector Bar)**:
+   - Khi `activeTab === 'department'`, thanh công cụ `.dept-selector-bar` xuất hiện mượt mà ngay trên danh sách liên hệ.
+   - Quét danh bạ động để trích xuất danh sách các bộ phận thực tế: `availableDepartments`.
+   - Các nút chọn dạng Chip Pill bo tròn (`.dept-chip-btn`): `Tất cả (count)`, `[Tên bộ phận] (count)`.
+   - Chip đang chọn hiển thị nổi bật với nền xanh pastel `#eff6ff`, viền xanh `#3b82f6` và chữ đậm `#1d4ed8`.
+3. **Lọc kép thông minh trong `filteredContacts`**:
+   - Khi chọn tab `department`: danh sách được lọc theo `selectedDepartment`.
+   - Kết hợp tìm kiếm với `searchTerm`: chỉ tìm trong tập hợp nhân viên của bộ phận đã chọn, hỗ trợ tiếng Việt không dấu.
+4. **Hỗ trợ cuộn ngang thanh tab**:
+   - Thêm `overflow-x: auto; scroll-behavior: smooth; scrollbar-width: none;` cho `.panel-tabs-bar`, giúp 6 tab hiển thị thoáng đãng và có thể cuộn ngang nhẹ nhàng nếu trên màn hình nhỏ.
+
+#### B. Khắc phục Triệt để Lỗi Nút Xóa / Bỏ chọn Bị Rớt 2 Dòng
+1. **Nút Bỏ chọn trong tab Gọi nhóm (`CallsView.vue`)**:
+   - Thay thế ký tự thô `✕` bằng vector SVG đường chéo sắc nét (`stroke-width="2.5"`).
+   - Thêm `white-space: nowrap; flex-shrink: 0;` cho `.btn-action-pill`, `.selection-pill` và `.action-buttons-group`.
+2. **Nút Xóa thành viên trong Modal Quản trị Nhóm (`MessagesView.vue`)**:
+   - Thay thế ký tự `✖ Xóa` bằng icon SVG vector và chữ `<span>Xóa</span>`.
+   - Thêm `white-space: nowrap; flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;` cho `.btn-remove-member`.
+
+#### C. Chuẩn hóa Từ khóa Comments & UI theo Rule mới
+- Thay thế toàn bộ chữ xuất hiện trên giao diện người dùng:
+  - `DANH SÁCH THÀNH VIÊN TRÊN MÁY CHỦ WAZO` $\rightarrow$ `DANH SÁCH THÀNH VIÊN NHÓM` ([MessagesView.vue](file:///d:/Project/Smart_Call_Web/src/views/MessagesView.vue)).
+  - `👥 TẠO NHÓM CHAT MỚI (WAZO CHATD)` $\rightarrow$ `👥 TẠO NHÓM CHAT MỚI`.
+  - `(Đủ điều kiện tạo phòng nhóm Wazo)` $\rightarrow$ `(Đủ điều kiện tạo nhóm)`.
+  - `Đang nạp danh bạ từ máy chủ Wazo...` $\rightarrow$ `Đang nạp danh bạ từ máy chủ...` ([CallsView.vue](file:///d:/Project/Smart_Call_Web/src/views/CallsView.vue)).
+  - `Nhật ký thoại nội bộ Wazo Call-Logd (CDR)` $\rightarrow$ `Nhật ký cuộc gọi thoại nội bộ (CDR)` ([HistoryView.vue](file:///d:/Project/Smart_Call_Web/src/views/HistoryView.vue)).
+  - `Đang tải nhật ký cuộc gọi từ Wazo CDR...` $\rightarrow$ `Đang tải nhật ký cuộc gọi...`.
+  - `(Tài khoản Wazo)` $\rightarrow$ `(Tài khoản tổng đài)` ([LoginView.vue](file:///d:/Project/Smart_Call_Web/src/views/LoginView.vue)).
+  - `chứng chỉ Wazo` $\rightarrow$ `chứng chỉ máy chủ`.
+  - `tài khoản Wazo của bạn` $\rightarrow$ `tài khoản tổng đài của bạn`.
+  - `Timeout máy chủ Wazo` $\rightarrow$ `Timeout máy chủ tổng đài`.
+  - `Thông tin kết nối tổng đài Wazo:` $\rightarrow$ `Thông tin kết nối máy chủ tổng đài:` ([SettingsModal.vue](file:///d:/Project/Smart_Call_Web/src/components/common/SettingsModal.vue)).
+  - `Đã kết nối an toàn với máy chủ Wazo Platform...` $\rightarrow$ `Đã kết nối an toàn với máy chủ tổng đài...` ([AppHeader.vue](file:///d:/Project/Smart_Call_Web/src/components/layout/AppHeader.vue)).
+- Dọn dẹp các đoạn comment trong mã nguồn.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `561ms`.
+
 
 
 
