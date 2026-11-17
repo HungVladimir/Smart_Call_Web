@@ -68,12 +68,12 @@
             class="room-item"
             :class="{
               active: currentRoom && currentRoom.id === room.id,
-              'in-select-mode': isRoomSelectMode && !room.isDirect,
+              'in-select-mode': isRoomSelectMode && !room.isDirect && isRoomAdmin(room),
               'is-selected': selectedRoomIds.includes(room.id)
             }"
-            @click="(isRoomSelectMode && !room.isDirect) ? toggleSelectRoom(room.id) : selectRoom(room)"
+            @click="(isRoomSelectMode && !room.isDirect && isRoomAdmin(room)) ? toggleSelectRoom(room.id) : selectRoom(room)"
           >
-            <div v-if="isRoomSelectMode && !room.isDirect" class="room-select-check" @click.stop>
+            <div v-if="isRoomSelectMode && !room.isDirect && isRoomAdmin(room)" class="room-select-check" @click.stop>
               <input
                 type="checkbox"
                 class="select-room-checkbox"
@@ -110,11 +110,11 @@
               </div>
             </div>
 
-            <!-- Nút xóa nhanh 1 nhóm khi hover ở chế độ thường (Chỉ hiển thị cho phòng nhóm) -->
+            <!-- Nút xóa nhanh 1 nhóm khi hover ở chế độ thường (Chỉ hiển thị cho phòng nhóm mà người dùng là Admin) -->
             <button
-              v-if="!isRoomSelectMode && !room.isDirect"
+              v-if="!isRoomSelectMode && !room.isDirect && isRoomAdmin(room)"
               class="btn-delete-room-hover"
-              title="Giải tán nhóm này"
+              title="Xóa nhóm này"
               @click.stop="handleDeleteSingleRoom(room)"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -393,7 +393,7 @@
                   v-model="editGroupTitle"
                   class="group-rename-input"
                   :disabled="!currentIsAdmin"
-                  placeholder="Nhập tên nhóm mới..."
+                  placeholder="Nhập tên nhóm..."
                   maxlength="60"
                 />
                 <button
@@ -406,24 +406,25 @@
                   <span v-else>💾 Lưu tên</span>
                 </button>
               </div>
-              <small v-if="!currentIsAdmin" class="text-hint-locked">
-                🔒 Chỉ Quản trị viên nhóm (Admin) mới có quyền đổi tên nhóm.
-              </small>
             </div>
 
-            <div class="group-actions-bar">
-              <button class="btn-add-more-members" @click="openAddMoreToGroup">
-                ➕ Thêm thành viên vào nhóm (Tạo nhóm mở rộng)
+            <!-- Cụm 2 nút Thêm thành viên và Xóa nhóm đặt song song cho Admin -->
+            <div v-if="currentIsAdmin" class="group-actions-bar-grid">
+              <button class="btn-group-action btn-add-member" @click="openAddMoreToGroup">
+                ➕ Thêm thành viên
               </button>
               <button
-                v-if="currentIsAdmin"
-                class="btn-delete-group-room"
+                class="btn-group-action btn-delete-group"
                 :disabled="isDeletingGroup"
                 @click="handleDeleteGroupRoom"
               >
-                <span v-if="isDeletingGroup">⏳ Đang giải tán...</span>
-                <span v-else>🗑️ Giải tán nhóm</span>
+                <span v-if="isDeletingGroup">⏳ Đang xóa...</span>
+                <span v-else>🗑️ Xóa nhóm</span>
               </button>
+            </div>
+            <!-- Banner nhắc nhở phân quyền khi người dùng là thành viên thường -->
+            <div v-else class="non-admin-notice-banner">
+              🔒 Bạn là thành viên trong nhóm. Chỉ Quản trị viên (Admin) mới có quyền thêm/xóa thành viên, đổi tên hoặc xóa nhóm.
             </div>
 
             <label class="form-label">
@@ -544,7 +545,16 @@ const isRoomClosed = computed(() => {
   return Boolean(lastMsg?.text && lastMsg.text.includes('[SYSTEM:ROOM_CLOSED'))
 })
 
-const groupRoomsCount = computed(() => sortedRooms.value.filter((r) => !r.isDirect).length)
+const isRoomAdmin = (room) => {
+  if (!room || room.isDirect) return false
+  const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid')
+  if (myUuid && room.adminUuid) {
+    return room.adminUuid === myUuid
+  }
+  return localStorage.getItem('smartcall_is_admin') === 'true'
+}
+
+const groupRoomsCount = computed(() => sortedRooms.value.filter((r) => !r.isDirect && isRoomAdmin(r)).length)
 
 const toggleRoomSelectMode = () => {
   isRoomSelectMode.value = !isRoomSelectMode.value
@@ -553,7 +563,7 @@ const toggleRoomSelectMode = () => {
 
 const toggleSelectRoom = (roomId) => {
   const room = rooms.value.find((r) => r.id === roomId)
-  if (!room || room.isDirect) return
+  if (!room || room.isDirect || !isRoomAdmin(room)) return
   const idx = selectedRoomIds.value.indexOf(roomId)
   if (idx > -1) {
     selectedRoomIds.value.splice(idx, 1)
@@ -563,7 +573,7 @@ const toggleSelectRoom = (roomId) => {
 }
 
 const selectAllRooms = () => {
-  const groupIds = sortedRooms.value.filter((r) => !r.isDirect).map((r) => r.id)
+  const groupIds = sortedRooms.value.filter((r) => !r.isDirect && isRoomAdmin(r)).map((r) => r.id)
   if (selectedRoomIds.value.length === groupIds.length) {
     selectedRoomIds.value = []
   } else {
@@ -573,8 +583,12 @@ const selectAllRooms = () => {
 
 const handleDeleteSingleRoom = async (room) => {
   if (!room || room.isDirect) return
+  if (!isRoomAdmin(room)) {
+    alert('Chỉ Quản trị viên nhóm (Admin) mới có quyền xóa nhóm này.')
+    return
+  }
   const title = room.title || 'nhóm này'
-  if (!confirm(`Bạn có chắc chắn muốn giải tán nhóm "${title}" không? Nhóm này sẽ bị đóng và giải tán vĩnh viễn đối với tất cả thành viên.`)) {
+  if (!confirm(`Bạn có chắc chắn muốn xóa nhóm "${title}" không? Nhóm này sẽ bị đóng và xóa vĩnh viễn đối với tất cả thành viên.`)) {
     return
   }
 
@@ -586,18 +600,18 @@ const handleDeleteSingleRoom = async (room) => {
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🗑️ Đã giải tán nhóm "${title}" thành công!`, type: 'success' },
+        detail: { message: `🗑️ Đã xóa nhóm "${title}" thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
-    alert(`Lỗi khi giải tán nhóm: ${err.message}`)
+    alert(`Lỗi khi xóa nhóm: ${err.message}`)
   }
 }
 
 const handleDeleteSelectedRooms = async () => {
   if (selectedRoomIds.value.length === 0) return
   const count = selectedRoomIds.value.length
-  if (!confirm(`Bạn có chắc chắn muốn giải tán ${count} nhóm đã chọn không? Các nhóm này sẽ bị đóng và giải tán vĩnh viễn trên toàn hệ thống.`)) {
+  if (!confirm(`Bạn có chắc chắn muốn xóa ${count} nhóm đã chọn không? Các nhóm này sẽ bị đóng và xóa vĩnh viễn trên toàn hệ thống.`)) {
     return
   }
 
@@ -613,20 +627,23 @@ const handleDeleteSelectedRooms = async () => {
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🗑️ Đã giải tán ${count} nhóm thành công!`, type: 'success' },
+        detail: { message: `🗑️ Đã xóa ${count} nhóm thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
-    alert(`Lỗi khi giải tán nhóm: ${err.message}`)
+    alert(`Lỗi khi xóa nhóm: ${err.message}`)
   } finally {
     isDeletingRooms.value = false
   }
 }
 
 const handleDeleteGroupRoom = async () => {
-  if (!currentRoom.value || currentRoom.value.isDirect) return
+  if (!currentRoom.value || currentRoom.value.isDirect || !currentIsAdmin.value) {
+    alert('Chỉ Quản trị viên nhóm (Admin) mới có quyền xóa nhóm này.')
+    return
+  }
   const groupName = currentRoom.value.title || 'Nhóm này'
-  if (!confirm(`Bạn có chắc chắn muốn giải tán nhóm "${groupName}"? Nhóm sẽ bị đóng và ẩn hoàn toàn trên toàn bộ hệ thống.`)) {
+  if (!confirm(`Bạn có chắc chắn muốn xóa nhóm "${groupName}"? Nhóm sẽ bị đóng và ẩn hoàn toàn trên toàn bộ hệ thống.`)) {
     return
   }
 
@@ -638,11 +655,11 @@ const handleDeleteGroupRoom = async () => {
     await loadRooms()
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🚫 Đã giải tán nhóm "${groupName}" thành công!`, type: 'success' },
+        detail: { message: `🚫 Đã xóa nhóm "${groupName}" thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
-    alert(`Lỗi khi giải tán nhóm: ${err.message}`)
+    alert(`Lỗi khi xóa nhóm: ${err.message}`)
   } finally {
     isDeletingGroup.value = false
   }
@@ -1124,7 +1141,10 @@ const handleSaveGroupName = async () => {
 }
 
 const handleRemoveMember = async (member) => {
-  if (!currentRoom.value) return
+  if (!currentRoom.value || !currentIsAdmin.value) {
+    alert('Chỉ Quản trị viên nhóm (Admin) mới có quyền xóa thành viên.')
+    return
+  }
   const memberName = member.name || `Máy lẻ ${member.ext}` || 'thành viên'
   const memberId = member.id || member.uuid
   if (!confirm(`Bạn có chắc chắn muốn xóa [${memberName}] khỏi nhóm thảo luận?`)) {
@@ -1158,6 +1178,10 @@ const upgradeDirectToGroup = () => {
 }
 
 const openAddMoreToGroup = () => {
+  if (!currentIsAdmin.value) {
+    alert('Chỉ Quản trị viên nhóm (Admin) mới có quyền thêm thành viên.')
+    return
+  }
   showMemberModal.value = false
   const msgs = currentRoom.value?.messages || []
   openCreateGroupModal(null, msgs)
@@ -2401,21 +2425,60 @@ const getRoomStatusClass = (room) => {
   background: #6d28d9;
 }
 
-.btn-add-more-members {
-  background: #4f46e5;
-  color: white;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 0.82rem;
-  cursor: pointer;
-  margin-bottom: 12px;
-  width: 100%;
+.group-actions-bar-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
-.btn-add-more-members:hover {
-  background: #4338ca;
+.btn-group-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-group-action.btn-add-member {
+  background: #3b82f6;
+  color: #ffffff;
+  border: 1px solid #2563eb;
+}
+.btn-group-action.btn-add-member:hover {
+  background: #2563eb;
+}
+
+.btn-group-action.btn-delete-group {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+.btn-group-action.btn-delete-group:hover:not(:disabled) {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #b91c1c;
+}
+.btn-group-action.btn-delete-group:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.non-admin-notice-banner {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  color: #64748b;
+  font-size: 0.8rem;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  line-height: 1.45;
 }
 
 .member-avatar-mini {
@@ -2621,23 +2684,6 @@ const getRoomStatusClass = (room) => {
   color: #ef4444;
 }
 
-.btn-delete-group-room {
-  background: #fee2e2;
-  color: #dc2626;
-  border: 1px solid #fca5a5;
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-delete-group-room:hover:not(:disabled) {
-  background: #dc2626;
-  color: #ffffff;
-  border-color: #b91c1c;
-}
 
 .closed-banner {
   background: #fef2f2 !important;

@@ -1465,9 +1465,9 @@ onUnmounted(() => {
 
 <style scoped>
 .calls-view {
-  max-width: 1400px;
+  max-width: 1560px;
   margin: 0 auto;
-  padding: 0 4px;
+  padding: 0 16px;
 }
 
 .view-header {
@@ -1585,10 +1585,10 @@ onUnmounted(() => {
    ADAPTIVE 3-TIER GRID SYSTEM
    ========================================================================= */
 
-/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 280px, Đàm thoại 350px, Danh bạ minmax(460px, 1fr) mở rộng) */
+/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 300px, Đàm thoại 420px, Danh bạ 1fr mở rộng) */
 .calls-grid-layout {
   display: grid;
-  grid-template-columns: 280px 350px minmax(460px, 1fr);
+  grid-template-columns: 300px 420px 1fr;
   grid-template-areas: 'dialer status contacts';
   gap: 20px;
   align-items: start;
@@ -2238,33 +2238,33 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 1px 6px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  padding: 1px 7px;
   border-radius: 10px;
   background: #e2e8f0;
-  color: #475569;
-  min-width: 18px;
-  line-height: 1.2;
+  color: #0f172a;
+  min-width: 20px;
+  line-height: 1.3;
 }
 
 .panel-tab-btn.active .tab-badge {
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: #2563eb;
+  color: #ffffff;
 }
 
 .tab-badge.badge-online {
-  background: #ecfdf5;
-  color: #059669;
+  background: #dcfce7;
+  color: #166534;
 }
 .panel-tab-btn.active .tab-badge.badge-online {
-  background: #10b981;
+  background: #16a34a;
   color: #ffffff;
 }
 
 .tab-badge.badge-offline {
   background: #f1f5f9;
-  color: #64748b;
+  color: #334155;
 }
 
 .panel-list-container {
@@ -2696,7 +2696,7 @@ onUnmounted(() => {
 .panel-tab-btn.tab-group-call {
   color: #2563eb;
   font-weight: 700;
-  margin-left: auto;
+  margin-left: 0;
 }
 .panel-tab-btn.tab-group-call.active {
   background: #ffffff;

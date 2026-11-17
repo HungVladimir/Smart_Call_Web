@@ -2991,6 +2991,51 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `498ms`.
 
+---
+
+## BƯỚC 56: PHỤC HỒI KÍCH THƯỚC CALLS VIEW, CĂN LIỀN KỀ TAB GỌI NHÓM & QUY CHUẨN PHÂN QUYỀN ADMIN QUẢN TRỊ NHÓM
+
+### 1. Bối cảnh & Yêu cầu từ Người dùng
+1. **Phục hồi bố cục Gọi điện & Danh bạ (`CallsView.vue`)**:
+   - Trả lại chiều rộng bàn phím số về chuẩn `300px` và khung đàm thoại về chuẩn `420px` như cũ.
+   - Mở rộng container `.calls-view` từ `max-width: 1400px` lên `max-width: 1560px; padding: 0 16px;`. Cột Danh bạ (`1fr`) tự động mở rộng lên tới `~800px` mà không làm co hẹp bàn phím và khung đàm thoại.
+   - Căn tab `📞 Gọi nhóm` nằm liền kề ngay sau `⚪ Ngoại tuyến` (bỏ `margin-left: auto;`).
+   - Tăng độ nét và tương phản cho số lượng trên các tab (`color: #0f172a; font-weight: 800; font-size: 0.76rem;`).
+2. **Tái cấu trúc Modal Thành viên Nhóm & Phân quyền Admin (`MessagesView.vue`)**:
+   - Chuyển đổi cụm nút dọc cũ thành **1 hàng ngang 2 nút cân đối (2-Column Action Bar Grid)**:
+     - Nút 1: `[ ➕ Thêm thành viên ]` (Primary blue, bo góc 8px).
+     - Nút 2: `[ 🗑️ Xóa nhóm ]` (Danger red, bo góc 8px).
+   - Thiết lập quy tắc phân quyền **Chỉ Admin mới có quyền thêm thành viên, xóa thành viên, đổi tên và xóa nhóm**:
+     - Thêm hàm `isRoomAdmin(room)` và kiểm tra `currentIsAdmin`.
+     - Nếu không phải Admin: Ẩn cụm nút thao tác, hiển thị banner cảnh báo quyền hạn, khóa ô đổi tên và ẩn nút xóa từng thành viên.
+     - Trên danh sách phòng bên trái: Nút xóa nhanh hover 🗑️ chỉ hiển thị cho Admin của phòng nhóm đó.
+     - Khóa các hàm `openAddMoreToGroup`, `handleRemoveMember`, `handleSaveGroupName`, `handleDeleteSingleRoom`, `handleDeleteGroupRoom` đảm bảo không bị bypass.
+
+### 2. Chi tiết Triển khai Kỹ thuật
+- `src/views/CallsView.vue`:
+  - `.calls-view`: `max-width: 1560px; margin: 0 auto; padding: 0 16px;`.
+  - `.calls-grid-layout`: `grid-template-columns: 300px 420px 1fr;`.
+  - `.panel-tab-btn.tab-group-call`: `margin-left: 0;`.
+  - `.tab-badge`: `font-size: 0.76rem; font-weight: 800; color: #0f172a; background: #e2e8f0; min-width: 20px;`.
+- `src/views/MessagesView.vue`:
+  - Thêm `isRoomAdmin(room)`:
+    ```javascript
+    const isRoomAdmin = (room) => {
+      if (!room || room.isDirect) return false
+      const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid')
+      if (myUuid && room.adminUuid) {
+        return room.adminUuid === myUuid
+      }
+      return localStorage.getItem('smartcall_is_admin') === 'true'
+    }
+    ```
+  - Modal Thành viên: Bố cục lưới 2 nút ngang `.group-actions-bar-grid` (`➕ Thêm thành viên` & `🗑️ Xóa nhóm`) cho Admin; Banner `.non-admin-notice-banner` cho Non-Admin.
+  - Phân quyền danh sách phòng: Chỉ hiển thị nút xóa hover và checkbox xóa cho phòng nhóm mà người dùng là Admin.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `491ms`.
+
+
 
 
 
