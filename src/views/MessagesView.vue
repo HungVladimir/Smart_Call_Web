@@ -7,10 +7,10 @@
           <h2>Tin nhắn</h2>
           <div class="rooms-header-actions">
             <button
-              v-if="sortedRooms.length > 0"
+              v-if="groupRoomsCount > 0"
               class="btn-manage-rooms"
               :class="{ active: isRoomSelectMode }"
-              :title="isRoomSelectMode ? 'Hủy chọn cuộc trò chuyện' : 'Chọn cuộc trò chuyện để xóa'"
+              :title="isRoomSelectMode ? 'Hủy chọn nhóm' : 'Chọn nhóm để giải tán'"
               @click="toggleRoomSelectMode"
             >
               <svg v-if="!isRoomSelectMode" class="btn-manage-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -33,22 +33,22 @@
           </div>
         </div>
 
-        <!-- Thanh công cụ chọn & xóa nhiều cuộc trò chuyện -->
+        <!-- Thanh công cụ chọn & giải tán nhiều nhóm thảo luận -->
         <div v-if="isRoomSelectMode" class="room-select-toolbar">
           <div class="room-select-info">
-            <span>Đã chọn: <strong>{{ selectedRoomIds.length }}</strong>/{{ sortedRooms.length }}</span>
+            <span>Đã chọn: <strong>{{ selectedRoomIds.length }}</strong>/{{ groupRoomsCount }} nhóm</span>
           </div>
           <div class="room-select-actions">
             <button class="btn-select-mini" @click="selectAllRooms">
-              {{ selectedRoomIds.length === sortedRooms.length ? 'Bỏ chọn' : 'Tất cả' }}
+              {{ selectedRoomIds.length === groupRoomsCount ? 'Bỏ chọn' : 'Tất cả' }}
             </button>
             <button
               class="btn-select-mini danger"
               :disabled="selectedRoomIds.length === 0 || isDeletingRooms"
               @click="handleDeleteSelectedRooms"
             >
-              <span v-if="isDeletingRooms">⏳ Đang xóa...</span>
-              <span v-else>Xóa ({{ selectedRoomIds.length }})</span>
+              <span v-if="isDeletingRooms">⏳ Đang giải tán...</span>
+              <span v-else>Giải tán ({{ selectedRoomIds.length }})</span>
             </button>
           </div>
         </div>
@@ -68,12 +68,12 @@
             class="room-item"
             :class="{
               active: currentRoom && currentRoom.id === room.id,
-              'in-select-mode': isRoomSelectMode,
+              'in-select-mode': isRoomSelectMode && !room.isDirect,
               'is-selected': selectedRoomIds.includes(room.id)
             }"
-            @click="isRoomSelectMode ? toggleSelectRoom(room.id) : selectRoom(room)"
+            @click="(isRoomSelectMode && !room.isDirect) ? toggleSelectRoom(room.id) : selectRoom(room)"
           >
-            <div v-if="isRoomSelectMode" class="room-select-check" @click.stop>
+            <div v-if="isRoomSelectMode && !room.isDirect" class="room-select-check" @click.stop>
               <input
                 type="checkbox"
                 class="select-room-checkbox"
@@ -110,11 +110,11 @@
               </div>
             </div>
 
-            <!-- Nút xóa nhanh 1 cuộc trò chuyện khi hover ở chế độ thường -->
+            <!-- Nút xóa nhanh 1 nhóm khi hover ở chế độ thường (Chỉ hiển thị cho phòng nhóm) -->
             <button
-              v-if="!isRoomSelectMode"
+              v-if="!isRoomSelectMode && !room.isDirect"
               class="btn-delete-room-hover"
-              title="Xóa cuộc trò chuyện này"
+              title="Giải tán nhóm này"
               @click.stop="handleDeleteSingleRoom(room)"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -544,12 +544,16 @@ const isRoomClosed = computed(() => {
   return Boolean(lastMsg?.text && lastMsg.text.includes('[SYSTEM:ROOM_CLOSED'))
 })
 
+const groupRoomsCount = computed(() => sortedRooms.value.filter((r) => !r.isDirect).length)
+
 const toggleRoomSelectMode = () => {
   isRoomSelectMode.value = !isRoomSelectMode.value
   selectedRoomIds.value = []
 }
 
 const toggleSelectRoom = (roomId) => {
+  const room = rooms.value.find((r) => r.id === roomId)
+  if (!room || room.isDirect) return
   const idx = selectedRoomIds.value.indexOf(roomId)
   if (idx > -1) {
     selectedRoomIds.value.splice(idx, 1)
@@ -559,17 +563,18 @@ const toggleSelectRoom = (roomId) => {
 }
 
 const selectAllRooms = () => {
-  if (selectedRoomIds.value.length === sortedRooms.value.length) {
+  const groupIds = sortedRooms.value.filter((r) => !r.isDirect).map((r) => r.id)
+  if (selectedRoomIds.value.length === groupIds.length) {
     selectedRoomIds.value = []
   } else {
-    selectedRoomIds.value = sortedRooms.value.map((r) => r.id)
+    selectedRoomIds.value = [...groupIds]
   }
 }
 
 const handleDeleteSingleRoom = async (room) => {
-  if (!room) return
-  const title = room.title || 'cuộc trò chuyện này'
-  if (!confirm(`Bạn có chắc chắn muốn xóa "${title}" không? Cuộc trò chuyện này sẽ bị đóng và ẩn hoàn toàn trên toàn bộ hệ thống.`)) {
+  if (!room || room.isDirect) return
+  const title = room.title || 'nhóm này'
+  if (!confirm(`Bạn có chắc chắn muốn giải tán nhóm "${title}" không? Nhóm này sẽ bị đóng và giải tán vĩnh viễn đối với tất cả thành viên.`)) {
     return
   }
 
@@ -581,18 +586,18 @@ const handleDeleteSingleRoom = async (room) => {
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🗑️ Đã xóa cuộc trò chuyện "${title}" thành công!`, type: 'success' },
+        detail: { message: `🗑️ Đã giải tán nhóm "${title}" thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
-    alert(`Lỗi khi xóa cuộc trò chuyện: ${err.message}`)
+    alert(`Lỗi khi giải tán nhóm: ${err.message}`)
   }
 }
 
 const handleDeleteSelectedRooms = async () => {
   if (selectedRoomIds.value.length === 0) return
   const count = selectedRoomIds.value.length
-  if (!confirm(`Bạn có chắc chắn muốn xóa ${count} cuộc trò chuyện đã chọn không? Toàn bộ các cuộc trò chuyện này sẽ bị đóng và ẩn vĩnh viễn trên toàn bộ hệ thống.`)) {
+  if (!confirm(`Bạn có chắc chắn muốn giải tán ${count} nhóm đã chọn không? Các nhóm này sẽ bị đóng và giải tán vĩnh viễn trên toàn hệ thống.`)) {
     return
   }
 
@@ -608,11 +613,11 @@ const handleDeleteSelectedRooms = async () => {
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🗑️ Đã xóa ${count} cuộc trò chuyện thành công!`, type: 'success' },
+        detail: { message: `🗑️ Đã giải tán ${count} nhóm thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
-    alert(`Lỗi khi xóa cuộc trò chuyện: ${err.message}`)
+    alert(`Lỗi khi giải tán nhóm: ${err.message}`)
   } finally {
     isDeletingRooms.value = false
   }
@@ -973,16 +978,6 @@ const onRoomsUpdated = () => {
   }
 }
 
-const onMessagesDeleted = (ev) => {
-  const { roomId, deletedIds } = ev.detail || {}
-  if (currentRoom.value && currentRoom.value.id === roomId && currentRoom.value.messages) {
-    currentRoom.value.messages = currentRoom.value.messages.filter(
-      (m) => !deletedIds.includes(m.id),
-    )
-  }
-  rooms.value = [...chatService.rooms]
-}
-
 const onRoomClosed = (ev) => {
   const { roomId } = ev.detail || {}
   if (currentRoom.value && currentRoom.value.id === roomId) {
@@ -1000,7 +995,6 @@ onMounted(async () => {
   window.addEventListener('smartcall-message-received', onMessageReceived)
   window.addEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.addEventListener('smartcall-refresh-rooms', loadRooms)
-  window.addEventListener('smartcall-messages-deleted', onMessagesDeleted)
   window.addEventListener('smartcall-room-closed', onRoomClosed)
 })
 
@@ -1020,7 +1014,6 @@ onUnmounted(() => {
   window.removeEventListener('smartcall-message-received', onMessageReceived)
   window.removeEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.removeEventListener('smartcall-refresh-rooms', loadRooms)
-  window.removeEventListener('smartcall-messages-deleted', onMessagesDeleted)
   window.removeEventListener('smartcall-room-closed', onRoomClosed)
 })
 

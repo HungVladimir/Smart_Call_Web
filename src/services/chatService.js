@@ -506,8 +506,9 @@ class ChatService {
             // Sắp xếp các phòng theo thứ tự tin nhắn mới nhất lên đầu chuẩn 100%
             serverRooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
-            // Lọc bỏ hoàn toàn các phòng đã bị giải tán (Tombstone SYSTEM:ROOM_CLOSED)
+            // Lọc bỏ hoàn toàn các phòng nhóm đã bị giải tán (Tombstone SYSTEM:ROOM_CLOSED)
             const activeServerRooms = serverRooms.filter((r) => {
+              if (r.isDirect) return true // Luôn giữ lại toàn bộ cuộc trò chuyện 1-1
               if (r.isClosed) return false
               const lastMsg = r.messages?.[r.messages.length - 1]
               const preview = r.preview || ''
@@ -1329,27 +1330,26 @@ class ChatService {
   }
 
   /**
-   * Xóa một cuộc trò chuyện bất kỳ (cả nhóm lẫn 1-1) bằng Tombstone System Message
+   * Giải tán / Xóa phòng nhóm bằng Tombstone System Message
    * Lưu trên Wazo server, các thiết bị khi tải phòng sẽ tự động ẩn phòng đã đóng
-   * @param {string} roomId - UUID phòng chat
+   * CHỈ áp dụng cho phòng nhóm (!isDirect), bảo toàn tuyệt đối kênh liên lạc 1-1
+   * @param {string} roomId - UUID phòng chat nhóm
    */
   async deleteRoom(roomId) {
     const room = (this.rooms || []).find((r) => r.id === roomId)
-    if (!room) return false
+    if (!room || room.isDirect) return false
 
     const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
-    const roomTitle = room.title || (room.isDirect ? 'Cuộc trò chuyện' : 'Nhóm thảo luận')
-    const tombstoneMsg = room.isDirect
-      ? `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Cuộc trò chuyện này đã kết thúc.`
-      : `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.`
+    const roomTitle = room.title || 'Nhóm thảo luận'
+    const tombstoneMsg = `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.`
 
     try {
       await this.sendMessage(roomId, tombstoneMsg, 'Hệ thống')
     } catch (e) {
-      logger.warn('CHAT', `Lỗi gửi tombstone đóng cuộc trò chuyện: ${e.message}`)
+      logger.warn('CHAT', `Lỗi gửi tombstone giải tán nhóm: ${e.message}`)
     }
 
-    // Ẩn phòng ngay lập tức khỏi RAM
+    // Ẩn phòng nhóm ngay lập tức khỏi RAM
     this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
     if (this.activeRoomId === roomId) {
       this.setActiveRoomId(null)
@@ -1363,18 +1363,18 @@ class ChatService {
   }
 
   /**
-   * Xóa đồng loạt nhiều cuộc trò chuyện (Batch Room Deletion)
-   * @param {string[]} roomIds - Danh sách UUID phòng chat cần xóa
+   * Xóa / Giải tán đồng loạt nhiều phòng nhóm (Batch Group Rooms Deletion)
+   * @param {string[]} roomIds - Danh sách UUID phòng chat nhóm cần xóa
    */
   async deleteMultipleRooms(roomIds) {
     if (!Array.isArray(roomIds) || roomIds.length === 0) return 0
     let count = 0
     for (const rId of roomIds) {
       try {
-        await this.deleteRoom(rId)
-        count++
+        const ok = await this.deleteRoom(rId)
+        if (ok) count++
       } catch (e) {
-        logger.warn('CHAT', `Lỗi xóa phòng [${rId}]:`, e.message)
+        logger.warn('CHAT', `Lỗi xóa phòng nhóm [${rId}]:`, e.message)
       }
     }
     return count
@@ -1386,51 +1386,6 @@ class ChatService {
    */
   async deleteGroupRoom(roomId) {
     return this.deleteRoom(roomId)
-  }
-
-  /**
-   * Xóa một hoặc nhiều tin nhắn bằng Tombstone System Message
-   * Lọc bỏ hoàn toàn các tin nhắn có ID bị xóa khi hiển thị lịch sử chat
-   * @param {string} roomId
-   * @param {string|string[]} messageIds
-   */
-  async deleteMessages(roomId, messageIds) {
-    const ids = Array.isArray(messageIds) ? messageIds : [messageIds]
-    const validIds = ids.filter(Boolean)
-    if (validIds.length === 0) return
-
-    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
-    const idsStr = validIds.join(',')
-    const delText = `🚫 [SYSTEM:MSG_DELETED:ids="${idsStr}"|by="${myUserUuid}"]`
-
-    // Xóa ngay lập tức trên UI/RAM (Optimistic 0ms)
-    const room = (this.rooms || []).find((r) => r.id === roomId)
-    if (room && room.messages) {
-      room.messages = room.messages.filter((m) => !validIds.includes(m.id))
-      if (room.messages.length > 0) {
-        const last = room.messages[room.messages.length - 1]
-        room.preview = last.text
-        room.time = last.time
-        room.updatedAt = last.timestamp
-      } else {
-        room.preview = 'Cuộc trò chuyện'
-      }
-      this.saveRooms()
-    }
-
-    try {
-      await this.sendMessage(roomId, delText, 'Hệ thống')
-    } catch (e) {
-      logger.warn('CHAT', `Lỗi khi gửi tombstone xóa tin nhắn: ${e.message}`)
-    }
-
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('smartcall-messages-deleted', {
-          detail: { roomId, deletedIds: validIds },
-        }),
-      )
-    }
   }
 
   /**

@@ -2882,29 +2882,24 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 2. Chi tiết Triển khai Kỹ thuật
 - `src/services/chatService.js`:
-  - Mở rộng hàm `deleteRoom(roomId)`: Xử lý đóng và giải tán cả cuộc trò chuyện trực tiếp 1-1 (`isDirect`) lẫn phòng nhóm (`!isDirect`) bằng thông điệp Tombstone `🚫 [SYSTEM:ROOM_CLOSED]`. Cập nhật mảng `this.rooms`, lưu RAM và phát sự kiện `smartcall-room-closed` cùng `smartcall-rooms-updated`.
-  - Bổ sung hàm `deleteMultipleRooms(roomIds)`: Nhận mảng UUID phòng chat, tuần tự gửi Tombstone đóng từng phòng và trả về số lượng phòng đã xóa thành công.
-  - Phân định rõ ràng cơ chế phòng 1-1 vs phòng nhóm:
-    - **Phòng nhóm**: Khi giải tán bằng Tombstone `[SYSTEM:ROOM_CLOSED]`, phòng cũ bị đóng vĩnh viễn cho toàn bộ thành viên. Khi tạo nhóm mới với cùng danh sách thành viên, Wazo Chatd server cấp một Room UUID mới tinh, hoạt động độc lập và bắt đầu lại từ đầu.
-    - **Cuộc trò chuyện 1-1**: Khi xóa, phòng được ẩn khỏi danh sách tin nhắn. Khi người dùng từ Danh bạ mở lại để nhắn tin, phòng 1-1 được phục hồi (`isClosed = false`), tin nhắn mới gửi đi sẽ tự động kích hoạt phòng xuất hiện trở lại trên danh sách tin nhắn của cả hai bên.
-  - Giữ lại `deleteGroupRoom(roomId)` làm alias trỏ về `deleteRoom(roomId)` để tương thích ngược 100%.
+  - Khóa chặt hàm `deleteRoom(roomId)`: Chỉ cho phép giải tán phòng nhóm (`!room.isDirect`). Nếu là cuộc trò chuyện 1-1 (`room.isDirect === true`), hệ thống chặn lại và không cho xóa, bảo toàn 100% tính toàn vẹn kênh liên lạc danh bạ nội bộ.
+  - Khi giải tán nhóm: Gửi Tombstone `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.` lên máy chủ Wazo Chatd, dọn phòng khỏi RAM và phát sự kiện `smartcall-room-closed`.
+  - Hàm `loadAllRooms()`: Đảm bảo các cuộc trò chuyện 1-1 luôn được giữ lại (`if (r.isDirect) return true`), chỉ lọc ẩn các phòng nhóm đã bị giải tán.
+  - Bổ sung hàm `deleteMultipleRooms(roomIds)`: Giải tán đồng loạt nhiều nhóm đã chọn.
+  - Dọn dẹp triệt để mã nguồn không dùng tới: Gỡ bỏ hàm `deleteMessages` cũ không còn sử dụng.
 - `src/views/MessagesView.vue`:
   - **Cột Danh sách Cuộc trò chuyện (`chat-rooms-col`)**:
-    - Chuẩn hóa header `rooms-header`: Sử dụng icon vector SVG cho nút "Chọn / Hủy" (`btn-manage-rooms`) và nút "Tạo nhóm" (`btn-new-room`), đồng bộ chiều cao 30px và hiệu ứng hover tinh tế, triệt tiêu hoàn toàn emoji `☑️` thô lệch.
-    - Thêm `align-items: center;` vào `.room-item`, triệt tiêu hoàn toàn lỗi flexbox kéo giãn nút thùng rác thành hình chữ nhật đứng.
-    - Chuẩn hóa nút xóa nhanh hover (`btn-delete-room-hover`): Thiết kế dạng icon button vuông bo góc 28x28px tinh gọn, sử dụng SVG vector thùng rác sắc nét, ẩn mặc định và chỉ hiện mờ khi hover dòng chat, hover trực tiếp vào nút đổi nền đỏ nhạt (`#fee2e2`) và icon màu đỏ (`#ef4444`).
-    - Thêm thanh công cụ `room-select-toolbar` khi `isRoomSelectMode = true` với thông tin số lượng, nút "Tất cả / Bỏ chọn" và nút "Xóa (N)".
-    - Thêm checkbox `select-room-checkbox` vào từng `room-item` khi ở chế độ chọn; Thêm hiệu ứng highlight nền xanh nhạt `.is-selected`.
+    - Nút xóa nhanh hover (`btn-delete-room-hover`): **Chỉ hiển thị trên các phòng nhóm (`!room.isDirect`)**. Các cuộc trò chuyện 1-1 hoàn toàn không có nút xóa.
+    - Chế độ chọn ("Chọn / Hủy"): Chỉ xuất hiện khi có ít nhất 1 phòng nhóm (`groupRoomsCount > 0`). Khi kích hoạt, chỉ hiển thị checkbox và cho phép chọn các phòng nhóm cần giải tán.
+    - Nút "Chọn / Hủy" (`btn-manage-rooms`) và "Tạo nhóm" (`btn-new-room`): Chuẩn hóa 100% bằng SVG vector, chiều cao 30px, bo góc 6px tinh tế.
+    - Thêm `align-items: center;` vào `.room-item`, triệt tiêu hoàn toàn lỗi flexbox kéo giãn nút thùng rác.
+    - Nút xóa nhanh hover: Icon button 28x28px hình vuông bo góc, SVG thùng rác thanh mảnh sắc nét, đổi nền đỏ nhạt (`#fee2e2`) và icon đỏ (`#ef4444`) khi hover.
+    - Dọn dẹp mã nguồn không dùng: Gỡ bỏ sự kiện và hàm lắng nghe `onMessagesDeleted`.
   - **Khung Chat Bên phải (`chat-main-col`)**:
-    - Gỡ bỏ hoàn toàn chế độ chọn tin nhắn trong khung chat, giữ nguyên các nút gọi thoại, gọi video, thành viên và ghim tin nhắn.
-  - **Script setup**:
-    - Khởi tạo các reactive state: `isRoomSelectMode`, `selectedRoomIds`, `isDeletingRooms`.
-    - Thêm các hàm xử lý: `toggleRoomSelectMode`, `toggleSelectRoom`, `selectAllRooms`, `handleDeleteSingleRoom`, `handleDeleteSelectedRooms`.
-    - Ngăn chặn mở phòng chat khi đang ở chế độ chọn (`selectRoom`).
-- `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể (Bước 53) và ghi chép chi tiết kỹ thuật.
+    - Giao diện tinh gọn, tập trung đàm thoại và gọi thoại/video.
 
 ### 3. Kết quả Kiểm tra Biên dịch:
-- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `747ms`.
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `478ms`.
 
 
 
