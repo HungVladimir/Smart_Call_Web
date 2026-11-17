@@ -1324,22 +1324,24 @@ class ChatService {
   }
 
   /**
-   * Giải tán / Xóa phòng nhóm bằng Tombstone System Message
+   * Xóa một cuộc trò chuyện bất kỳ (cả nhóm lẫn 1-1) bằng Tombstone System Message
    * Lưu trên Wazo server, các thiết bị khi tải phòng sẽ tự động ẩn phòng đã đóng
    * @param {string} roomId - UUID phòng chat
    */
-  async deleteGroupRoom(roomId) {
+  async deleteRoom(roomId) {
     const room = (this.rooms || []).find((r) => r.id === roomId)
-    if (!room) throw new Error('Không tìm thấy phòng chat')
+    if (!room) return false
 
     const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
-    const roomTitle = room.title || 'Nhóm thảo luận'
-    const tombstoneMsg = `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.`
+    const roomTitle = room.title || (room.isDirect ? 'Cuộc trò chuyện' : 'Nhóm thảo luận')
+    const tombstoneMsg = room.isDirect
+      ? `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Cuộc trò chuyện này đã kết thúc.`
+      : `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.`
 
     try {
       await this.sendMessage(roomId, tombstoneMsg, 'Hệ thống')
     } catch (e) {
-      logger.warn('CHAT', `Lỗi gửi tombstone giải tán phòng: ${e.message}`)
+      logger.warn('CHAT', `Lỗi gửi tombstone đóng cuộc trò chuyện: ${e.message}`)
     }
 
     // Ẩn phòng ngay lập tức khỏi RAM
@@ -1350,8 +1352,35 @@ class ChatService {
     this.saveRooms()
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
+      window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
     }
     return true
+  }
+
+  /**
+   * Xóa đồng loạt nhiều cuộc trò chuyện (Batch Room Deletion)
+   * @param {string[]} roomIds - Danh sách UUID phòng chat cần xóa
+   */
+  async deleteMultipleRooms(roomIds) {
+    if (!Array.isArray(roomIds) || roomIds.length === 0) return 0
+    let count = 0
+    for (const rId of roomIds) {
+      try {
+        await this.deleteRoom(rId)
+        count++
+      } catch (e) {
+        logger.warn('CHAT', `Lỗi xóa phòng [${rId}]:`, e.message)
+      }
+    }
+    return count
+  }
+
+  /**
+   * Giải tán / Xóa phòng nhóm bằng Tombstone System Message (Hỗ trợ tương thích ngược)
+   * @param {string} roomId - UUID phòng chat
+   */
+  async deleteGroupRoom(roomId) {
+    return this.deleteRoom(roomId)
   }
 
   /**

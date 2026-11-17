@@ -5,7 +5,38 @@
       <div class="chat-rooms-col">
         <div class="rooms-header">
           <h2>Tin nhắn</h2>
-          <button class="btn-new-room" @click="openCreateGroupModal()">+ Tạo nhóm</button>
+          <div class="rooms-header-actions">
+            <button
+              v-if="sortedRooms.length > 0"
+              class="btn-manage-rooms"
+              :class="{ active: isRoomSelectMode }"
+              :title="isRoomSelectMode ? 'Hủy chọn cuộc trò chuyện' : 'Chọn cuộc trò chuyện để xóa'"
+              @click="toggleRoomSelectMode"
+            >
+              {{ isRoomSelectMode ? '✖ Hủy' : '☑️ Chọn' }}
+            </button>
+            <button class="btn-new-room" @click="openCreateGroupModal()">+ Tạo nhóm</button>
+          </div>
+        </div>
+
+        <!-- Thanh công cụ chọn & xóa nhiều cuộc trò chuyện -->
+        <div v-if="isRoomSelectMode" class="room-select-toolbar">
+          <div class="room-select-info">
+            <span>Đã chọn: <strong>{{ selectedRoomIds.length }}</strong>/{{ sortedRooms.length }}</span>
+          </div>
+          <div class="room-select-actions">
+            <button class="btn-select-mini" @click="selectAllRooms">
+              {{ selectedRoomIds.length === sortedRooms.length ? 'Bỏ chọn' : 'Tất cả' }}
+            </button>
+            <button
+              class="btn-select-mini danger"
+              :disabled="selectedRoomIds.length === 0 || isDeletingRooms"
+              @click="handleDeleteSelectedRooms"
+            >
+              <span v-if="isDeletingRooms">⏳ Đang xóa...</span>
+              <span v-else>🗑️ Xóa ({{ selectedRoomIds.length }})</span>
+            </button>
+          </div>
         </div>
 
         <div v-if="isLoadingRooms" class="rooms-loading">
@@ -21,9 +52,23 @@
             v-for="room in sortedRooms"
             :key="room.id"
             class="room-item"
-            :class="{ active: currentRoom && currentRoom.id === room.id }"
-            @click="selectRoom(room)"
+            :class="{
+              active: currentRoom && currentRoom.id === room.id,
+              'in-select-mode': isRoomSelectMode,
+              'is-selected': selectedRoomIds.includes(room.id)
+            }"
+            @click="isRoomSelectMode ? toggleSelectRoom(room.id) : selectRoom(room)"
           >
+            <div v-if="isRoomSelectMode" class="room-select-check" @click.stop>
+              <input
+                type="checkbox"
+                class="select-room-checkbox"
+                :value="room.id"
+                :checked="selectedRoomIds.includes(room.id)"
+                @change="toggleSelectRoom(room.id)"
+              />
+            </div>
+
             <div
               class="avatar-sm"
               :class="{ 'group-avatar': !room.isDirect }"
@@ -50,6 +95,16 @@
                 <span v-if="room.unread" class="badge-unread">{{ room.unread }}</span>
               </div>
             </div>
+
+            <!-- Nút xóa nhanh 1 cuộc trò chuyện khi hover ở chế độ thường -->
+            <button
+              v-if="!isRoomSelectMode"
+              class="btn-delete-room-hover"
+              title="Xóa cuộc trò chuyện này"
+              @click.stop="handleDeleteSingleRoom(room)"
+            >
+              🗑️
+            </button>
           </div>
         </div>
       </div>
@@ -91,38 +146,7 @@
                 <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" />
               </svg>
             </button>
-            <button
-              class="btn-manage-members"
-              :class="{ active: isSelectMode }"
-              :title="isSelectMode ? 'Hủy chế độ chọn tin nhắn' : 'Chọn nhiều tin nhắn để xóa'"
-              @click="toggleSelectMode"
-            >
-              {{ isSelectMode ? '✖ Hủy chọn' : '☑️ Chọn tin' }}
-            </button>
-            <button class="btn-manage-members" @click="openMemberModal">👥 Thành viên</button>
-          </div>
-        </div>
-
-        <!-- Thanh công cụ chọn & xóa nhiều tin nhắn -->
-        <div v-if="isSelectMode" class="select-mode-toolbar">
-          <div class="select-mode-info">
-            <span>Đã chọn: <strong>{{ selectedMsgIds.length }}</strong> tin nhắn</span>
-          </div>
-          <div class="select-mode-actions">
-            <button class="btn-select-action" @click="selectAllMessages">
-              {{ (currentRoom.messages && selectedMsgIds.length === currentRoom.messages.length) ? 'Bỏ chọn tất cả' : 'Chọn tất cả' }}
-            </button>
-            <button
-              class="btn-select-action danger"
-              :disabled="selectedMsgIds.length === 0 || isDeletingMessages"
-              @click="handleDeleteSelectedMessages"
-            >
-              <span v-if="isDeletingMessages">⏳ Đang xóa...</span>
-              <span v-else>🗑️ Xóa đã chọn ({{ selectedMsgIds.length }})</span>
-            </button>
-            <button class="btn-select-action cancel" @click="toggleSelectMode">
-              Hủy
-            </button>
+            <button v-if="!currentRoom.isDirect" class="btn-manage-members" @click="openMemberModal">👥 Thành viên</button>
           </div>
         </div>
 
@@ -149,21 +173,8 @@
               v-for="msg in currentRoom.messages"
               :key="msg.id"
               class="msg-bubble-wrap"
-              :class="[
-                (msg.sender === 'mine' || msg.sender === 'me') ? 'mine' : 'theirs',
-                { 'in-select-mode': isSelectMode, 'is-selected': selectedMsgIds.includes(msg.id) }
-              ]"
-              @click="isSelectMode ? toggleSelectMessage(msg.id) : null"
+              :class="(msg.sender === 'mine' || msg.sender === 'me') ? 'mine' : 'theirs'"
             >
-              <div v-if="isSelectMode" class="msg-select-check" @click.stop>
-                <input
-                  type="checkbox"
-                  class="select-msg-checkbox"
-                  :value="msg.id"
-                  :checked="selectedMsgIds.includes(msg.id)"
-                  @change="toggleSelectMessage(msg.id)"
-                />
-              </div>
               <span class="msg-sender">{{ (msg.sender === 'mine' || msg.sender === 'me') ? 'Tôi' : msg.senderName }}</span>
               <div class="msg-bubble">
                 {{ msg.text }}
@@ -194,13 +205,6 @@
                   @click.stop="pinMessage(msg)"
                 >
                   📌 Ghim
-                </button>
-                <button
-                  class="btn-pin-msg btn-delete-msg"
-                  title="Xóa tin nhắn này"
-                  @click.stop="handleDeleteSingleMessage(msg)"
-                >
-                  🗑️ Xóa
                 </button>
               </div>
             </div>
@@ -504,9 +508,9 @@ const msgContainerRef = ref(null)
 const isLoadingRooms = ref(false)
 const isLoadingMessages = ref(false)
 
-const isSelectMode = ref(false)
-const selectedMsgIds = ref([])
-const isDeletingMessages = ref(false)
+const isRoomSelectMode = ref(false)
+const selectedRoomIds = ref([])
+const isDeletingRooms = ref(false)
 const isDeletingGroup = ref(false)
 
 // Trạng thái phòng bị giải tán qua Tombstone SYSTEM:ROOM_CLOSED
@@ -521,73 +525,77 @@ const isRoomClosed = computed(() => {
   return Boolean(lastMsg?.text && lastMsg.text.includes('[SYSTEM:ROOM_CLOSED'))
 })
 
-const toggleSelectMode = () => {
-  isSelectMode.value = !isSelectMode.value
-  selectedMsgIds.value = []
+const toggleRoomSelectMode = () => {
+  isRoomSelectMode.value = !isRoomSelectMode.value
+  selectedRoomIds.value = []
 }
 
-const toggleSelectMessage = (msgId) => {
-  const idx = selectedMsgIds.value.indexOf(msgId)
+const toggleSelectRoom = (roomId) => {
+  const idx = selectedRoomIds.value.indexOf(roomId)
   if (idx > -1) {
-    selectedMsgIds.value.splice(idx, 1)
+    selectedRoomIds.value.splice(idx, 1)
   } else {
-    selectedMsgIds.value.push(msgId)
+    selectedRoomIds.value.push(roomId)
   }
 }
 
-const selectAllMessages = () => {
-  if (!currentRoom.value?.messages) return
-  if (selectedMsgIds.value.length === currentRoom.value.messages.length) {
-    selectedMsgIds.value = []
+const selectAllRooms = () => {
+  if (selectedRoomIds.value.length === sortedRooms.value.length) {
+    selectedRoomIds.value = []
   } else {
-    selectedMsgIds.value = currentRoom.value.messages.map((m) => m.id)
+    selectedRoomIds.value = sortedRooms.value.map((r) => r.id)
   }
 }
 
-const handleDeleteSingleMessage = async (msg) => {
-  if (!currentRoom.value || !msg) return
-  if (!confirm('Bạn có chắc chắn muốn xóa tin nhắn này không?')) return
+const handleDeleteSingleRoom = async (room) => {
+  if (!room) return
+  const title = room.title || 'cuộc trò chuyện này'
+  if (!confirm(`Bạn có chắc chắn muốn xóa "${title}" không? Cuộc trò chuyện này sẽ bị đóng và ẩn hoàn toàn trên toàn bộ hệ thống.`)) {
+    return
+  }
 
   try {
-    await chatService.deleteMessages(currentRoom.value.id, [msg.id])
-    if (currentRoom.value.messages) {
-      currentRoom.value.messages = currentRoom.value.messages.filter((m) => m.id !== msg.id)
+    await chatService.deleteRoom(room.id)
+    if (currentRoom.value && currentRoom.value.id === room.id) {
+      currentRoom.value = null
     }
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: '🗑️ Đã xóa tin nhắn thành công!', type: 'success' },
+        detail: { message: `🗑️ Đã xóa cuộc trò chuyện "${title}" thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
-    alert(`Lỗi khi xóa tin nhắn: ${err.message}`)
+    alert(`Lỗi khi xóa cuộc trò chuyện: ${err.message}`)
   }
 }
 
-const handleDeleteSelectedMessages = async () => {
-  if (!currentRoom.value || selectedMsgIds.value.length === 0) return
-  const count = selectedMsgIds.value.length
-  if (!confirm(`Bạn có chắc chắn muốn xóa ${count} tin nhắn đã chọn không?`)) return
+const handleDeleteSelectedRooms = async () => {
+  if (selectedRoomIds.value.length === 0) return
+  const count = selectedRoomIds.value.length
+  if (!confirm(`Bạn có chắc chắn muốn xóa ${count} cuộc trò chuyện đã chọn không? Toàn bộ các cuộc trò chuyện này sẽ bị đóng và ẩn vĩnh viễn trên toàn bộ hệ thống.`)) {
+    return
+  }
 
-  isDeletingMessages.value = true
+  isDeletingRooms.value = true
   try {
-    const idsToDelete = [...selectedMsgIds.value]
-    await chatService.deleteMessages(currentRoom.value.id, idsToDelete)
-    if (currentRoom.value.messages) {
-      currentRoom.value.messages = currentRoom.value.messages.filter((m) => !idsToDelete.includes(m.id))
+    const idsToDelete = [...selectedRoomIds.value]
+    await chatService.deleteMultipleRooms(idsToDelete)
+    if (currentRoom.value && idsToDelete.includes(currentRoom.value.id)) {
+      currentRoom.value = null
     }
-    selectedMsgIds.value = []
-    isSelectMode.value = false
+    selectedRoomIds.value = []
+    isRoomSelectMode.value = false
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🗑️ Đã xóa ${count} tin nhắn thành công!`, type: 'success' },
+        detail: { message: `🗑️ Đã xóa ${count} cuộc trò chuyện thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
-    alert(`Lỗi khi xóa tin nhắn: ${err.message}`)
+    alert(`Lỗi khi xóa cuộc trò chuyện: ${err.message}`)
   } finally {
-    isDeletingMessages.value = false
+    isDeletingRooms.value = false
   }
 }
 
@@ -783,9 +791,8 @@ const loadRooms = async () => {
 }
 
 const selectRoom = async (room) => {
+  if (isRoomSelectMode.value) return
   currentRoom.value = room
-  isSelectMode.value = false
-  selectedMsgIds.value = []
   room.unread = 0
   chatService.setActiveRoomId(room.id)
   chatService.saveRooms()
@@ -2398,106 +2405,139 @@ const getRoomStatusClass = (room) => {
   }
 }
 
-/* Toolbar & Select Mode Styles */
-.select-mode-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 16px;
-  background: #f1f5f9;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 0.82rem;
-  color: #334155;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.select-mode-info {
+/* Toolbar & Select Mode for Conversations (Cột danh sách phòng bên trái) */
+.rooms-header-actions {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.select-mode-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-select-action {
-  padding: 5px 12px;
-  font-size: 0.8rem;
-  font-weight: 500;
-  border: 1px solid #cbd5e1;
+.btn-manage-rooms {
   background: #ffffff;
   color: #475569;
+  border: 1px solid #cbd5e1;
+  padding: 5px 10px;
   border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.btn-select-action:hover {
-  background: #f8fafc;
+.btn-manage-rooms:hover {
+  background: #f1f5f9;
   border-color: #94a3b8;
 }
 
-.btn-select-action.danger {
+.btn-manage-rooms.active {
+  background: #e0f2fe;
+  color: #0284c7;
+  border-color: #38bdf8;
+  font-weight: 600;
+}
+
+.room-select-toolbar {
+  padding: 8px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  color: #334155;
+  gap: 8px;
+}
+
+.room-select-info {
+  display: flex;
+  align-items: center;
+}
+
+.room-select-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-select-mini {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-select-mini:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.btn-select-mini.danger {
   background: #ef4444;
   color: #ffffff;
   border-color: #dc2626;
   font-weight: 600;
 }
 
-.btn-select-action.danger:hover:not(:disabled) {
+.btn-select-mini.danger:hover:not(:disabled) {
   background: #dc2626;
 }
 
-.btn-select-action.danger:disabled {
+.btn-select-mini.danger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.btn-select-action.cancel {
-  background: #e2e8f0;
-  color: #64748b;
-  border-color: #cbd5e1;
+.room-item.in-select-mode {
+  user-select: none;
 }
 
-.msg-bubble-wrap.in-select-mode {
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 8px;
-  transition: background 0.15s;
+.room-item.is-selected {
+  background: #e0f2fe !important;
+  border-left: 3px solid #0284c7;
 }
 
-.msg-bubble-wrap.in-select-mode:hover {
-  background: rgba(2, 132, 199, 0.05);
-}
-
-.msg-bubble-wrap.is-selected {
-  background: rgba(2, 132, 199, 0.12) !important;
-}
-
-.msg-select-check {
+.room-select-check {
   display: flex;
   align-items: center;
-  margin-right: 8px;
+  justify-content: center;
+  margin-right: 2px;
 }
 
-.select-msg-checkbox {
+.select-room-checkbox {
   width: 16px;
   height: 16px;
   cursor: pointer;
   accent-color: #0284c7;
 }
 
-.btn-delete-msg {
-  color: #ef4444 !important;
-  opacity: 0.7;
+.btn-delete-room-hover {
+  background: transparent;
+  border: none;
+  font-size: 0.95rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+  padding: 4px;
+  border-radius: 4px;
+  margin-left: 4px;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.btn-delete-msg:hover {
-  opacity: 1;
+.room-item:hover .btn-delete-room-hover {
+  opacity: 0.65;
+}
+
+.btn-delete-room-hover:hover {
+  opacity: 1 !important;
+  transform: scale(1.15);
 }
 
 .btn-delete-group-room {

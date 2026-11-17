@@ -66,6 +66,7 @@
 | **50** | Khắc phục Nhảy Nhầm Phòng Nhóm từ Danh bạ, Nhận diện Android Presence & Chuyển tiếp Tin nhắn Nhóm Đối xứng | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khóa chặt điều kiện `r.isDirect && r.members.length === 2` khi mở chat từ Danh bạ; Nhận diện từ khóa `smartcall-android` trong presence status bật cờ `isMobileApp` và hiện icon 📱; Chuyển tiếp tin nhắn kèm FWD Metadata giải mã đối xứng đa chiều trên Wazo server (A/B/C đăng nhập đều thấy đúng tin của mình màu xanh bên phải và tin đồng nghiệp bên trái). |
 | **51** | Triển khai Thu hồi Phiên Thiết bị cũ (Session Revocation) Chuẩn Wazo Auth API Đối chiếu Android | Tiêu chuẩn chất lượng Mục 7 & 8 GEMINI.md & Wazo Spec | **HOÀN THÀNH** ✅ | Tích hợp 2 API Wazo Auth: `GET /users/{uuid}/sessions` và `DELETE /users/{uuid}/sessions/{session_uuid}`; Tự động xóa các session cũ khi đăng nhập trên Web làm App Mobile bị ngắt token (401) ngay lập tức; Rút ngắn heartbeat kiểm tra token xuống 5 giây để phản ứng tức thì khi App Mobile thu hồi session của Web. |
 | **52** | Khắc phục Triệt để Session Revocation 2 Chiều (Web $\leftrightarrow$ Android), Tab Ngoại tuyến, SVG Icon & Tombstone Xóa Phòng / Tin nhắn | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã nguồn tham chiếu mẫu | **HOÀN THÀNH** ✅ | Gán `Wazo.Auth.setClientId(clientId)` cấp `sessionUuid`, xóa 2 bước Session + Refresh Token theo chuẩn mã tham chiếu mẫu; Thay icon 📱 bằng SVG smartphone sắc nét; Thêm tab thứ 4 ⚪ Ngoại tuyến; Chuẩn hóa tag hệ thống `[SYSTEM:ROOM_RENAME]` đổi tên nhóm; Áp dụng Tombstone `[SYSTEM:ROOM_CLOSED]` giải tán phòng ẩn đồng bộ đa máy; Tính năng chọn & xóa nhiều tin nhắn và xóa nhanh bằng Tombstone `[SYSTEM:MSG_DELETED]`. |
+| **53** | Triển khai Chọn & Xóa Nhiều Cuộc trò chuyện trên Cột Danh sách Tin nhắn (Conversation List) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Di chuyển tính năng chọn và xóa ra ngoài cột danh sách cuộc trò chuyện bên trái (`chat-rooms-col`); Hỗ trợ chọn xóa nhiều cuộc trò chuyện cùng lúc hoặc xóa nhanh 1 cuộc trò chuyện bằng hover; Xóa đồng bộ cả nhóm lẫn 1-1 bằng Tombstone `[SYSTEM:ROOM_CLOSED]` trên Wazo server; Khôi phục giao diện khung chat bên phải tinh gọn. |
 
 ---
 
@@ -2860,6 +2861,48 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `471ms`.
+
+---
+
+## BƯỚC 53: TRIỂN KHAI CHỌN & XÓA NHIỀU CUỘC TRÒ CHUYỆN TRÊN DANH SÁCH TIN NHẮN (CONVERSATION LIST DELETION)
+
+### 1. Bối cảnh và Yêu cầu Nghiệp vụ
+- **Làm rõ yêu cầu từ người dùng**:
+  - Người dùng phản hồi với hình ảnh minh họa thực tế: Yêu cầu quản lý và xóa **cả cuộc trò chuyện** (phòng chat / hội thoại 1-1) trong danh sách bên trái (`chat-rooms-col`), không phải xóa từng tin nhắn riêng lẻ bên trong cuộc trò chuyện (làm rối thanh công cụ và khung chat).
+  - Khôi phục giao diện khung chat bên phải (`chat-main-col`) về trạng thái nguyên bản tinh gọn, loại bỏ thanh công cụ và checkbox chọn tin nhắn bên trong.
+- **Nghiệp vụ chi tiết**:
+  1. Cho phép người dùng bật chế độ quản lý cuộc trò chuyện bằng nút "☑️ Chọn" trên thanh tiêu đề `Tin nhắn` ở cột danh sách phòng bên trái.
+  2. Khi ở chế độ chọn:
+     - Xuất hiện thanh công cụ chọn cuộc trò chuyện (`room-select-toolbar`) hiển thị "Đã chọn: X/Y", nút "Bỏ chọn / Tất cả" và nút nguy hiểm "🗑️ Xóa (X)".
+     - Mỗi mục cuộc trò chuyện (`room-item`) hiển thị checkbox ở đầu để chọn/bỏ chọn. Nhấp vào bất kỳ đâu trên dòng cuộc trò chuyện sẽ đảo trạng thái chọn.
+     - Khi ấn nút xóa: hiển thị hộp thoại xác nhận số lượng cuộc trò chuyện sẽ bị đóng/ẩn vĩnh viễn trên toàn hệ thống.
+  3. Ở chế độ bình thường (không chọn nhiều):
+     - Khi rê chuột (hover) vào bất kỳ cuộc trò chuyện nào trong danh sách, hiển thị nút xóa nhanh 🗑️ ở phía góc phải. Nhấp vào nút này sẽ mở hộp thoại xác nhận xóa riêng cuộc trò chuyện đó.
+  4. Đảm bảo tính nhất quán Server-First: Thao tác xóa cuộc trò chuyện kích hoạt cơ chế Tombstone `🚫 [SYSTEM:ROOM_CLOSED]` lưu trên Wazo Chatd Server, đồng bộ tự động ẩn cuộc trò chuyện này trên toàn bộ thiết bị khi đăng nhập.
+
+### 2. Chi tiết Triển khai Kỹ thuật
+- `src/services/chatService.js`:
+  - Mở rộng hàm `deleteRoom(roomId)`: Xử lý đóng và giải tán cả cuộc trò chuyện trực tiếp 1-1 (`isDirect`) lẫn phòng nhóm (`!isDirect`) bằng thông điệp Tombstone `🚫 [SYSTEM:ROOM_CLOSED]`. Cập nhật mảng `this.rooms`, lưu RAM và phát sự kiện `smartcall-room-closed` cùng `smartcall-rooms-updated`.
+  - Bổ sung hàm `deleteMultipleRooms(roomIds)`: Nhận mảng UUID phòng chat, tuần tự gửi Tombstone đóng từng phòng và trả về số lượng phòng đã xóa thành công.
+  - Giữ lại `deleteGroupRoom(roomId)` làm alias trỏ về `deleteRoom(roomId)` để tương thích ngược 100%.
+- `src/views/MessagesView.vue`:
+  - **Cột Danh sách Cuộc trò chuyện (`chat-rooms-col`)**:
+    - Thêm cụm nút `rooms-header-actions` trên tiêu đề: nút "☑️ Chọn" / "✖ Hủy" (`btn-manage-rooms`) đứng trước nút "+ Tạo nhóm".
+    - Thêm thanh công cụ `room-select-toolbar` khi `isRoomSelectMode = true` với thông tin số lượng, nút "Tất cả / Bỏ chọn" và nút "🗑️ Xóa (N)".
+    - Thêm checkbox `select-room-checkbox` vào từng `room-item` khi ở chế độ chọn; Thêm hiệu ứng highlight nền xanh nhạt `.is-selected`.
+    - Thêm nút xóa nhanh hover `btn-delete-room-hover` khi ở chế độ thường.
+  - **Khung Chat Bên phải (`chat-main-col`)**:
+    - Gỡ bỏ hoàn toàn chế độ chọn tin nhắn trong khung chat, giữ nguyên các nút gọi thoại, gọi video, thành viên và ghim tin nhắn.
+  - **Script setup**:
+    - Khởi tạo các reactive state: `isRoomSelectMode`, `selectedRoomIds`, `isDeletingRooms`.
+    - Thêm các hàm xử lý: `toggleRoomSelectMode`, `toggleSelectRoom`, `selectAllRooms`, `handleDeleteSingleRoom`, `handleDeleteSelectedRooms`.
+    - Ngăn chặn mở phòng chat khi đang ở chế độ chọn (`selectRoom`).
+  - **CSS Scoped**:
+    - Thay thế toàn bộ style chọn tin nhắn cũ bằng hệ thống style hoàn chỉnh cho `rooms-header-actions`, `btn-manage-rooms`, `room-select-toolbar`, `btn-select-mini`, `room-item.in-select-mode`, `room-item.is-selected`, `select-room-checkbox`, `btn-delete-room-hover`.
+- `doc/HUONG_DAN_TRIEN_KHAI_TUNG_BUOC.md`: Cập nhật bảng tổng thể (Bước 53) và ghi chép chi tiết kỹ thuật.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `729ms`.
 
 
 
