@@ -1,8 +1,110 @@
-1. Hiện tại tôi test tính năng logout đang có vấn đề, tôi login ở app trước, sau đó login ở web bằng máy tính, thì ở app không bị out ra, cả 2 vẫn cùng chạy, check lại giúp tôi, và còn hiện tượng tôi đang dùng ở web, bỗng dưng bị thông báo đã đăng nhập chỗ khác trong khi không ai đăng nhập vào,...
-2. Tìm icon khác hiện thị điện thoại giúp tôi, icon giờ đang xấu và lệch quá, thêm 1 tab nữa là offline giúp tôi , giờ sẽ có 4 tab tất cả, yêu thích, online, offline
-3. sau khi xóa 1 người ra khỏi nhóm hoặc thêm nhóm mới, thì nhóm cũ vẫn hiện trong list tin nhắn, có cách nào thêm cờ không, như kiểu khi thêm hoặc xóa thì thêm 1 tin nhắn gửi vào room đó như kiểu nhóm này đã bị xóa, và khi load message thấy nhóm nào có tin nhắn cuối cùng là nhóm bị xóa thì không hiển thị nữa, tương tự với chứ năng delete nhóm , cách đấy có ổn không nhỉ? phân tích giúp tôi, như thế là mọi acc login trên mọi thiêt bị đều sẽ ẩn đi được như xóa thật đúng không?
-4. Đọc lại guide call api giúp tôi, đọc kỹ phần api cho gọi nhóm, bên android họ đã call được gọi nhóm rồi, đầu tiên họ sẽ chọn liên hệ và ấn gọi, ví dụ A gọi cho B và C, thì B và C sẽ nhận cuộc gọi từ A, và do A là máy chủ  nên nếu A ngắt cuộc gọi thì 2 người kia sẽ cũng bị tắt, như kiểu dùng số của A là host ấy, Còn nếu như A gọi cho B và C, và B ấn tắt cuộc gọi thì check thấy 2 người vẫn đang call nên vẫn call tiếp, và history của 2 người kia thì đều hiện thị A gọi tới , số giây , time thì tùy từng máy nghe bao lâu. Nhưng mình hoàn toàn có thể sửa history custom thành cuộc gọi nhóm gồm ABC,....
 
-Và tôi đã cũng có toàn bộ prj bên android, tôi cũng sẽ gửi cho để refer, hãy đọc thật kỹ prj.
-Còn về phần call nhóm và login bên app sẽ tập trung và các class LoginActivity, InCallActivity, WazoSipCallManager, WazoApiService thì phải, 
-File text chứa full prj android tôi đã chưa thành dạng bậc thang theo từng level prj, do nó copy vào text nên sẽ phải tự động nhận diện . tôi sẽ gửi file ở câu sau
+Tôi vừa test trên công ty thì đang gặp các vấn đề như sau:
+1. Cuộc gọi nhóm đang không hoạt động như ý, tôi ấn gọi cho 2 người, A gọi cho B, C. Lúc đầu A hiện Cuộc gọi nhóm (3 người), sau đó thì tắt luôn, 2 bên kia cũng chưa hiện thị cuộc gọi chưa ấn nghe đã tắt luôn, check xem sai ở đâu, tại sao bên android lại call được, khác nhau ở đâu. tôi sẽ gửi log bên dưới
+2. Tôi vừa thay đổi hàm setPresence trong WazoService đoạn bắn status thành status: `smartcall-web-${statusText}` || (state === 'available' ? 'Sẵn sàng' : 'Bận'), để bên android get được smartcall-web để đăng xuất.
+3. Tôi test thử tính năng xóa cuộc trò chuyện nhóm, ví dụ tôi tạo nhóm 3 người ABC, sau đó nhắn tin rồi xóa nhóm, sau đó tạo lại nhóm 3 người ABC thì nó lại hiện lại cuộc trò chuyện cũ với tin nhắn cũ chứ không phải nhóm mới.
+4. Ở phần danh bạ, gọi nhóm thì chỉ hiện thị những người đang online giúp tôi, vì call không call được cho người offline đúng không? nên là bỏ cái chọn trực tuyến đi, và thay vào đó chỉ hiện thị danh sách đang online  gioonsdg như bên online giúp tôi
+
+
+09:55:17.104
+[API]
+Đã đồng bộ Presence "available" lên máy chủ Wazo
+09:55:17.094
+[API]
+Đã đồng bộ Presence "available" lên máy chủ Wazo
+09:55:17.083
+[API]
+Đã đồng bộ Presence "available" lên máy chủ Wazo
+09:55:17.056
+[API]
+Đã đồng bộ Presence "available" lên máy chủ Wazo
+09:55:17.026
+[API]
+Đã đồng bộ Presence "available" lên máy chủ Wazo
+09:55:16.991
+[API]
+Cập nhật Presence: state=available, status=sess_1794970267417_tu3mz-smartcall-web
+09:55:16.991
+[CALL]
+🚫 Sự kiện Wazo: Cuộc gọi bị từ chối (ON_CALL_REJECTED)
+09:55:16.989
+[API]
+Cập nhật Presence: state=available, status=sess_1794970267417_tu3mz-smartcall-web
+09:55:16.988
+[CALL]
+⏹️ Sự kiện Wazo: Cuộc gọi đã kết thúc (ON_CALL_ENDED)
+09:55:16.980
+[API]
+Cập nhật Presence: state=available, status=sess_1794970267417_tu3mz-smartcall-web
+09:55:16.979
+[CALL]
+🚫 Sự kiện Wazo: Cuộc gọi bị từ chối (ON_CALL_REJECTED)
+09:55:16.976
+[API]
+Cập nhật Presence: state=available, status=sess_1794970267417_tu3mz-smartcall-web
+09:55:16.976
+[CALL]
+⏹️ Sự kiện Wazo: Cuộc gọi đã kết thúc (ON_CALL_ENDED)
+09:55:16.955
+[API]
+Cập nhật Presence: state=available, status=sess_1794970267417_tu3mz-smartcall-web
+09:55:16.955
+[AUDIO]
+⏹️ Đã dừng chuông chờ cuộc gọi đi (Ringback Tone dừng hoàn toàn)
+09:55:16.954
+[CALL]
+⏹️ Sự kiện Wazo: Cuộc gọi đã kết thúc (ON_CALL_ENDED)
+09:55:15.261
+[CALL]
+🔔 Sự kiện Wazo: Đường dây đang đổ chuông (ON_PROGRESS / 180 Ringing)
+09:55:15.254
+[CALL]
+🔔 Sự kiện Wazo: Đường dây đang đổ chuông (ON_PROGRESS / 180 Ringing)
+09:55:15.217
+[CALL]
+Tạo Ad-hoc Conference thất bại (HTTP 400)
+09:55:15.183
+[CALL]
+Tạo Ad-hoc Conference với Host [1794970514.1519] và 2 nhánh...
+09:55:15.182
+[CALL]
+Đồng bộ Ad-hoc Conference từ 3 cuộc gọi active trên Wazo Calld
+09:55:14.550
+[CALL]
+🔔 Sự kiện Wazo: Đường dây đang đổ chuông (ON_PROGRESS / 180 Ringing)
+09:55:13.976
+[API]
+Đã đồng bộ Presence "unavailable" lên máy chủ Wazo
+09:55:13.947
+[CALL]
+Đang gửi tín hiệu gọi nhánh thành viên: 1001...
+09:55:13.944
+[CALL]
+Đang gửi tín hiệu gọi nhánh thành viên: 1024...
+09:55:13.943
+[API]
+Cập nhật Presence: state=unavailable, status=Đang gọi nhóm [GROUP:1112:1112,1007,1024,1001]-smartcall-web
+09:55:13.943
+[CALL]
+Mời thêm thành viên vào nhóm: 1024, 1001
+09:55:13.287
+[API]
+Đã đồng bộ Presence "unavailable" lên máy chủ Wazo
+09:55:13.240
+[API]
+Cập nhật Presence: state=unavailable, status=Đang gọi nhóm [GROUP:1112:1112,1007,1024,1001]-smartcall-web
+09:55:13.240
+[CALL]
+Tín hiệu cuộc gọi tới 1007 đã được phát đi. Session ID: veukkb695f218u6aqksd
+09:55:13.236
+[CALL]
+📞 Bắt đầu gọi tới số máy lẻ: 1007 (Audio-only WebRTC)...
+09:55:13.236
+[AUDIO]
+🎵 Bắt đầu phát chuông chờ cuộc gọi đi (Ringback Tone: Tút... Tút...)
+09:55:13.229
+[CALL]
+👥 Bắt đầu gọi nhóm (Ad-hoc) tới 3 thành viên: 1007, 1024, 1001
+09:55:13.229
+[CALL]
+Khởi tạo cuộc gọi nhóm từ Danh bạ tới 3 người: 1007, 1024, 1001

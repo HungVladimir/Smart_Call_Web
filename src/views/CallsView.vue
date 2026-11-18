@@ -436,6 +436,7 @@
                 <span v-else-if="tab.id === 'online'" class="tab-badge badge-online">{{ onlineCount }}</span>
                 <span v-else-if="tab.id === 'offline'" class="tab-badge badge-offline">{{ offlineCount }}</span>
                 <span v-else-if="tab.id === 'department'" class="tab-badge badge-dept">{{ departmentTabCount }}</span>
+                <span v-else-if="tab.id === 'group_call'" class="tab-badge badge-group">{{ groupCallOnlineCount }}</span>
               </button>
             </div>
 
@@ -519,14 +520,6 @@
                 </span>
                 <div class="action-buttons-group">
                   <button
-                    class="btn-action-pill btn-select-online"
-                    @click="selectAllOnlineContacts"
-                    title="Chọn nhanh tất cả người đang trực tuyến"
-                  >
-                    <span class="pill-dot online"></span>
-                    <span>Chọn trực tuyến</span>
-                  </button>
-                  <button
                     v-if="selectedGroupExtensions.length > 0"
                     class="btn-action-pill btn-deselect-group"
                     @click="clearGroupSelection"
@@ -575,7 +568,7 @@
                 Chưa có nhân viên nào thuộc bộ phận {{ selectedDepartment === 'all' ? 'này' : `"${selectedDepartment}"` }}.
               </p>
               <p v-else-if="activeTab === 'group_call'">
-                Chưa có liên hệ nào khả dụng để gọi nhóm.
+                Hiện không có đồng nghiệp nào đang trực tuyến để gọi nhóm.
               </p>
               <p v-else-if="searchTerm">
                 Không tìm thấy nhân viên nào phù hợp với "{{ searchTerm }}".
@@ -1177,12 +1170,20 @@ const resetTabVisibility = () => {
   nextTick(() => checkScrollButtons())
 }
 
+const groupCallOnlineCount = computed(() => {
+  const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
+  return contacts.value.filter(
+    (c) => c.status !== 'offline' && c.status !== 'unavailable' && String(c.number || '').trim() !== myExt,
+  ).length
+})
+
 const getTabPreviewCount = (id) => {
   if (id === 'all') return contacts.value.length
   if (id === 'favorites') return favoriteCount.value
   if (id === 'online') return onlineCount.value
   if (id === 'offline') return offlineCount.value
   if (id === 'department') return departmentTabCount.value
+  if (id === 'group_call') return groupCallOnlineCount.value
   return null
 }
 
@@ -1327,9 +1328,11 @@ const filteredContacts = computed(() => {
       list = list.filter((c) => (c.dept || '').trim().toLowerCase() === targetDept)
     }
   } else if (activeTab.value === 'group_call') {
-    // Ẩn chính mình khỏi danh sách chọn gọi nhóm
+    // Chỉ hiển thị các liên hệ đang trực tuyến (Online) và ẩn chính mình
     const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
-    list = list.filter((c) => String(c.number || '').trim() !== myExt)
+    list = list.filter(
+      (c) => c.status !== 'offline' && c.status !== 'unavailable' && String(c.number || '').trim() !== myExt,
+    )
   }
   const q = searchTerm.value.trim()
   if (!q) return list
@@ -2723,11 +2726,13 @@ onUnmounted(() => {
   color: #334155;
 }
 
-.tab-badge.badge-dept {
+.tab-badge.badge-dept,
+.tab-badge.badge-group {
   background: #eff6ff;
   color: #1d4ed8;
 }
-.panel-tab-btn.active .tab-badge.badge-dept {
+.panel-tab-btn.active .tab-badge.badge-dept,
+.panel-tab-btn.active .tab-badge.badge-group {
   background: #2563eb;
   color: #ffffff;
 }

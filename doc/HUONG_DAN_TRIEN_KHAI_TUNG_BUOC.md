@@ -3244,6 +3244,69 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `2.67s` (322 modules transformed).
 
+---
+
+## BƯỚC 61: KHẮC PHỤC TRIỆT ĐỂ 4 VẤN ĐỀ HỆ THỐNG (ĐỒNG BỘ GỌI NHÓM NGANG HÀNG VỚI MÃ NGUỒN MẪU, SINGLE DEVICE LOGIN QUA PRESENCE STATUS, LỌC TIN NHẮN TÁI SINH PHÒNG CHAT & DANH BẠ GỌI NHÓM THUẦN ONLINE)
+
+### 1. Bối cảnh & Yêu cầu từ Người dùng (`FileQuest/quest.txt`)
+1. **Sửa lỗi Cuộc gọi nhóm bị tắt ngay lập tức (A gọi B, C)**:
+   - Khi A gọi nhóm cho B và C, giao diện hiện "Cuộc gọi nhóm (3 người)" trong 1-2 giây rồi tự động cúp máy; B và C chưa kịp nghe chuông reo đã bị ngắt.
+   - Đối chiếu với mã nguồn tham chiếu mẫu để tìm nguyên nhân và đưa luồng gọi nhóm trên Web về trạng thái hoạt động ổn định, độc lập từng nhánh.
+2. **Chuẩn hóa Presence `status` chứa `smartcall-web`**:
+   - Gắn cờ định danh `smartcall-web` vào chuỗi `status` khi Web gửi Presence (`PUT /api/chatd/1.0/users/{user_uuid}/presences`) để ứng dụng di động khi nhận WebSocket có thể nhận diện phiên đăng nhập Web và tự động đăng xuất (Single Device Session Enforcement).
+3. **Triệt tiêu tin nhắn cũ khi tạo lại nhóm chat có cùng thành viên**:
+   - Khi tạo nhóm 3 người ABC, gửi tin nhắn rồi xóa nhóm; sau đó tạo lại nhóm 3 người ABC thì bị hiển thị lại toàn bộ tin nhắn của nhóm cũ.
+   - Xử lý cơ chế làm sạch lịch sử khi phòng chat được tái tạo trên máy chủ.
+4. **Bộ lọc Danh bạ Gọi nhóm thuần Trực tuyến (Online)**:
+   - Không thể thực hiện cuộc gọi thoại WebRTC cho người ngoại tuyến, do đó tab Gọi nhóm chỉ hiển thị các liên hệ đang trực tuyến (`online`), ẩn chính mình.
+   - Loại bỏ nút "Chọn trực tuyến" thừa trên thanh thao tác gọi nhóm.
+
+---
+
+### 2. Chi tiết Triển khai Kỹ thuật
+
+#### A. Khắc phục Triệt để Lỗi Cuộc gọi Nhóm (`src/services/wazo.js`)
+1. **Phân tích nguyên nhân gốc rễ**:
+   - **Lỗi HTTP 400 (Wazo Calld Ad-hoc Conference)**: Trước đây Web dùng timer `1200ms` để gửi `POST /users/me/conferences/adhoc`. Tại mốc 1.2s, tất cả các nhánh đều đang ở trạng thái `180 Ringing` (chưa ai nhấc máy), Asterisk/Calld không thể bridge các kênh chưa answer nên trả về `HTTP 400 Bad Request`.
+   - **Xung đột Hold ngầm của WebRTCPhone SDK**: Khi A gọi nhánh 1, SDK gán `currentSipSession`. Khi A gọi tiếp nhánh 2 và 3, SDK tự động gửi lệnh `holdSipSession` (re-INVITE) lên nhánh 1 đang đổ chuông, vi phạm giao thức SIP RFC 3261 trên early dialog.
+   - **Hiệu ứng sụp đổ dây chuyền**: Khi một nhánh bị lỗi, `_finalizeCallTermination` không kiểm tra session mà lập tức cúp toàn bộ các nhánh còn lại.
+2. **Giải pháp đồng bộ ngang hàng với mã nguồn mẫu**:
+   - **Cô lập nhánh gọi**: Khi phát lệnh gọi các nhánh phụ trong `addParticipantsToGroupCall`, tạm thời tách `currentSipSession` để SDK không gửi lệnh hold sai quy cách lên nhánh đang đổ chuông.
+   - **Xóa bỏ hoàn toàn timer 1.2s tạo Conference sớm**: Chỉ tạo hoặc gộp Ad-hoc Conference khi nhận sự kiện `call_answered` / `ON_CALL_ANSWERED` (khi có ít nhất 2 nhánh đã thực sự ở trạng thái đàm thoại `talking_to`).
+   - **Bảo vệ độc lập từng nhánh trong `_finalizeCallTermination`**:
+     - Nhận diện `session` nào vừa kết thúc. Nếu đó là một nhánh phụ, chỉ gỡ nhánh đó khỏi danh sách, hiển thị thông báo toast cảnh báo và **tiếp tục duy trì cuộc gọi cho các nhánh còn lại**.
+     - Nếu nhánh chính kết thúc nhưng vẫn còn nhánh phụ, tự động hoán đổi nhánh phụ lên làm nhánh chính tiếp tục cuộc gọi nhóm.
+     - Chỉ cúp toàn bộ cuộc gọi khi TẤT CẢ các nhánh đều đã kết thúc hoặc Chủ phòng chủ động bấm nút "Cúp máy" (`forceEnd = true`).
+
+#### B. Chuẩn hóa Presence `status` & Đăng xuất Phiên Đa nền tảng (`src/services/wazo.js`)
+1. **Chuẩn hóa `setPresence(state, statusText)`**:
+   - Tự động gắn hậu tố `-smartcall-web` vào chuỗi `status` nếu chưa có (ví dụ: `sess_...-smartcall-web`, `Đang gọi nhóm [GROUP:1001:1001,1002,1003]-smartcall-web`).
+   - Android parse thẻ nhóm qua regex từ `[GROUP:` tới `]` nên việc gắn hậu tố không làm ảnh hưởng việc đọc thẻ nhóm.
+2. **Kích hoạt Single Device Session 2 chiều**:
+   - Khi Web nhận sự kiện WebSocket `chatd_user_presence_updated` hoặc `chatd_presence_updated`: Nếu presence của chính mình chứa `smartcall-android` hoặc chứa `sess_` khác mã phiên hiện tại, Web tự động phát hiện và kích hoạt `handleSessionKicked()` đăng xuất ngay lập tức.
+
+#### C. Lọc Sạch Tin nhắn Cũ khi Tái tạo Phòng chat Nhóm (`src/services/chatService.js`)
+1. **Bản chất kỹ thuật**:
+   - Máy chủ tổng đài không có API `DELETE /users/me/rooms/{uuid}` cho user. `POST /users/me/rooms` có tính Idempotent (trả về cùng UUID phòng cũ nếu danh sách thành viên giống nhau).
+2. **Giải pháp xử lý từ gốc**:
+   - Trong `getRoomMessages`: Quét tìm mốc tin nhắn giải tán nhóm gần nhất `[SYSTEM:ROOM_CLOSED]`.
+   - Nếu nhóm từng bị giải tán nhưng sau đó có tin nhắn mới (nhóm được tạo lại), tự động **cắt bỏ toàn bộ tin nhắn trước mốc giải tán**, chỉ giữ lại các tin nhắn của phiên mới bắt đầu từ thông điệp khởi tạo.
+   - Triệt tiêu hoàn toàn hiện tượng phòng chat mới bị lẫn tin nhắn cũ của nhóm đã xóa.
+
+#### D. Tối ưu Tab Danh bạ Gọi nhóm Thuần Online (`src/views/CallsView.vue`)
+1. **Lọc danh bạ trong `filteredContacts`**:
+   - Khi ở tab `group_call`, chỉ hiển thị các liên hệ có trạng thái trực tuyến (`status !== 'offline' && status !== 'unavailable'`), ẩn số máy lẻ của chính mình.
+2. **Loại bỏ nút "Chọn trực tuyến"**:
+   - Vì toàn bộ danh sách hiển thị đã là người trực tuyến, nút `.btn-select-online` được loại bỏ hoàn toàn, giữ giao diện thanh thao tác gọn gàng, tinh tế.
+   - Bổ sung huy hiệu số đếm `badge-group` hiển thị số người trực tuyến khả dụng trên tab Gọi nhóm.
+   - Thêm thông báo Empty State chuẩn: *"Hiện không có đồng nghiệp nào đang trực tuyến để gọi nhóm"*.
+
+---
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `508ms` (322 modules transformed).
+
+
 
 
 

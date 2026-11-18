@@ -583,9 +583,44 @@ class ChatService {
               (a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime(),
             )
 
+            // Tìm mốc giải tán nhóm gần nhất [SYSTEM:ROOM_CLOSED] nếu có
+            let lastClosedIdx = -1
+            for (let i = sortedItems.length - 1; i >= 0; i--) {
+              if (sortedItems[i].content && sortedItems[i].content.includes('[SYSTEM:ROOM_CLOSED')) {
+                lastClosedIdx = i
+                break
+              }
+            }
+
+            // Nếu mốc [SYSTEM:ROOM_CLOSED] là tin nhắn cuối cùng -> Phòng hiện đang bị giải tán
+            if (lastClosedIdx === sortedItems.length - 1) {
+              if (localRoom) {
+                if (!localRoom.isDirect) {
+                  localRoom.isClosed = true
+                  localRoom.preview = 'Nhóm này đã được giải tán.'
+                } else {
+                  localRoom.isClosed = false
+                  localRoom.preview = 'Cuộc trò chuyện mới'
+                }
+              }
+            } else if (lastClosedIdx > -1) {
+              // Phòng đã từng bị giải tán nhưng sau đó có tin nhắn mới (nhóm được tạo lại cùng người)
+              // -> Đánh dấu phòng mở lại bình thường
+              if (localRoom) {
+                localRoom.isClosed = false
+              }
+            }
+
+            // Các tin nhắn thuộc phiên hoạt động hiện tại:
+            // Nếu nhóm từng bị giải tán và được tạo lại, chỉ lấy các tin nhắn từ sau mốc giải tán gần nhất!
+            const activeItems =
+              lastClosedIdx > -1 && lastClosedIdx < sortedItems.length - 1
+                ? sortedItems.slice(lastClosedIdx + 1)
+                : (lastClosedIdx === sortedItems.length - 1 ? [] : sortedItems)
+
             // 1. Quét thu thập tất cả các ID tin nhắn đã bị xóa bằng Tombstone MSG_DELETED
             const deletedIdsSet = new Set()
-            for (const item of sortedItems) {
+            for (const item of activeItems) {
               const c = item.content || ''
               if (c.includes('[SYSTEM:MSG_DELETED:ids="')) {
                 const match = c.match(/\[SYSTEM:MSG_DELETED:ids="([^"]+)"/)
@@ -599,26 +634,12 @@ class ChatService {
             }
 
             // 2. Lọc bỏ các tin nhắn có ID bị xóa và bản thân các tin nhắn tombstone MSG_DELETED / ROOM_CLOSED
-            const visibleItems = sortedItems.filter((item) => {
+            const visibleItems = activeItems.filter((item) => {
               const itemId = item.uuid || item.id
               if (itemId && deletedIdsSet.has(itemId)) return false
               if (item.content && (item.content.includes('[SYSTEM:MSG_DELETED:ids=') || item.content.includes('[SYSTEM:ROOM_CLOSED'))) return false
               return true
             })
-
-            // 3. Kiểm tra xem phòng có bị giải tán bằng Tombstone SYSTEM:ROOM_CLOSED không (từ tin nhắn mới nhất)
-            const lastRaw = sortedItems[sortedItems.length - 1]
-            if (lastRaw?.content && lastRaw.content.includes('[SYSTEM:ROOM_CLOSED')) {
-              if (localRoom) {
-                if (!localRoom.isDirect) {
-                  localRoom.isClosed = true
-                  localRoom.preview = 'Nhóm này đã được giải tán.'
-                } else {
-                  localRoom.isClosed = false
-                  localRoom.preview = 'Cuộc trò chuyện mới'
-                }
-              }
-            }
 
             const fwdRegex = /^💬 \[FWD:user_uuid=([^|]*)\|sender=([^|]*)\|time=([^\]]*)\] ([\s\S]*)$/
 
