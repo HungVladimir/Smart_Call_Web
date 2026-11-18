@@ -58,9 +58,11 @@ class WazoService {
     this.extensionToWazoCallIdMap = new Map()
     this.mergedCallIds = new Set()
     this.secondaryCallSessions = new Map()
+    this._terminatingSecondarySipIds = new Set()
     this._isSyncingAdhoc = false
     this._syncAdhocDebounceTimer = null
     this._secondaryInviteTimers = new Map()
+    this._primaryInviteTimer = null
     this._processedAddReqIds = new Set()
     this._processedNoticeIds = new Set()
   }
@@ -72,13 +74,13 @@ class WazoService {
   getOrCreateClientId() {
     let storedClientId = ''
     try {
-      storedClientId = localStorage.getItem('smartcall_device_client_id') || ''
+      storedClientId = sessionStorage.getItem('smartcall_tab_client_id') || ''
     } catch (e) {}
     if (!storedClientId) {
       const rand = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 10)
       storedClientId = `web_${rand}`
       try {
-        localStorage.setItem('smartcall_device_client_id', storedClientId)
+        sessionStorage.setItem('smartcall_tab_client_id', storedClientId)
       } catch (e) {}
     }
     this.clientId = storedClientId
@@ -207,7 +209,7 @@ class WazoService {
       // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên máy chủ Chatd
       this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
       try {
-        localStorage.setItem('smartcall_session_id', this.mySessionId)
+        sessionStorage.setItem('smartcall_session_id', this.mySessionId)
       } catch (e) {}
       this._isKicked = false
       try {
@@ -285,9 +287,9 @@ class WazoService {
           } catch (phoneErr) {
             logger.warn('SIP', 'Khôi phục WebRTC phone cảnh báo', phoneErr.message)
           }
-          this.mySessionId = localStorage.getItem('smartcall_session_id') || ('sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7))
+          this.mySessionId = sessionStorage.getItem('smartcall_session_id') || ('sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7))
           try {
-            localStorage.setItem('smartcall_session_id', this.mySessionId)
+            sessionStorage.setItem('smartcall_session_id', this.mySessionId)
           } catch (e) {}
           this._isKicked = false
           try {
@@ -880,28 +882,26 @@ class WazoService {
               }
             }
 
-            // Single Device Login: Nếu presence của chính user chứa Session ID mới từ thiết bị khác hoặc thiết bị Android
+            // Single Device Login: Nếu presence của chính user chứa Session ID / Client ID mới từ thiết bị khác hoặc thiết bị Android
             const myUuid = this.getMyUserUuid()
             const targetUuid = data?.uuid || data?.user_uuid
             if (myUuid && targetUuid === myUuid && data?.status) {
-              const timeSinceConnect = Date.now() - (this._wsConnectTime || 0)
-              // Bỏ qua sự kiện Presence trong 5 giây đầu sau khi WebSocket vừa kết nối lại để triệt tiêu Presence Echo
-              if (timeSinceConnect > 5000) {
-                const statusStr = String(data.status)
+              const statusStr = String(data.status)
+              // Bỏ qua nếu đây là thẻ tín hiệu hệ thống nội bộ gọi nhóm
+              const isGroupCallTag =
+                statusStr.includes('[GROUP:') ||
+                statusStr.includes('[ADD_REQ:') ||
+                statusStr.includes('[NOTICE:') ||
+                statusStr.includes('[LEFT:')
+
+              if (!isGroupCallTag) {
                 const isAndroidDevice = statusStr.includes('smartcall-android')
                 const isOtherWebDevice = statusStr.includes('smartcall-web') && this.myClientId && !statusStr.includes(this.myClientId)
-                const isLegacyOtherWeb = statusStr.includes('sess_') && this.mySessionId && !statusStr.includes(this.mySessionId) && !statusStr.includes(this.myClientId)
+                const isLegacyOtherWeb = statusStr.includes('sess_') && this.mySessionId && !statusStr.includes(this.mySessionId) && (!this.myClientId || !statusStr.includes(this.myClientId))
 
                 if (isAndroidDevice || isOtherWebDevice || isLegacyOtherWeb) {
-                  logger.warn('AUTH', `Phát hiện tín hiệu presence đăng nhập mới (${statusStr}) từ thiết bị khác! Đang kiểm chứng phiên...`)
-                  this.verifyTokenHealth(true).then((isValid) => {
-                    if (!isValid && this._lastRefreshRevoked) {
-                      logger.warn('AUTH', 'Phiên làm việc đã bị thu hồi thực sự trên máy chủ bởi thiết bị mới.')
-                      this.handleSessionKicked()
-                    } else {
-                      logger.info('AUTH', 'Phiên làm việc của thiết bị này vẫn hợp lệ, bỏ qua presence echo.')
-                    }
-                  })
+                  logger.warn('AUTH', `⚡ Phát hiện phiên đăng nhập mới (${statusStr}) từ thiết bị khác. Thực hiện đăng xuất tức thì (0.1s)!`)
+                  this.handleSessionKicked()
                   return
                 }
               }
@@ -1051,52 +1051,70 @@ class WazoService {
   _finalizeCallTermination(reason = 'ended', session = null, forceEnd = false) {
     // 1. Kiểm tra nếu cuộc gọi nhóm đang diễn ra và chỉ có 1 nhánh phụ bị ngắt (không forceEnd)
     if (!forceEnd && this.isGroupCall && this.isGroupHost && session) {
-      const endedSipId = session.sipCallId || (session.getId && session.getId())
+      const endedSipId = session.sipCallId || (session.getId && session.getId()) || session.id
       let endedSecExt = null
       for (const [ext, secSession] of this.secondaryCallSessions.entries()) {
-        const secSipId = secSession.sipCallId || (secSession.getId && secSession.getId())
-        if (secSession === session || (endedSipId && secSipId === endedSipId)) {
+        const secSipId = secSession.sipCallId || (secSession.getId && secSession.getId()) || secSession.id
+        if (secSession === session || (endedSipId && secSipId && String(secSipId) === String(endedSipId))) {
           endedSecExt = ext
           break
         }
       }
 
-      if (endedSecExt) {
-        this._clearSecondaryLegTimeout(endedSecExt)
-        // Nếu đã có Ad-hoc Conference hoạt động, nhánh SIP phụ WebRTC kết thúc do Asterisk chuyển kênh sang ConfBridge
-        // -> Tuyệt đối KHÔNG xóa thành viên khỏi nhóm (Đối chiếu WazoSipCallManager.py line 1164)
-        if (this.activeAdhocConferenceId) {
-          logger.info('CALL', `Nhánh WebRTC phụ [${endedSecExt}] đã chuyển giao sang Ad-hoc Conference [${this.activeAdhocConferenceId}]. Tiếp tục duy trì thành viên trong nhóm.`)
-          this.secondaryCallSessions.delete(endedSecExt)
-          return
-        }
-
-        logger.warn('CALL', `Nhánh phụ [${endedSecExt}] kết thúc (${reason}). Gỡ khỏi nhóm và duy trì các nhánh còn lại.`)
-        this.secondaryCallSessions.delete(endedSecExt)
-        const childCallId = this.extensionToWazoCallIdMap.get(endedSecExt)
-        if (childCallId) {
-          this.hangupUserCall(childCallId).catch(() => {})
-          this.extensionToWazoCallIdMap.delete(endedSecExt)
-          this.mergedCallIds.delete(childCallId)
-        }
-        this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== endedSecExt)
-        if (callStore.activeCall) {
-          callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
-          callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
-        }
-        window.dispatchEvent(
-          new CustomEvent('app-toast', {
-            detail: { message: `⚠️ Nhánh máy lẻ ${endedSecExt} không thể kết nối hoặc đã rời nhóm`, type: 'warning' },
-          }),
-        )
-        this.broadcastGroupStateViaPresence()
-        this.broadcastNoticeToGroup(`Nhánh máy lẻ ${endedSecExt} không thể kết nối hoặc đã rời nhóm`)
-        return // Không cúp cuộc gọi chính!
+      // Nhận diện thêm nếu SIP ID nằm trong danh sách đang hủy do timeout
+      const isMarkedTerminating = endedSipId && this._terminatingSecondarySipIds.has(String(endedSipId))
+      if (isMarkedTerminating && endedSipId) {
+        this._terminatingSecondarySipIds.delete(String(endedSipId))
       }
 
-      // Nếu nhánh chính (primary) kết thúc nhưng vẫn còn các nhánh phụ đang hoạt động
-      const primarySipId = this.currentCallSession?.sipCallId || (this.currentCallSession?.getId && this.currentCallSession.getId())
-      if (session === this.currentCallSession || (endedSipId && primarySipId === endedSipId)) {
+      if (endedSecExt || isMarkedTerminating) {
+        if (endedSecExt) {
+          this._clearSecondaryLegTimeout(endedSecExt)
+          this.secondaryCallSessions.delete(endedSecExt)
+
+          // Nếu đã có Ad-hoc Conference hoạt động và không phải nhánh timeout, nhánh SIP phụ WebRTC kết thúc do Asterisk chuyển kênh sang ConfBridge
+          // -> Tuyệt đối KHÔNG xóa thành viên khỏi nhóm (Đối chiếu WazoSipCallManager.py line 1164)
+          if (this.activeAdhocConferenceId && !isMarkedTerminating) {
+            logger.info('CALL', `Nhánh WebRTC phụ [${endedSecExt}] đã chuyển giao sang Ad-hoc Conference [${this.activeAdhocConferenceId}]. Tiếp tục duy trì thành viên trong nhóm.`)
+            return
+          }
+
+          logger.warn('CALL', `Nhánh phụ [${endedSecExt}] kết thúc (${reason}). Gỡ khỏi nhóm và duy trì các nhánh còn lại.`)
+          const childCallId = this.extensionToWazoCallIdMap.get(endedSecExt)
+          if (childCallId) {
+            this.hangupUserCall(childCallId).catch(() => {})
+            this.extensionToWazoCallIdMap.delete(endedSecExt)
+            this.mergedCallIds.delete(childCallId)
+          }
+          this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== endedSecExt)
+          if (callStore.activeCall) {
+            callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+            callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+          }
+          window.dispatchEvent(
+            new CustomEvent('app-toast', {
+              detail: { message: `⚠️ Nhánh máy lẻ ${endedSecExt} không thể kết nối hoặc đã rời nhóm`, type: 'warning' },
+            }),
+          )
+          this.broadcastGroupStateViaPresence()
+          this.broadcastNoticeToGroup(`Nhánh máy lẻ ${endedSecExt} không thể kết nối hoặc đã rời nhóm`)
+        }
+
+        // KIỂM TRA ĐIỀU KIỆN KẾT THÚC CUỘC GỌI NHÓM:
+        // Chỉ khi KHÔNG còn ai đang kết nối (đàm thoại) VÀ KHÔNG còn nhánh phụ nào đang đổ chuông VÀ nhánh chính không còn đổ chuông
+        const myExt = this.getMyExtension()
+        const remainingOthers = this.groupParticipantExtensions.filter((e) => e !== myExt)
+        if (this.isAnyParticipantConnected() || this.secondaryCallSessions.size > 0 || (this.currentCallSession && remainingOthers.length > 0 && callStore.activeCall?.status === 'ringing')) {
+          logger.info('CALL', 'Vẫn còn thành viên đang hoạt động hoặc đang đổ chuông trong nhóm. Duy trì cuộc gọi!')
+          return // Không cúp cuộc gọi chính!
+        }
+        logger.warn('CALL', 'Tất cả thành viên trong nhóm đều đã ngắt kết nối hoặc không nghe máy. Kết thúc cuộc gọi.')
+      }
+
+      // 2. Nếu nhánh chính (primary) kết thúc nhưng vẫn còn các nhánh phụ đang hoạt động
+      const primarySipId = this.currentCallSession?.sipCallId || (this.currentCallSession?.getId && this.currentCallSession.getId()) || this.currentCallSession?.id
+      if (session === this.currentCallSession || (endedSipId && primarySipId && String(primarySipId) === String(endedSipId))) {
+        this._clearPrimaryLegTimeout()
         if (this.secondaryCallSessions.size > 0) {
           const [nextExt, nextSession] = this.secondaryCallSessions.entries().next().value
           logger.info('CALL', `Nhánh chính kết thúc. Tự động chuyển nhánh [${nextExt}] lên làm nhánh chính tiếp tục cuộc gọi nhóm.`)
@@ -1107,6 +1125,9 @@ class WazoService {
             callStore.activeCall.session = nextSession
           }
           this.broadcastGroupStateViaPresence()
+          return // Không cúp cuộc gọi chính!
+        } else if (this.isAnyParticipantConnected()) {
+          logger.info('CALL', 'Nhánh chính WebRTC chuyển trạng thái nhưng cuộc gọi nhóm vẫn đang kết nối thành viên. Duy trì cuộc gọi.')
           return // Không cúp cuộc gọi chính!
         }
       }
@@ -1177,6 +1198,7 @@ class WazoService {
     // Dọn dẹp Ad-hoc Group Call nếu phiên này là Chủ phòng (Bám sát Android lines 2055-2062)
     if (this.isGroupCall && this.isGroupHost) {
       this._clearAllSecondaryLegTimeouts()
+      this._clearPrimaryLegTimeout()
       if (this.activeAdhocConferenceId) {
         this.deleteAdhocConference(this.activeAdhocConferenceId).catch(() => {})
       }
@@ -1193,6 +1215,7 @@ class WazoService {
           /* ignore */
         }
       }
+      this.secondaryCallSessions.clear()
     }
     this._resetGroupCallState()
     try {
@@ -1358,6 +1381,7 @@ class WazoService {
       }
 
       this.startCallDurationTimer()
+      this._clearPrimaryLegTimeout()
 
       // Xóa timer timeout 30s của nhánh phụ nếu đây là nhánh phụ vừa nghe máy
       const acceptedSipId = callSession?.sipCallId || (callSession?.getId && callSession.getId())
@@ -1498,6 +1522,7 @@ class WazoService {
     // (Bám sát 100% Android WazoSipCallManager.py lines 2044-2062)
     if (this.isGroupCall && this.isGroupHost) {
       this._clearAllSecondaryLegTimeouts()
+      this._clearPrimaryLegTimeout()
       if (this.activeAdhocConferenceId) {
         this.deleteAdhocConference(this.activeAdhocConferenceId).catch(() => {})
       }
@@ -2125,6 +2150,9 @@ class WazoService {
       return callResult
     }
 
+    // Đặt bộ đếm Timeout 30 giây cho nhánh chính đầu tiên
+    this._startPrimaryLegTimeout(firstTarget)
+
     // Đánh dấu activeCall là groupCall
     if (callStore.activeCall) {
       callStore.activeCall.isGroupCall = true
@@ -2214,6 +2242,101 @@ class WazoService {
   }
 
   /**
+   * Bắt đầu bộ đếm Timeout 30 giây cho nhánh chính đầu tiên trong cuộc gọi nhóm
+   */
+  _startPrimaryLegTimeout(targetExt) {
+    this._clearPrimaryLegTimeout()
+    this._primaryInviteTimer = setTimeout(() => {
+      this._cancelPrimaryLegOnTimeout(targetExt)
+    }, 30000)
+    logger.info('CALL', `⏱️ Đã đặt bộ đếm Timeout 30 giây cho nhánh chính [${targetExt}].`)
+  }
+
+  _clearPrimaryLegTimeout() {
+    if (this._primaryInviteTimer) {
+      clearTimeout(this._primaryInviteTimer)
+      this._primaryInviteTimer = null
+    }
+  }
+
+  _cancelPrimaryLegOnTimeout(targetExt) {
+    this._clearPrimaryLegTimeout()
+    if (this.isGroupCall && this.isGroupHost && callStore.activeCall && callStore.activeCall.status === 'ringing') {
+      logger.warn('CALL', `Nhánh chính [${targetExt}] quá 30 giây không nhấc máy. Tiến hành ngắt kết nối nhánh chính.`)
+      const session = this.currentCallSession
+      if (session) {
+        try {
+          Wazo.Phone.hangup(session)
+        } catch (e) {
+          /* ignore */
+        }
+      }
+
+      // Gỡ targetExt khỏi groupParticipantExtensions
+      const myExt = this.getMyExtension()
+      this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== targetExt)
+      if (callStore.activeCall) {
+        callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+        callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+      }
+      this.broadcastGroupStateViaPresence()
+
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: { message: `⏱️ Máy lẻ [${targetExt}] không trả lời sau 30 giây.`, type: 'warning' },
+        }),
+      )
+      this.broadcastNoticeToGroup(`Máy lẻ ${targetExt} không trả lời sau 30 giây`)
+
+      // Nếu còn nhánh phụ đang hoạt động hoặc đang đổ chuông, chuyển nhánh phụ lên
+      if (this.secondaryCallSessions.size > 0) {
+        const [nextExt, nextSession] = this.secondaryCallSessions.entries().next().value
+        logger.info('CALL', `Tự động chuyển nhánh [${nextExt}] lên làm nhánh chính tiếp tục cuộc gọi nhóm.`)
+        this.secondaryCallSessions.delete(nextExt)
+        this.currentCallSession = nextSession
+        if (callStore.activeCall) {
+          callStore.activeCall.number = nextExt
+          callStore.activeCall.session = nextSession
+        }
+        this.broadcastGroupStateViaPresence()
+      } else if (!this.isAnyParticipantConnected()) {
+        logger.warn('CALL', 'Tất cả thành viên đều không trả lời cuộc gọi nhóm. Kết thúc cuộc gọi.')
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: { message: '👥 Tất cả thành viên đều không trả lời cuộc gọi nhóm.', type: 'warning' },
+          }),
+        )
+        this.hangup()
+      }
+    }
+  }
+
+  /**
+   * Kiểm tra an toàn xem có bất kỳ thành viên nào đang kết nối đàm thoại không
+   */
+  isAnyParticipantConnected() {
+    if (!this.hasActiveCall()) return false
+    const myExt = this.getMyExtension()
+    const remainingOthers = this.groupParticipantExtensions.filter((e) => e !== myExt)
+
+    if (callStore.activeCall?.status === 'connected') {
+      if (this.isGroupCall) {
+        if (remainingOthers.length > 0 && (this.extensionToWazoCallIdMap.size > 0 || this.activeAdhocConferenceId || this.currentCallSession)) {
+          return true
+        }
+      } else {
+        return true
+      }
+    }
+
+    if (this.extensionToWazoCallIdMap && this.extensionToWazoCallIdMap.size > 0) {
+      return true
+    }
+
+    return false
+  }
+
+  /**
    * Bắt đầu bộ đếm Timeout 30 giây cho nhánh phụ mời thêm (Chuẩn Android WazoSipCallManager.java)
    */
   _startSecondaryLegTimeout(ext, session) {
@@ -2243,13 +2366,17 @@ class WazoService {
     this._clearSecondaryLegTimeout(targetExt)
     const session = this.secondaryCallSessions.get(targetExt)
     if (session) {
+      const sipId = session.sipCallId || (session.getId && session.getId()) || session.id
+      if (sipId) {
+        this._terminatingSecondarySipIds.add(String(sipId))
+      }
       logger.warn('CALL', `Nhánh phụ [${targetExt}] quá 30 giây không nhấc máy. Tiến hành ngắt kết nối nhánh phụ.`)
       try {
         Wazo.Phone.hangup(session)
       } catch (e) {
         /* ignore */
       }
-      this.secondaryCallSessions.delete(targetExt)
+      // Không delete khỏi this.secondaryCallSessions ngay để _finalizeCallTermination nhận diện được nhánh phụ!
     }
 
     // Gỡ khỏi groupParticipantExtensions nếu chưa bao giờ kết nối
@@ -2270,6 +2397,19 @@ class WazoService {
       }),
     )
     this.broadcastNoticeToGroup(`Máy lẻ ${targetExt} không trả lời sau 30 giây`)
+
+    // Kiểm tra: Nếu tất cả thành viên khác đều không nghe máy và không còn ai đang kết nối
+    const myExt = this.getMyExtension()
+    const remainingOthers = this.groupParticipantExtensions.filter((e) => e !== myExt)
+    if (remainingOthers.length === 0 && !this.isAnyParticipantConnected() && (!this.currentCallSession || callStore.activeCall?.status !== 'ringing')) {
+      logger.warn('CALL', 'Tất cả thành viên đều không trả lời cuộc gọi nhóm. Kết thúc cuộc gọi.')
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: { message: '👥 Tất cả thành viên đều không trả lời cuộc gọi nhóm.', type: 'warning' },
+        }),
+      )
+      this.hangup()
+    }
   }
 
   /**
@@ -2561,8 +2701,10 @@ class WazoService {
       this._syncAdhocDebounceTimer = null
     }
     this._clearAllSecondaryLegTimeouts()
+    this._clearPrimaryLegTimeout()
     this._processedAddReqIds.clear()
     this._processedNoticeIds.clear()
+    this._terminatingSecondarySipIds.clear()
     this._isSyncingAdhoc = false
     this.activeAdhocConferenceId = ''
     this.isGroupCall = false
