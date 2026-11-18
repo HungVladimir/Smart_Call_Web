@@ -3345,6 +3345,31 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `598ms` (322 modules transformed).
 
+---
+
+## BƯỚC 63: TRIỆT TIÊU HOÀN TOÀN TÍNH NĂNG HOLD, KHÓA CƠ CHẾ AUTO-HOLD CỦA WAZO SDK & XỬ LÝ DỨT ĐIỂM TIẾNG NHẠC MUSIC ON HOLD KHI GỌI NHÓM
+
+### 1. Phân tích Nguyên nhân Gốc rễ Tiếng Nhạc (Music On Hold):
+- **Bản chất**: Tiếng nhạc phát ra là **Music On Hold (MOH)** do máy chủ tổng đài Asterisk phát tự động khi một kênh SIP nhận được lệnh `HOLD` (SIP re-INVITE mang `a=sendonly` hoặc `a=inactive`).
+- **Nguyên nhân phát sinh**: Trong thư viện `@wazo/sdk` (`class WebRTCPhone`), hàm `_onCallAccepted()` mặc định kiểm tra `if (this.currentSipSession && !this.isCurrentCallSipSession(callSession))` để tự động gọi `this.holdSipSession(this.currentSipSession)`. Khi gọi 2 người (A gọi B và C), khi nhánh C nghe máy, SDK tự động gửi lệnh Hold nhánh B lên tổng đài, khiến B bị nghe tiếng nhạc Music On Hold!
+
+### 2. Các File Triển khai & Chi tiết Xử lý:
+1. **`src/services/wazo.js`**:
+   - Triển khai hàm `_neutralizeSdkAutoHold()` can thiệp trực tiếp vào prototype của `WebRTCPhoneClass` và `phoneInstance`, biến `holdSipSession`, `hold`, `unholdSipSession`, `unhold` thành các hàm no-op (`Promise.resolve()`).
+   - Gọi `_neutralizeSdkAutoHold()` ngay trong `init()` và `connectPhone()`.
+   - Xóa bỏ hoàn toàn các hàm: `setHold()`, `toggleHold()`, `hold()`.
+   - Loại bỏ thuộc tính `isHeld: false` khỏi tất cả các đối tượng khởi tạo `callStore.activeCall`.
+   - Loại bỏ điều kiện `!callStore.activeCall.isHeld` trong bộ đếm giây đàm thoại `startCallDurationTimer()`.
+2. **`src/views/CallsView.vue`**:
+   - Xóa bỏ class `onHold: isHeld` trong template bàn phím.
+   - Xóa bỏ `const isHeld = computed(...)`.
+   - Xóa bỏ kiểm tra `callStore.activeCall.isHeld` trong `activeCallTitle` và `callerName`.
+
+### 3. Kết quả Kiểm tra:
+- Toàn bộ từ khóa và logic điều khiển `isHeld` đã được làm sạch 100% khỏi toàn bộ thư mục `src/`.
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `518ms` (322 modules transformed).
+
+
 
 
 

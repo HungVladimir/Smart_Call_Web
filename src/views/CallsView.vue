@@ -126,7 +126,6 @@
           class="call-status-box"
           :class="{
             inCall: isCalling,
-            onHold: isHeld,
             isRinging: callState === 'ringing',
             compactIdle: !isCalling,
           }"
@@ -978,7 +977,6 @@ const activeTab = ref('all') // 'all' | 'favorites'
 // Single Source of Truth (SSOT) binding trực tiếp từ callStore
 const isCalling = computed(() => Boolean(callStore.activeCall))
 const callState = computed(() => (callStore.activeCall ? callStore.activeCall.status : 'idle'))
-const isHeld = computed(() => Boolean(callStore.activeCall?.isHeld))
 const isMuted = computed(() => Boolean(callStore.activeCall?.isMuted))
 const isDialing = computed(() => Boolean(wazoService._isDialing))
 
@@ -1056,9 +1054,6 @@ const activeCallTitle = computed(() => {
   if (callStore.activeCall.status === 'ringing') {
     return `Đang đổ chuông: ${callStore.activeCall.name || activeCallContact.value?.name || `Máy lẻ ${ext}`}`
   }
-  if (callStore.activeCall.isHeld) {
-    return `${callStore.activeCall.name || activeCallContact.value?.name || `Máy lẻ ${ext}`} (Tạm giữ)`
-  }
   return callStore.activeCall.name || activeCallContact.value?.name || `Máy lẻ ${ext}`
 })
 
@@ -1107,9 +1102,6 @@ const callerName = computed(() => {
   const ext = callStore.activeCall.number || extension.value
   if (callStore.activeCall.status === 'ringing') {
     return `Đang đổ chuông tới máy lẻ ${ext}...`
-  }
-  if (callStore.activeCall.isHeld) {
-    return `Máy lẻ ${ext} (Tạm giữ - Hold)`
   }
   return `Đang đàm thoại: ${callStore.activeCall.name || `Máy lẻ ${ext}`}`
 })

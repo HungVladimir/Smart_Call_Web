@@ -18,7 +18,7 @@ export const callStore = reactive({
   myUserUuid: localStorage.getItem('smartcall_user_uuid') || '',
   myUserName: localStorage.getItem('smartcall_username') || '',
   myDepartment: localStorage.getItem('smartcall_department') || localStorage.getItem('smartcall_user_department') || '',
-  // activeCall: { session, number, name, dept, direction: 'outbound'|'inbound', status: 'ringing'|'connected'|'held', startTime, duration, isMuted, isHeld }
+  // activeCall: { session, number, name, dept, direction: 'outbound'|'inbound', status: 'ringing'|'connected', startTime, duration, isMuted }
   activeCall: null,
   // incomingCall: { rawSession, session, number, extension, name, dept, sipUri }
   incomingCall: null,
@@ -88,10 +88,54 @@ class WazoService {
     Wazo.Auth.init(cId)
     Wazo.Auth.setClientId(cId)
     Wazo.Auth.setHost(cleanHost)
+    this._neutralizeSdkAutoHold()
     if (typeof window !== 'undefined') {
       window.Wazo = Wazo
     }
     logger.info('AUTH', `Khởi tạo Wazo Auth SDK với host: ${cleanHost}, clientId: ${cId}`)
+  }
+
+  /**
+   * Triệt tiêu hoàn toàn cơ chế tự động Hold của Wazo SDK
+   * Ngăn chặn SDK phát SIP re-INVITE (sendonly) gây phát Music On Hold (MOH) từ máy chủ tổng đài
+   */
+  _neutralizeSdkAutoHold() {
+    try {
+      if (Wazo.Phone) {
+        Wazo.Phone.hold = () => Promise.resolve()
+        Wazo.Phone.unhold = () => Promise.resolve()
+        Wazo.Phone.resume = () => Promise.resolve()
+      }
+
+      const phoneInstance = Wazo.Phone?.phone
+      const WebRTCPhoneClass = phoneInstance?.constructor
+      if (WebRTCPhoneClass && WebRTCPhoneClass.prototype) {
+        WebRTCPhoneClass.prototype.holdSipSession = async function () {
+          logger.info('CALL', '🛡️ Đã chặn lệnh holdSipSession tự động từ SDK (triệt tiêu Hold & Music On Hold)')
+          return Promise.resolve()
+        }
+        WebRTCPhoneClass.prototype.hold = function () {
+          return Promise.resolve()
+        }
+        WebRTCPhoneClass.prototype.unholdSipSession = async function () {
+          return Promise.resolve()
+        }
+        WebRTCPhoneClass.prototype.unhold = function () {
+          return Promise.resolve()
+        }
+      }
+
+      if (phoneInstance) {
+        phoneInstance.holdSipSession = async function () {
+          logger.info('CALL', '🛡️ Đã chặn lệnh holdSipSession trên instance (triệt tiêu Hold & Music On Hold)')
+          return Promise.resolve()
+        }
+        phoneInstance.hold = () => Promise.resolve()
+        phoneInstance.unhold = () => Promise.resolve()
+      }
+    } catch (err) {
+      logger.warn('CALL', 'Không thể cấu hình triệt tiêu SDK auto-hold:', err)
+    }
   }
 
   async login(username, password) {
@@ -777,6 +821,7 @@ class WazoService {
     logger.info('SIP', 'Đang kết nối WebSocket WebRTC SIP tới máy chủ Wazo...')
     try {
       await Wazo.Phone.connect({ audio: true, video: false })
+      this._neutralizeSdkAutoHold()
       this.attachListeners()
       logger.success('SIP', 'Lệnh Wazo.Phone.connect({ audio: true }) gửi thành công.')
       return true
@@ -808,7 +853,7 @@ class WazoService {
   startCallDurationTimer() {
     this.stopCallDurationTimer()
     this._durationInterval = setInterval(() => {
-      if (callStore.activeCall && callStore.activeCall.status === 'connected' && !callStore.activeCall.isHeld) {
+      if (callStore.activeCall && callStore.activeCall.status === 'connected') {
         if (callStore.activeCall.startTime) {
           callStore.activeCall.duration = Math.max(0, Math.floor((Date.now() - callStore.activeCall.startTime) / 1000))
         } else {
@@ -1107,7 +1152,6 @@ class WazoService {
           startTime: Date.now(),
           duration: 0,
           isMuted: false,
-          isHeld: false,
           isRecorded: false,
         }
       }
@@ -1315,7 +1359,6 @@ class WazoService {
       startTime: Date.now(),
       duration: 0,
       isMuted: false,
-      isHeld: false,
       isRecorded: false,
     }
     callStore.incomingCall = null
@@ -1558,7 +1601,6 @@ class WazoService {
       startTime: null,
       duration: 0,
       isMuted: false,
-      isHeld: false,
       isRecorded: false,
       isGroupCall: Boolean(meta.isGroupCall || this.isGroupCall),
       isGroupHost: Boolean(meta.isGroupHost || this.isGroupHost),
@@ -1629,43 +1671,6 @@ class WazoService {
     )
   }
 
-  setHold(isHeld, callSession = null) {
-    const session = callSession || this.currentCallSession || callStore.activeCall?.session
-    if (session) {
-      try {
-        if (isHeld) {
-          Wazo.Phone.hold(session)
-          logger.info('CALL', 'Đã giữ máy (Hold)')
-        } else {
-          if (typeof Wazo.Phone.unhold === 'function') {
-            Wazo.Phone.unhold(session)
-          } else if (typeof Wazo.Phone.resume === 'function') {
-            Wazo.Phone.resume(session)
-          }
-          logger.info('CALL', 'Đã tiếp tục đàm thoại (Unhold / Resume)')
-        }
-      } catch (e) {
-        logger.warn('CALL', 'Lỗi chuyển trạng thái Giữ máy:', e)
-      }
-    }
-  }
-
-  toggleHold() {
-    if (!callStore.activeCall) return
-    callStore.activeCall.isHeld = !callStore.activeCall.isHeld
-    this.setHold(callStore.activeCall.isHeld, callStore.activeCall.session)
-    window.dispatchEvent(
-      new CustomEvent('app-toast', {
-        detail: {
-          message: callStore.activeCall.isHeld
-            ? '⏸️ Đang giữ máy (Hold). Luồng âm thanh tạm dừng.'
-            : '▶️ Đã tiếp tục đàm thoại (Resume).',
-          type: 'info',
-        },
-      }),
-    )
-  }
-
   sendDTMF(tone, callSession = null) {
     const session = callSession || this.currentCallSession || callStore.activeCall?.session
     if (session) {
@@ -1688,10 +1693,6 @@ class WazoService {
 
   mute(callSession = null) {
     this.setMute(true, callSession)
-  }
-
-  hold(callSession = null) {
-    this.setHold(true, callSession)
   }
 
   // =========================================================================
