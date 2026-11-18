@@ -1351,6 +1351,81 @@ class ChatService {
   }
 
   /**
+   * Thêm thành viên vào nhóm thảo luận (Tạo phòng mới với danh sách thành viên mở rộng,
+   * chuyển toàn bộ lịch sử tin nhắn sang phòng mới và đóng phòng cũ bằng Tombstone [SYSTEM:ROOM_CLOSED])
+   * @param {string} roomId - ID phòng nhóm cũ
+   * @param {string[]} allMemberUuids - Danh sách UUID tất cả thành viên trong nhóm mới
+   * @param {string} [customTitle] - Tên nhóm mới (hoặc giữ tên nhóm cũ)
+   * @returns {Promise<Object>} Phòng nhóm mới được tạo
+   */
+  async addMembersToGroup(roomId, allMemberUuids, customTitle = null) {
+    const room = (this.rooms || []).find((r) => r.id === roomId)
+    if (!room) throw new Error('Không tìm thấy thông tin phòng nhóm cũ.')
+
+    const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Quản trị viên'
+    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
+    const targetTitle = (customTitle && customTitle.trim()) || room.title || 'Nhóm thảo luận'
+
+    // Xác định tên các thành viên mới được thêm vào
+    const oldMemberUuids = new Set((room.members || []).map((m) => m.id || m.uuid).filter(Boolean))
+    const addedUuids = (allMemberUuids || []).filter((u) => !oldMemberUuids.has(u))
+    const addedNames = addedUuids.map((u) => {
+      const c = (this.rooms || []).flatMap((r) => r.members || []).find((m) => (m.id === u || m.uuid === u))
+      return c?.name || `Thành viên`
+    })
+
+    logger.info('CHAT', `Đang tạo phòng nhóm mới mở rộng từ phòng [${roomId}] với ${allMemberUuids.length} thành viên...`)
+    const newRoom = await this.createGroupRoom(targetTitle, allMemberUuids, room.messages || [])
+
+    // Gửi thông báo đến phòng cũ để tất cả thành viên trong phòng cũ biết nhóm đã được mở rộng
+    try {
+      const addedDesc = addedNames.length > 0 ? ` (+${addedNames.join(', ')})` : ''
+      await this.sendMessage(
+        roomId,
+        `⚠️ Nhóm đã được Quản trị viên (${myName}) thêm thành viên${addedDesc} và chuyển sang phòng mới.`,
+        'Hệ thống',
+      )
+    } catch (e) {
+      /* ignore */
+    }
+
+    // Đóng phòng cũ bằng Tombstone SYSTEM:ROOM_CLOSED chuẩn Wazo API
+    try {
+      await this.sendMessage(
+        roomId,
+        `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|new_room=${newRoom.id}|name="${room.title}"] Nhóm đã được chuyển sang phòng mới.`,
+        'Hệ thống',
+      )
+    } catch (e) {
+      /* ignore */
+    }
+
+    // Ẩn phòng cũ ngay lập tức khỏi RAM
+    this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
+    if (this.activeRoomId === roomId) {
+      this.setActiveRoomId(newRoom.id)
+    }
+    this.saveRooms()
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
+    }
+
+    // Gửi tin nhắn chào mừng/thông báo vào phòng mới
+    try {
+      const addedDesc = addedNames.length > 0 ? `: [${addedNames.join(', ')}]` : ''
+      await this.sendMessage(
+        newRoom.id,
+        `👋 [${myName}] đã thêm thành viên mới vào nhóm thảo luận${addedDesc}.`,
+        'Hệ thống',
+      )
+    } catch (e) {
+      /* ignore */
+    }
+
+    return newRoom
+  }
+
+  /**
    * Giải tán / Xóa phòng nhóm bằng Tombstone System Message
    * Lưu trên Wazo server, các thiết bị khi tải phòng sẽ tự động ẩn phòng đã đóng
    * CHỈ áp dụng cho phòng nhóm (!isDirect), bảo toàn tuyệt đối kênh liên lạc 1-1

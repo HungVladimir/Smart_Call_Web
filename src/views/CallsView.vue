@@ -51,7 +51,7 @@
     </div>
 
     <!-- Main Adaptive 3-Tier Grid Layout -->
-    <div class="calls-grid-layout" :class="`mobile-show-${mobileTab}`">
+    <div class="calls-grid-layout" :class="[`mobile-show-${mobileTab}`, { 'is-active-call': isCalling, 'is-idle': !isCalling }]">
       <!-- CỘT 1: BÀN PHÍM SỐ (DIALER) -->
       <section class="dialer-col">
         <div class="dialer-box">
@@ -65,6 +65,66 @@
               @keyup.enter="handleDial"
             />
           </div>
+
+          <!-- SMART CONTACT PREVIEW KHI GÕ SỐ (HIỂN THỊ DƯỚI THANH NHẬP SỐ KHI RẢNH) -->
+          <transition name="preview-fade">
+            <div
+              v-if="extension && !isCalling"
+              class="smart-contact-preview-card"
+              :class="{ 'has-contact': Boolean(matchedDialContact) }"
+            >
+              <template v-if="matchedDialContact">
+                <div class="preview-avatar" :style="{ backgroundColor: dialAvatarBg }">
+                  {{ dialAvatarText }}
+                </div>
+                <div class="preview-info">
+                  <div class="preview-header-line">
+                    <span class="preview-name">{{ matchedDialContact.name }}</span>
+                    <span v-if="matchedDialContact.dept" class="preview-dept-badge">{{ matchedDialContact.dept }}</span>
+                  </div>
+                  <div class="preview-meta-line">
+                    <span class="preview-status-dot" :class="matchedDialContact.status || 'offline'"></span>
+                    <span class="preview-status-label">{{ matchedDialContact.statusLabel || 'Ngoại tuyến' }}</span>
+                    <span class="preview-sep">•</span>
+                    <span class="preview-ext-number">Máy lẻ: {{ extension }}</span>
+                  </div>
+                </div>
+                <button
+                  class="preview-call-action-btn"
+                  :disabled="isCalling || isDialing"
+                  title="Bấm gọi ngay"
+                  @click="handleDial"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z"/>
+                  </svg>
+                </button>
+              </template>
+              <template v-else>
+                <div class="preview-avatar unknown-avatar">
+                  <span>#</span>
+                </div>
+                <div class="preview-info">
+                  <div class="preview-header-line">
+                    <span class="preview-name">Máy lẻ {{ extension }}</span>
+                  </div>
+                  <div class="preview-meta-line">
+                    <span class="preview-unknown-note">Số nội bộ chưa lưu trong danh bạ</span>
+                  </div>
+                </div>
+                <button
+                  class="preview-call-action-btn"
+                  :disabled="isCalling || isDialing"
+                  title="Bấm gọi ngay"
+                  @click="handleDial"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z"/>
+                  </svg>
+                </button>
+              </template>
+            </div>
+          </transition>
 
           <div class="keypad-grid">
             <button v-for="k in keys" :key="k.num" class="key-btn" @click="pressKey(k.num)">
@@ -120,103 +180,49 @@
         </div>
       </section>
 
-      <!-- CỘT 2: TRẠNG THÁI CUỘC GỌI (CALL STATUS - COLLAPSIBLE) -->
-      <section class="status-col" :class="{ 'is-active-call': isCalling, 'is-idle': !isCalling }">
+      <!-- CỘT 2: TRẠNG THÁI CUỘC GỌI (CALL STATUS - COLLAPSIBLE - CHỈ HIỂN THỊ KHI ĐANG GỌI) -->
+      <section v-if="isCalling" class="status-col is-active-call">
         <div
-          class="call-status-box"
-          :class="{
-            inCall: isCalling,
-            isRinging: callState === 'ringing',
-            compactIdle: !isCalling,
-          }"
+          class="call-status-box inCall"
+          :class="{ isRinging: callState === 'ringing' }"
         >
-          <!-- Giao diện khi Rảnh (Idle) trên màn hình Tablet / Laptop nhỏ -->
-          <div v-if="!isCalling" class="idle-collapsed-bar">
-            <div class="idle-sip-badge">
-              <span class="sip-dot" :class="isSipOnline ? 'online' : 'offline'"></span>
-              <span class="sip-text">{{ extension ? `Đang nhập số: ${extension}` : 'Cuộc Gọi Thoại Nội Bộ' }}</span>
-            </div>
-            <div class="idle-note">
-              {{ extension ? (matchedDialContact ? matchedDialContact.name : 'Số nội bộ') : 'Sẵn sàng gọi thoại' }}
-            </div>
-          </div>
-
-          <!-- Giao diện Đầy đủ khi Đang Gọi hoặc trên Desktop -->
-          <div class="status-full-content" :class="{ 'hide-on-tablet-idle': !isCalling }">
+          <!-- Giao diện Đầy đủ khi Đang Gọi -->
+          <div class="status-full-content">
             <!-- 1. Trạng thái Đang Gọi (Active Call / Ringing / Talking) -->
-            <template v-if="isCalling">
-              <div
-                class="call-avatar"
-                :class="{ 
-                  pulsing: isCalling, 
-                  ringingPulse: callState === 'ringing',
-                  groupCallAvatar: isGroupCall
-                }"
-                :style="{ backgroundColor: activeCallAvatarBg }"
-              >
-                <span>{{ activeCallAvatarText }}</span>
-              </div>
+            <div
+              class="call-avatar pulsing"
+              :class="{ 
+                ringingPulse: callState === 'ringing',
+                groupCallAvatar: isGroupCall
+              }"
+              :style="{ backgroundColor: activeCallAvatarBg }"
+            >
+              <span>{{ activeCallAvatarText }}</span>
+            </div>
 
-              <div class="caller-details">
-                <div v-if="isGroupCall" class="group-call-badge-tag">
-                  👥 Cuộc gọi nhóm Ad-hoc
-                </div>
-                <h2 class="caller-title">{{ activeCallTitle }}</h2>
-                <div v-if="activeCallDept" class="caller-dept-badge">{{ activeCallDept }}</div>
-                <p class="duration-text" :class="{ ringingText: callState === 'ringing' }">
-                  {{ durationText }}
-                </p>
-                <div v-if="isGroupCall && groupMembersSummary" class="group-members-summary-text">
-                  Thành viên: {{ groupMembersSummary }}
-                </div>
-                <div v-if="isGroupCall && pendingRingingMembers.length > 0" class="group-pending-summary-text">
-                  <span class="connecting-pulse-dot">⏳</span> Đang kết nối {{ pendingRingingMembers.join(', ') }}...
-                </div>
-                <p v-if="dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
-                <div v-if="isRecording" class="recording-indicator-tag">
-                  <span class="rec-pulse-dot">●</span> {{ formattedRecordingDuration }} Đang ghi âm
-                </div>
+            <div class="caller-details">
+              <div v-if="isGroupCall" class="group-call-badge-tag">
+                👥 Cuộc gọi nhóm Ad-hoc
               </div>
-            </template>
-
-            <!-- 2. Trạng thái Đang Gõ Số Máy Lẻ (Dialing extension) -->
-            <template v-else-if="extension">
-              <div
-                class="call-avatar"
-                :style="{ backgroundColor: dialAvatarBg }"
-              >
-                <span>{{ dialAvatarText }}</span>
+              <h2 class="caller-title">{{ activeCallTitle }}</h2>
+              <div v-if="activeCallDept" class="caller-dept-badge">{{ activeCallDept }}</div>
+              <p class="duration-text" :class="{ ringingText: callState === 'ringing' }">
+                {{ durationText }}
+              </p>
+              <div v-if="isGroupCall && groupMembersSummary" class="group-members-summary-text">
+                Thành viên: {{ groupMembersSummary }}
               </div>
-
-              <div class="caller-details">
-                <h2 class="caller-title">{{ dialTitle }}</h2>
-                <div v-if="matchedDialContact?.dept" class="caller-dept-badge">
-                  {{ matchedDialContact.dept }}
-                </div>
-                <div v-if="matchedDialContact" class="dialer-status-row">
-                  <span class="status-dot-inline" :class="matchedDialContact.status || 'offline'"></span>
-                  <span class="status-label-text">{{ matchedDialContact.statusLabel || 'Ngoại tuyến' }}</span>
-                  <span class="status-sep">•</span>
-                  <span class="status-ext-text">Máy lẻ: {{ extension }}</span>
-                </div>
-                <p v-else class="idle-unknown-note">Số nội bộ chưa có trong danh bạ</p>
+              <div v-if="isGroupCall && pendingRingingMembers.length > 0" class="group-pending-summary-text">
+                <span class="connecting-pulse-dot">⏳</span> Đang kết nối {{ pendingRingingMembers.join(', ') }}...
               </div>
-            </template>
-
-            <!-- 3. Trạng thái Bàn Phím Trống (Idle) -->
-            <template v-else>
-              <div class="call-avatar idle-avatar">
-                <span>📞</span>
+              <p v-if="dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
+              <div v-if="isRecording" class="recording-indicator-tag">
+                <span class="rec-pulse-dot">●</span> {{ formattedRecordingDuration }} Đang ghi âm
               </div>
-
-              <div class="caller-details">
-                <h2 class="caller-title">Cuộc Gọi Thoại Nội Bộ</h2>
-                <p class="idle-guide-text">Bấm phím số bên dưới hoặc chọn nhanh từ danh bạ bên phải</p>
-              </div>
-            </template>
+            </div>
 
             <!-- Hàng nút điều khiển cuộc gọi (chỉ hiển thị khi đang có cuộc gọi hoạt động) -->
-            <div v-if="isCalling" class="controls-row">
+            <div class="controls-row">
               <!-- Nút Tắt/Bật Micro (Mute) -->
               <button
                 class="control-btn"
@@ -360,28 +366,11 @@
             </button>
           </div>
 
-          <!-- Filter Tabs: Dynamic Slider + Cài đặt ⚙️ -->
-          <div class="panel-tabs-bar">
-            <!-- Nút cuộn trái khi > 5 tabs -->
-            <button
-              v-if="visibleTabs.length > 5 && canScrollLeft"
-              class="btn-tabs-nav btn-tabs-left"
-              @click="scrollTabs('left')"
-              title="Trượt sang trái"
-            >
-              ‹
-            </button>
-
-            <!-- Container trượt hoặc chia đều -->
+          <!-- Filter Tabs: Dynamic 2-Row Grid (Cách 2) + Cài đặt ⚙️ -->
+          <div class="panel-tabs-bar" :class="{ 'two-rows': visibleTabs.length > 5 }">
             <div
-              ref="tabsSliderRef"
-              class="panel-tabs-slider"
-              :class="{
-                'is-even-split': visibleTabs.length <= 5,
-                'is-slider-mode': visibleTabs.length > 5,
-              }"
-              @wheel.passive="onTabsWheel"
-              @scroll="checkScrollButtons"
+              class="panel-tabs-grid"
+              :style="panelTabsGridStyle"
             >
               <button
                 v-for="tab in visibleTabs"
@@ -440,16 +429,6 @@
                 <span v-else-if="tab.id === 'group_call'" class="tab-badge badge-group">{{ groupCallOnlineCount }}</span>
               </button>
             </div>
-
-            <!-- Nút cuộn phải khi > 5 tabs -->
-            <button
-              v-if="visibleTabs.length > 5 && canScrollRight"
-              class="btn-tabs-nav btn-tabs-right"
-              @click="scrollTabs('right')"
-              title="Trượt sang phải"
-            >
-              ›
-            </button>
 
             <!-- Nút bánh răng Cài đặt hiển thị tab -->
             <button
@@ -1215,12 +1194,24 @@ const loadSavedVisibleTabs = () => {
 
 const visibleTabIds = ref(loadSavedVisibleTabs())
 const showTabConfigModal = ref(false)
-const tabsSliderRef = ref(null)
-const canScrollLeft = ref(false)
-const canScrollRight = ref(false)
 
 const visibleTabs = computed(() => {
   return AVAILABLE_CATEGORY_TABS.filter((t) => visibleTabIds.value.includes(t.id))
+})
+
+// Cân đối động 2 hàng khi > 5 tabs (Cách 2)
+const panelTabsGridStyle = computed(() => {
+  const count = visibleTabs.value.length
+  if (count <= 5) {
+    return {
+      gridTemplateColumns: `repeat(${count || 1}, minmax(0, 1fr))`,
+    }
+  }
+  // Khi > 5 tabs (tối đa 10): cân đối 2 hàng (ví dụ 6 tabs chia 3 + 3, 7 tabs chia 4 + 3)
+  const cols = Math.ceil(count / 2)
+  return {
+    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+  }
 })
 
 const isTabVisible = (id) => visibleTabIds.value.includes(id)
@@ -1248,13 +1239,11 @@ const toggleTabVisibility = (id) => {
     visibleTabIds.value = newIds
   }
   localStorage.setItem('smartcall_visible_tabs', JSON.stringify(visibleTabIds.value))
-  nextTick(() => checkScrollButtons())
 }
 
 const resetTabVisibility = () => {
   visibleTabIds.value = [...DEFAULT_VISIBLE_TAB_IDS]
   localStorage.setItem('smartcall_visible_tabs', JSON.stringify(visibleTabIds.value))
-  nextTick(() => checkScrollButtons())
 }
 
 const groupCallOnlineCount = computed(() => {
@@ -1273,38 +1262,6 @@ const getTabPreviewCount = (id) => {
   if (id === 'group_call') return groupCallOnlineCount.value
   return null
 }
-
-const checkScrollButtons = () => {
-  const el = tabsSliderRef.value
-  if (!el) {
-    canScrollLeft.value = false
-    canScrollRight.value = false
-    return
-  }
-  canScrollLeft.value = el.scrollLeft > 5
-  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 5
-}
-
-const scrollTabs = (direction) => {
-  const el = tabsSliderRef.value
-  if (!el) return
-  const step = 140
-  el.scrollBy({ left: direction === 'left' ? -step : step, behavior: 'smooth' })
-  setTimeout(() => checkScrollButtons(), 300)
-}
-
-const onTabsWheel = (e) => {
-  const el = tabsSliderRef.value
-  if (!el) return
-  if (e.deltaY !== 0 && el.scrollWidth > el.clientWidth) {
-    el.scrollLeft += e.deltaY * 0.7
-    checkScrollButtons()
-  }
-}
-
-watch(visibleTabs, () => {
-  nextTick(() => checkScrollButtons())
-})
 
 // Chuẩn hóa xóa dấu Tiếng Việt phục vụ tìm kiếm chính xác
 const removeVietnameseTones = (str) => {
@@ -1584,13 +1541,10 @@ const handleDial = async () => {
       name: target?.name || route.query?.name,
       dept: target?.dept || route.query?.dept,
     })
-    if (res && res.success) {
-      extension.value = ''
-      cleanCallQueryParams()
-    } else {
-      cleanCallQueryParams()
-    }
+    extension.value = ''
+    cleanCallQueryParams()
   } catch (err) {
+    extension.value = ''
     cleanCallQueryParams()
   }
 }
@@ -1672,9 +1626,9 @@ const handleCallFromPanel = async (contact) => {
     return
   }
 
-  // 5. Khả dụng -> Thiết lập số, chuyển tab di động sang dialer và gọi trực tiếp
+  // 5. Khả dụng -> Khởi tạo gọi trực tiếp, giải phóng ô nhập số để giữ trạng thái rảnh sạch
   const cleanExt = String(contact.number || '').trim()
-  extension.value = cleanExt
+  extension.value = ''
   mobileTab.value = 'dialer'
   await wazoService.validateAndMakeCall(cleanExt, {
     name: contact.name,
@@ -1753,18 +1707,21 @@ const cleanCallQueryParams = () => {
   dtmfLog.value = ''
   if (
     route.query &&
-    (route.query.number || route.query.autocall || route.query.active || route.query.direction)
+    (route.query.number || route.query.autocall || route.query.active || route.query.direction || route.query.name || route.query.dept)
   ) {
     const remainingQuery = { ...route.query }
     delete remainingQuery.number
     delete remainingQuery.autocall
     delete remainingQuery.active
     delete remainingQuery.direction
+    delete remainingQuery.name
+    delete remainingQuery.dept
     router.replace({ path: '/calls', query: remainingQuery }).catch(() => {})
   }
 }
 
 const onCallEnded = () => {
+  extension.value = ''
   cleanCallQueryParams()
 }
 
@@ -1775,6 +1732,7 @@ const hangupCall = () => {
     } catch (e) {}
   }
   wazoService.hangup()
+  extension.value = ''
   cleanCallQueryParams()
 }
 
@@ -1958,6 +1916,11 @@ watch(
   () => route.query.number,
   (newNum) => {
     if (newNum) {
+      if (route.query.active === 'true' || isCalling.value) {
+        // Đang trong cuộc gọi (hoặc vừa nhận cuộc gọi từ Modal), không đưa số vào ô nhập bàn phím
+        extension.value = ''
+        return
+      }
       extension.value = String(newNum)
       if (route.query.autocall === 'true') {
         if (!callStore.activeCall && !wazoService.hasActiveCall()) {
@@ -1971,6 +1934,17 @@ watch(
     }
   },
   { immediate: true },
+)
+
+// Lắng nghe trạng thái cuộc gọi kết thúc (Single Source of Truth) để giải phóng ô nhập số về sạch
+watch(
+  () => callStore.activeCall,
+  (newCall, oldCall) => {
+    if (!newCall && oldCall) {
+      extension.value = ''
+      cleanCallQueryParams()
+    }
+  },
 )
 
 const onWindowFocus = () => {
@@ -2141,13 +2115,19 @@ onUnmounted(() => {
    ADAPTIVE 3-TIER GRID SYSTEM
    ========================================================================= */
 
-/* 1. Màn hình Desktop rộng (>= 1200px): 3 Cột Cân Đối (Bàn phím 300px, Đàm thoại 420px, Danh bạ 1fr mở rộng) */
+/* 1. Màn hình Desktop rộng (>= 1200px): Mặc định 2 Cột khi Rảnh (Bàn phím 340px, Danh bạ 1fr mở rộng), 3 Cột khi Đang Gọi (Bàn phím 300px, Đàm thoại 420px, Danh bạ 1fr) */
 .calls-grid-layout {
   display: grid;
-  grid-template-columns: 300px 420px 1fr;
-  grid-template-areas: 'dialer status contacts';
+  grid-template-columns: 340px 1fr;
+  grid-template-areas: 'dialer contacts';
   gap: 20px;
   align-items: stretch;
+  transition: all 0.25s ease;
+}
+
+.calls-grid-layout.is-active-call {
+  grid-template-columns: 300px 420px 1fr;
+  grid-template-areas: 'dialer status contacts';
 }
 
 .dialer-col {
@@ -2183,7 +2163,7 @@ onUnmounted(() => {
   color: #1e293b;
   text-align: center;
   outline: none;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   transition: all 0.2s;
 }
 
@@ -2191,6 +2171,168 @@ onUnmounted(() => {
   border-color: #3b82f6;
   background: white;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+/* --- Smart Contact Preview Card (Hiển thị ngay dưới ô nhập số khi gõ số và không trong cuộc gọi) --- */
+.smart-contact-preview-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.smart-contact-preview-card.has-contact {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.preview-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.preview-avatar.unknown-avatar {
+  background: #94a3b8;
+  color: #ffffff;
+  font-size: 1.1rem;
+}
+
+.preview-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-header-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.preview-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-dept-badge {
+  font-size: 0.7rem;
+  background: #e2e8f0;
+  color: #475569;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.preview-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.preview-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.preview-status-dot.online {
+  background: #22c55e;
+  box-shadow: 0 0 4px #22c55e;
+}
+
+.preview-status-dot.busy {
+  background: #ef4444;
+  box-shadow: 0 0 4px #ef4444;
+}
+
+.preview-status-dot.ringing {
+  background: #f59e0b;
+  box-shadow: 0 0 4px #f59e0b;
+}
+
+.preview-status-dot.offline {
+  background: #94a3b8;
+}
+
+.preview-status-label {
+  font-weight: 500;
+}
+
+.preview-sep {
+  color: #cbd5e1;
+}
+
+.preview-ext-number {
+  font-weight: 600;
+  color: #3b82f6;
+}
+
+.preview-unknown-note {
+  font-style: italic;
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.preview-call-action-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: #22c55e;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 4px rgba(34, 197, 94, 0.25);
+}
+
+.preview-call-action-btn:hover:not(:disabled) {
+  background: #16a34a;
+  transform: scale(1.06);
+}
+
+.preview-call-action-btn:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.preview-fade-enter-active,
+.preview-fade-leave-active {
+  transition: all 0.2s ease;
+}
+
+.preview-fade-enter-from,
+.preview-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .keypad-grid {
@@ -2749,69 +2891,21 @@ onUnmounted(() => {
   align-items: center;
   background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
-  padding: 4px 6px 0;
-  gap: 4px;
+  padding: 6px 8px;
+  gap: 6px;
   position: relative;
-  overflow: hidden;
 }
 
-.panel-tabs-slider {
-  display: flex;
-  align-items: center;
+.panel-tabs-bar.two-rows {
+  align-items: stretch;
+  padding: 6px 8px 6px;
+}
+
+.panel-tabs-grid {
+  display: grid;
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
   gap: 4px;
-  scroll-behavior: smooth;
-}
-
-.panel-tabs-slider::-webkit-scrollbar {
-  display: none;
-}
-
-/* Khi <= 5 danh mục: chia đều 100% chiều rộng */
-.panel-tabs-slider.is-even-split {
-  width: 100%;
-}
-.panel-tabs-slider.is-even-split .panel-tab-btn {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 8px 4px;
-}
-
-/* Khi > 5 danh mục: hiển thị 5 tab trong viewport, phần còn lại trượt */
-.panel-tabs-slider.is-slider-mode .panel-tab-btn {
-  flex: 0 0 calc((100% - 16px) / 5);
-  min-width: 105px;
-  padding: 8px 6px;
-}
-
-.btn-tabs-nav {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 32px;
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  color: #475569;
-  font-size: 1.1rem;
-  font-weight: 700;
-  cursor: pointer;
-  flex-shrink: 0;
-  margin-bottom: 2px;
-  transition: all 0.15s ease;
-  user-select: none;
-}
-
-.btn-tabs-nav:hover {
-  background: #f1f5f9;
-  color: #1e293b;
-  border-color: #94a3b8;
 }
 
 .btn-tab-config {
@@ -2826,7 +2920,7 @@ onUnmounted(() => {
   color: #64748b;
   cursor: pointer;
   flex-shrink: 0;
-  margin-bottom: 2px;
+  align-self: center;
   transition: all 0.15s ease;
 }
 
@@ -2841,17 +2935,19 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  border: none;
-  background: transparent;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
   font-size: 0.8rem;
   font-weight: 600;
   color: #64748b;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
   transition: all 0.2s ease;
   white-space: nowrap;
-  border-radius: 6px 6px 0 0;
-  flex-shrink: 0;
+  border-radius: 6px;
+  padding: 6px 4px;
+  min-width: 0;
+  width: 100%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .panel-tab-btn .tab-label {
@@ -2862,13 +2958,15 @@ onUnmounted(() => {
 
 .panel-tab-btn:hover {
   color: #1e293b;
-  background: rgba(241, 245, 249, 0.7);
+  background: #f1f5f9;
+  border-color: #cbd5e1;
 }
 
 .panel-tab-btn.active {
   color: #1e88e5;
-  border-bottom-color: #1e88e5;
-  background: #ffffff;
+  border-color: #93c5fd;
+  background: #eff6ff;
+  font-weight: 700;
 }
 
 .tab-icon {
@@ -3316,53 +3414,16 @@ onUnmounted(() => {
 @media (max-width: 1199px) and (min-width: 768px) {
   .calls-grid-layout {
     grid-template-columns: 330px 1fr;
+    grid-template-rows: 1fr;
+    grid-template-areas: 'dialer contacts';
+    gap: 16px 20px;
+  }
+
+  .calls-grid-layout.is-active-call {
     grid-template-rows: auto 1fr;
     grid-template-areas:
       'status contacts'
       'dialer contacts';
-    gap: 16px 20px;
-  }
-
-  /* Khung trạng thái thu gọn khi Idle (~70px) */
-  .status-col.is-idle .call-status-box {
-    min-height: 64px;
-    padding: 12px 16px;
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .status-col.is-idle .hide-on-tablet-idle {
-    display: none;
-  }
-
-  .status-col.is-idle .idle-collapsed-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-  }
-
-  .idle-sip-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.82rem;
-    font-family: monospace;
-    color: #cbd5e1;
-  }
-
-  .idle-sip-badge .sip-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #22c55e;
-    box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
-  }
-
-  .idle-note {
-    font-size: 0.78rem;
-    color: #94a3b8;
   }
 
   /* Khi Active: mở rộng đầy đủ */

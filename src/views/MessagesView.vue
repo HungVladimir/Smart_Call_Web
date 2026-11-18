@@ -269,12 +269,12 @@
       </div>
     </div>
 
-    <!-- MODAL 1: TẠO NHÓM CHAT MỚI (CHUẨN WAZO CHATD API) -->
-    <div v-if="showCreateGroupModal" class="modal-overlay" @click.self="showCreateGroupModal = false">
+    <!-- MODAL 1: TẠO NHÓM CHAT MỚI / THÊM THÀNH VIÊN VÀO NHÓM (CHUẨN WAZO CHATD API) -->
+    <div v-if="showCreateGroupModal" class="modal-overlay" @click.self="closeCreateGroupModal">
       <div class="modal-card">
         <div class="modal-head">
-          <span>👥 TẠO NHÓM CHAT MỚI</span>
-          <button class="btn-close" @click="showCreateGroupModal = false">✖</button>
+          <span>{{ expandingGroupRoomId ? '👥 THÊM THÀNH VIÊN VÀO NHÓM CHAT' : '👥 TẠO NHÓM CHAT MỚI' }}</span>
+          <button class="btn-close" @click="closeCreateGroupModal">✖</button>
         </div>
 
         <div class="modal-body">
@@ -338,14 +338,14 @@
         </div>
 
         <div class="modal-foot">
-          <button class="btn-secondary" @click="showCreateGroupModal = false">Hủy</button>
+          <button class="btn-secondary" @click="closeCreateGroupModal">Hủy</button>
           <button
             class="btn-primary"
             :disabled="selectedGroupMemberUuids.length < 2 || isSubmittingGroup"
             @click="submitCreateGroup"
           >
-            <span v-if="isSubmittingGroup">⏳ Đang tạo...</span>
-            <span v-else>🚀 Tạo nhóm chat</span>
+            <span v-if="isSubmittingGroup">⏳ Đang xử lý...</span>
+            <span v-else>{{ expandingGroupRoomId ? '🚀 Cập nhật nhóm chat' : '🚀 Tạo nhóm chat' }}</span>
           </button>
         </div>
       </div>
@@ -528,6 +528,7 @@ const route = useRoute()
 const router = useRouter()
 
 const showCreateGroupModal = ref(false)
+const expandingGroupRoomId = ref(null)
 const showMemberModal = ref(false)
 const showReadModal = ref(false)
 const inputText = ref('')
@@ -1049,10 +1050,16 @@ onUnmounted(() => {
 })
 
 // Các hàm tương tác Modal Tạo nhóm & Quản lý thành viên (Pure Wazo Chatd API First)
+const closeCreateGroupModal = () => {
+  showCreateGroupModal.value = false
+  expandingGroupRoomId.value = null
+}
+
 const openCreateGroupModal = (initialContact = null, messagesToForward = []) => {
   newGroupTitle.value = ''
   groupContactSearch.value = ''
   selectedGroupMemberUuids.value = []
+  expandingGroupRoomId.value = null
   pendingForwardMessages.value = Array.isArray(messagesToForward) ? [...messagesToForward] : []
 
   // Đảm bảo danh bạ đã nạp đầy đủ
@@ -1099,12 +1106,23 @@ const submitCreateGroup = async () => {
       title = `Nhóm [${chosenNames.join(', ')}...]`
     }
 
-    const createdRoom = await chatService.createGroupRoom(
-      title,
-      selectedGroupMemberUuids.value,
-      pendingForwardMessages.value,
-    )
-    showCreateGroupModal.value = false
+    let createdRoom = null
+    const isExpanding = Boolean(expandingGroupRoomId.value)
+    if (isExpanding) {
+      createdRoom = await chatService.addMembersToGroup(
+        expandingGroupRoomId.value,
+        selectedGroupMemberUuids.value,
+        title,
+      )
+    } else {
+      createdRoom = await chatService.createGroupRoom(
+        title,
+        selectedGroupMemberUuids.value,
+        pendingForwardMessages.value,
+      )
+    }
+
+    closeCreateGroupModal()
     await loadRooms()
     if (createdRoom) {
       await selectRoom(createdRoom)
@@ -1112,7 +1130,9 @@ const submitCreateGroup = async () => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `🎉 Đã tạo nhóm chat [${title}] thành công!`,
+          message: isExpanding
+            ? `🎉 Đã thêm thành viên và chuyển nhóm chat sang phòng mới thành công!`
+            : `🎉 Đã tạo nhóm chat [${title}] thành công!`,
           type: 'success',
         },
       }),
@@ -1196,9 +1216,12 @@ const openAddMoreToGroup = () => {
     alert('Chỉ Quản trị viên nhóm (Admin) mới có quyền thêm thành viên.')
     return
   }
+  const sourceRoomId = currentRoom.value?.id
   showMemberModal.value = false
   const msgs = currentRoom.value?.messages || []
   openCreateGroupModal(null, msgs)
+  // Lưu ID phòng nhóm nguồn cần mở rộng và đóng sau khi tạo nhóm mới
+  expandingGroupRoomId.value = sourceRoomId
   // Chọn sẵn tất cả thành viên của phòng nhóm hiện tại
   if (currentRoom.value?.members) {
     const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || ''
@@ -1208,7 +1231,7 @@ const openAddMoreToGroup = () => {
         selectedGroupMemberUuids.value.push(uId)
       }
     })
-    newGroupTitle.value = `${currentRoom.value.title} (Mở rộng)`
+    newGroupTitle.value = currentRoom.value.title || 'Nhóm thảo luận'
   }
 }
 

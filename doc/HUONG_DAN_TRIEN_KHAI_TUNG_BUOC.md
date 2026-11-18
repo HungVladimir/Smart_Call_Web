@@ -3684,5 +3684,70 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `619ms` (323 modules transformed).
 - Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
 
+---
+
+## BƯỚC 71: TỐI ƯU HÓA TOÀN DIỆN 4 VẤN ĐỀ GIAO DIỆN & NGHIỆP VỤ (TABS CÂN ĐỐI 2 HÀNG, TRIỆT TIÊU ĐỌNG SỐ BÀN PHÍM, TOMBSTONE MỞ RỘNG NHÓM CHAT & GIAO DIỆN 2 CỘT THÔNG MINH)
+
+### 1. Bối cảnh & Các Vấn đề Cần Xử lý:
+1. **Tabs Danh mục Danh bạ bị giật / co giãn view khi cuộn chuột**:
+   - Khi chọn hiển thị 6 tab, chế độ Slider xuất hiện kèm 2 nút cuộn `‹` và `›`.
+   - Lăn chuột kích hoạt sự kiện `@wheel.passive` làm thanh cuộn nhảy, các nút `‹` và `›` liên tục mount/unmount làm giật khung nhìn.
+   - **Giải pháp lựa chọn (Cách 2)**: Cân đối động 2 hàng khi $> 5$ tabs; khi $\le 5$ tabs thì 1 hàng dãn đều 100%; khi 6–10 tabs thì cân đối 2 hàng (ví dụ: 6 tabs chia 3 + 3, 7 tabs chia 4 + 3, 10 tabs chia 5 + 5), loại bỏ hoàn toàn cuộn ngang, nút trượt và sự kiện lăn chuột.
+2. **Đọng số trên bàn phím số & Hiển thị nhầm trạng thái "Đang gọi" sau khi ngắt cuộc gọi**:
+   - Khi có cuộc gọi đến, `App.vue` điều hướng sang `/calls?number=ext&active=true`.
+   - `CallsView.vue` có watcher `route.query.number` đưa `ext` vào `extension.value`. Khi cuộc gọi kết thúc, `extension.value` không được xóa về rỗng.
+   - Khi đối phương (người gọi) tiếp tục cuộc gọi khác, `matchedDialContact` tính toán từ `extension.value` hiển thị "Đang gọi", tạo cảm giác như mình đang gọi đi.
+   - **Giải pháp**: Xóa sạch `extension.value = ''` khi bấm gọi, khi cúp máy, khi cuộc gọi kết thúc (bất kể gọi đi hay gọi đến), và chặn watcher không đưa số vào input nếu đang trong cuộc gọi (`active === 'true'` hoặc `isCalling`).
+3. **Thêm thành viên vào nhóm chat chưa gửi Tombstone đóng nhóm cũ**:
+   - Khi Quản trị viên thêm người vào nhóm chat, hệ thống tạo nhóm mới với danh sách thành viên mở rộng nhưng phòng nhóm cũ vẫn tồn tại song song, không có tin nhắn báo đóng phòng như trường hợp xóa người.
+   - **Giải pháp**: Bổ sung phương thức `addMembersToGroup` trong `chatService.js`, tự động gửi cảnh báo hệ thống và Tombstone `🚫 [SYSTEM:ROOM_CLOSED:by=...|new_room=...|name="..."] Nhóm đã được chuyển sang phòng mới.` sang phòng cũ, ẩn phòng cũ ngay lập tức khỏi RAM và đồng bộ WebSocket thời gian thực tới tất cả thành viên.
+4. **Khung đàm thoại màu đen ở giữa chiếm diện tích vô ích khi rảnh (Idle)**:
+   - Khi rảnh không gọi điện, cột trạng thái đàm thoại ở giữa hiển thị hộp đen chiếm 420px vô ích, thu hẹp không gian danh bạ.
+   - **Giải pháp**:
+     - Khi Rảnh (`!isCalling`): Ẩn hoàn toàn cột trạng thái đàm thoại ở giữa. Bố cục tự động chuyển sang 2 cột rộng rãi: Bàn phím số (340px) + Danh bạ (1fr).
+     - Khi Gõ số máy lẻ: Hiển thị ngay **Thẻ xem trước liên hệ thông minh (Smart Contact Preview Card)** bên dưới ô nhập số với Avatar, Tên, Phòng ban, Chấm trạng thái (🟢 Sẵn sàng / 🔴 Đang bận / ⚪ Ngoại tuyến), Số máy lẻ và nút bấm gọi nhanh.
+     - Khi Đang gọi (`isCalling`): Tự động hiển thị cột đàm thoại đầy đủ với các phím điều khiển (Mute, Add Member, Record, Hangup).
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+1. **`src/services/chatService.js`**:
+   - Bổ sung phương thức `addMembersToGroup(roomId, allMemberUuids, customTitle = null)`:
+     + Tạo phòng nhóm mới bằng `createGroupRoom`.
+     + Gửi thông báo chuyển giao sang phòng cũ: `⚠️ Nhóm đã được Quản trị viên (...) thêm thành viên (+...) và chuyển sang phòng mới.`.
+     + Đóng phòng cũ bằng Tombstone: `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|new_room=${newRoom.id}|name="${room.title}"] Nhóm đã được chuyển sang phòng mới.`.
+     + Lọc phòng cũ khỏi `this.rooms`, kích hoạt `smartcall-room-closed`, chuyển phòng kích hoạt sang phòng mới, và gửi lời chào mừng vào phòng mới.
+2. **`src/views/MessagesView.vue`**:
+   - Khai báo `expandingGroupRoomId = ref(null)` để lưu ID phòng nhóm nguồn cần mở rộng.
+   - Trong `openAddMoreToGroup`: Gán `expandingGroupRoomId.value = currentRoom.value.id`.
+   - Trong `closeCreateGroupModal`: Reset `expandingGroupRoomId.value = null`.
+   - Trong `submitCreateGroup`: Nếu có `expandingGroupRoomId`, gọi `chatService.addMembersToGroup`, ngược lại gọi `chatService.createGroupRoom`.
+   - Động hóa tiêu đề Modal (`👥 THÊM THÀNH VIÊN VÀO NHÓM CHAT`) và nút Submit (`🚀 Cập nhật nhóm chat`).
+3. **`src/views/CallsView.vue`**:
+   - **Tabs Danh bạ (Cách 2)**:
+     + Thay thế toàn bộ Slider bằng Grid 2 hàng cân đối động:
+       ```javascript
+       const panelTabsGridStyle = computed(() => {
+         const count = visibleTabs.value.length
+         if (count <= 5) return { gridTemplateColumns: `repeat(${count || 1}, minmax(0, 1fr))` }
+         const cols = Math.ceil(count / 2)
+         return { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
+       })
+       ```
+     + Loại bỏ hoàn toàn `tabsSliderRef`, `canScrollLeft`, `canScrollRight`, `checkScrollButtons`, `scrollTabs`, `onTabsWheel`, và các nút `btn-tabs-nav` (`‹` và `›`).
+   - **Triệt tiêu Đọng số Bàn phím & Trạng thái rảnh sạch**:
+     + `onCallEnded()`: Thêm `extension.value = ''`.
+     + `hangupCall()`: Thêm `extension.value = ''`.
+     + `handleCallFromPanel()`: Đổi `extension.value = cleanExt` thành `extension.value = ''`.
+     + `handleDial()`: Reset `extension.value = ''` sau khi gọi.
+     + `watch(() => callStore.activeCall)`: Khi chuyển từ có cuộc gọi sang null (`!newCall && oldCall`), tự động xóa sạch `extension.value = ''` và `cleanCallQueryParams()`.
+     + `watch(() => route.query.number)`: Chặn không ghi số vào `extension.value` nếu `route.query.active === 'true'` hoặc `isCalling.value === true`.
+   - **Bố cục 2 Cột Động & Thẻ Smart Contact Preview**:
+     + Đặt điều kiện `v-if="isCalling"` cho toàn bộ `status-col`.
+     + Thêm Thẻ xem trước liên hệ thông minh `.smart-contact-preview-card` ngay bên dưới ô nhập số khi `extension && !isCalling`.
+     + CSS Grid: Khi rảnh `.calls-grid-layout` là 2 cột `340px 1fr`, khi active `.calls-grid-layout.is-active-call` là 3 cột `300px 420px 1fr`.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `607ms` (323 modules transformed).
+- Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
+
 
 
