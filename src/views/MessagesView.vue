@@ -1260,17 +1260,25 @@ const startVoiceCall = () => {
         detail: { type: 'dial', value: targetExt },
       }),
     )
+    router.push('/calls')
   } else {
     // CUỘC GỌI NHÓM TỨC THỜI (AD-HOC CONFERENCE - THAY THẾ HOÀN TOÀN PHÒNG HỌP TĨNH 8001)
-    const myExt = wazoService.getMyExtension() || callStore?.myExtension || localStorage.getItem('smartcall_extension') || ''
+    const myExt = String(wazoService.getMyExtension() || callStore?.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
+    const myUuid = String(callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || '').trim()
     const memberExts = []
     for (const m of currentRoomMembers.value) {
-      const ext = m.extension || m.number || (m.extra && m.extra.extension)
-      if (ext && String(ext).trim() !== String(myExt).trim()) {
-        const clean = String(ext).trim()
-        if (!memberExts.includes(clean)) {
-          memberExts.push(clean)
-        }
+      const mId = m.id || m.uuid
+      if (myUuid && mId === myUuid) continue
+
+      let ext = m.ext || m.extension || m.number || (m.extra && m.extra.extension)
+      if (!ext && mId) {
+        const c = contactService.findContactByUuid(mId)
+        ext = c?.number || c?.exten || ''
+      }
+
+      const clean = String(ext || '').trim()
+      if (clean && clean !== myExt && !memberExts.includes(clean)) {
+        memberExts.push(clean)
       }
     }
 
@@ -1293,6 +1301,7 @@ const startVoiceCall = () => {
           detail: { type: 'dial', value: memberExts[0] },
         }),
       )
+      router.push('/calls')
       return
     }
 
@@ -1319,6 +1328,9 @@ const startVoiceCall = () => {
         groupTitle: roomTitle,
         roomId: currentRoom.value.id,
       })
+
+      // Điều hướng ngay sang màn hình Gọi điện để theo dõi và điều khiển cuộc gọi
+      router.push('/calls')
 
       window.dispatchEvent(
         new CustomEvent('app-toast', {

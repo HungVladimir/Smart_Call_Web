@@ -86,6 +86,7 @@
 | **70** | Tinh chỉnh 5 Trường hợp Biên (Edge Cases): Chặn Kick Oan khi Logout, Call Escalation 1-1 Lên Nhóm, Dọn dẹp Nhánh Chính Cũ & Giải phóng Toàn diện | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Quality Assurance | **HOÀN THÀNH** ✅ | Chặn thiết bị đang online bị kick nhầm khi thiết bị cũ đăng xuất (lọc isOfflineStatus / state == unavailable); Dọn dẹp sạch cuộc gọi và lưu CDR khi bị kick phiên; Xóa sạch tab client id và session id trong sessionStorage khi logout; Nâng cấp từ cuộc gọi 1-1 lên cuộc gọi nhóm (Call Escalation) biến caller thành Host mời người mới; Gỡ số máy nhánh chính cũ khi hoán đổi nhánh phụ lên tiếp tục cuộc gọi nhóm. |
 | **71** | Tối ưu Toàn diện 4 Vấn đề Giao diện & Nghiệp vụ (Tabs Cân đối 2 Hàng, Triệt tiêu Đọng số Bàn phím, Tombstone Nhóm Chat & Bố cục 2 Cột Động) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu thực tế UI/UX | **HOÀN THÀNH** ✅ | Cân đối động 2 hàng cho panel tabs khi chọn 6-10 tabs, loại bỏ thanh cuộn ngang và nút trượt; Xóa sạch extension.value khi cúp máy, bấm gọi, hoặc chuyển trạng thái; Bổ sung addMembersToGroup phát Tombstone đóng nhóm cũ khi mở rộng nhóm chat; Tự động ẩn cột thoại khi rảnh chuyển layout 2 cột, bổ sung thẻ Smart Contact Preview xem trước thông tin khi gõ số. |
 | **72** | Thiết lập Lớp Bảo vệ Hiện diện Chuyên sâu cho Cuộc gọi Nhóm (Hardened Presence Guards) — Chặn Voicemail Trap & Xung đột Kênh Asterisk | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Tích hợp isContactAvailableForCall vào startGroupCall, addParticipantsToGroupCall và delegateAddParticipantsToHost; Tự động loại bỏ máy lẻ bận/đang đổ chuông/dnd/offline và cảnh báo toast; Fallback gọi 1-1 nếu chỉ còn 1 người; Đồng bộ số đếm badge và bộ lọc tab group_call trong CallsView. |
+| **73** | Nâng cấp Bố cục Cửa Trượt Trung tâm (Center-Expanding Accordion 60fps), Khóa Kích thước Vàng Danh bạ & Sửa Lỗi Call Nhóm Tin nhắn | Trải nghiệm UI/UX & Khớp nối Dữ liệu Chatd | **HOÀN THÀNH** ✅ | Thay thế chuyển đổi DOM v-if bằng Center-Expanding Flexbox chuyển động mượt mà 0.45s không giật; Khóa kích thước vàng danh bạ 580px căn giữa triệt tiêu hoàn toàn cảm giác to thô; Xóa nút call xanh trùng lặp trên preview card; Sửa lỗi đọc trường m.ext và tra cứu danh bạ dự phòng khi gọi nhóm từ phòng chat; Tự động điều hướng /calls khi bắt đầu cuộc gọi từ tin nhắn. |
 
 
 ---
@@ -3787,6 +3788,43 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `652ms` (323 modules transformed).
 - Kiểm tra Git: Mã nguồn sạch sẽ, tuân thủ nghiêm ngặt chuẩn kiến trúc Wazo và quy tắc dự án.
+
+---
+
+## BƯỚC 73: NÂNG CẤP BỐ CỤC CỬA TRƯỢT TRUNG TÂM (CENTER-EXPANDING ACCORDION 60FPS), KHÓA KÍCH THƯỚC VÀNG DANH BẠ & KHẮC PHỤC LỖI CALL NHÓM TỪ TIN NHẮN
+
+### 1. Bối cảnh & Các Vấn đề Cần Xử lý:
+1. **Hiện tượng giật gián đoạn khi bấm gọi (Layout Snap / Reflow)**:
+   - Ở Bước 71, cột thoại dùng `v-if="isCalling"`, khi render thì xuất hiện đột ngột trong 0ms.
+   - Lưới chuyển đổi giữa 2 cột (`340px 1fr`) và 3 cột (`300px 420px 1fr`) khiến trình duyệt reflow layout tức thì: Bàn phím co giật từ 340px $\rightarrow$ 300px, Danh bạ co ép từ 1000px $\rightarrow$ 580px, tạo cảm giác chớp giật liên tục.
+2. **Khung Danh bạ bị "to và thô" khi rảnh**:
+   - Khi ở chế độ 2 cột, Danh bạ chiếm toàn bộ phần còn lại của màn hình (rộng tới hơn 1000px).
+   - Tên và nhãn trạng thái bị trôi xa nhau tạo ra khoảng trống trắng chết 600px ở giữa mỗi hàng.
+3. **Nút call xanh trùng lặp trên thẻ xem trước tìm kiếm**:
+   - Thẻ xem trước hiển thị nút call xanh nhỏ, trùng lặp với nút Gọi to tròn màu xanh ở dưới cùng bàn phím.
+4. **Lỗi cuộc gọi nhóm từ phòng chat tin nhắn**:
+   - Trong `MessagesView.vue`, code chỉ đọc `m.extension || m.number`, trong khi `chatService.js` lưu số máy lẻ ở thuộc tính `m.ext`.
+   - Kết quả: `ext` luôn bị `undefined`, mảng máy lẻ rỗng, luôn báo lỗi: `⚠️ Các thành viên trong nhóm chưa được gán số máy lẻ để thực hiện cuộc gọi nhóm`.
+   - Đồng thời, khi bấm gọi nhóm chưa có lệnh điều hướng sang `/calls` khiến người dùng không thấy bảng điều khiển cuộc gọi.
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+1. **`src/views/CallsView.vue`**:
+   - **Bố cục Cửa trượt Trung tâm (Center-Expanding Accordion)**:
+     + Chuyển đổi `.calls-grid-layout` sang Flexbox căn giữa: `display: flex; justify-content: center; align-items: stretch; max-width: 1400px; margin: 0 auto;`.
+     + **Khóa kích thước vàng Bàn phím & Danh bạ**: Bàn phím cố định `320px`, Danh bạ cố định chuẩn đẹp `580px` (`max-width: 620px`). Hai khối nằm sát nhau (cách nhau 20px) ở trung tâm màn hình, triệt tiêu hoàn toàn khoảng trống chết và cảm giác to thô.
+     + **Cột đàm thoại chuyển động mượt mà 60fps**: Luôn có mặt trong DOM (không dùng `v-if`), khi rảnh co về `width: 0; min-width: 0; max-width: 0; opacity: 0; overflow: hidden; margin-right: 0;`. Khi có cuộc gọi, nở êm ái ra `width: 400px; margin-right: 20px; opacity: 1;` với đường cong `cubic-bezier(0.16, 1, 0.3, 1) 0.45s`.
+     + Bàn phím và Danh bạ trượt êm ái sang 2 bên nhường chỗ cho cột thoại ở giữa. Cả Bàn phím và Danh bạ **không hề thay đổi bề rộng**, triệt tiêu 100% hiện tượng reflow hay giật gián đoạn.
+   - **Gỡ bỏ nút Call xanh nhỏ trên Preview Card**: Xóa nút gọi nhỏ trong template `matchedDialContact` và `unknown-avatar`, người dùng bấm trực tiếp nút Gọi to tròn ở dưới bàn phím hoặc nhấn Enter.
+2. **`src/views/MessagesView.vue`**:
+   - **Sửa lỗi trích xuất số máy lẻ thành viên nhóm**: Đọc ưu tiên `m.ext || m.extension || m.number`.
+   - **Fallback tra cứu danh bạ**: Nếu `ext` chưa có, tự động tra cứu qua `contactService.findContactByUuid(m.id || m.uuid)`.
+   - **Lọc bỏ chính mình**: Bỏ qua `myExt` và `myUuid`.
+   - **Điều hướng mượt mà**: Tự động gọi `router.push('/calls')` sau khi bắt đầu cuộc gọi nhóm hoặc cuộc gọi 1-1 để người dùng theo dõi và điều khiển đàm thoại.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `608ms` (323 modules transformed).
+- Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
+
 
 
 

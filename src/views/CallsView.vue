@@ -89,16 +89,6 @@
                     <span class="preview-ext-number">Máy lẻ: {{ extension }}</span>
                   </div>
                 </div>
-                <button
-                  class="preview-call-action-btn"
-                  :disabled="isCalling || isDialing"
-                  title="Bấm gọi ngay"
-                  @click="handleDial"
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z"/>
-                  </svg>
-                </button>
               </template>
               <template v-else>
                 <div class="preview-avatar unknown-avatar">
@@ -112,16 +102,6 @@
                     <span class="preview-unknown-note">Số nội bộ chưa lưu trong danh bạ</span>
                   </div>
                 </div>
-                <button
-                  class="preview-call-action-btn"
-                  :disabled="isCalling || isDialing"
-                  title="Bấm gọi ngay"
-                  @click="handleDial"
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z"/>
-                  </svg>
-                </button>
               </template>
             </div>
           </transition>
@@ -180,8 +160,8 @@
         </div>
       </section>
 
-      <!-- CỘT 2: TRẠNG THÁI CUỘC GỌI (CALL STATUS - COLLAPSIBLE - CHỈ HIỂN THỊ KHI ĐANG GỌI) -->
-      <section v-if="isCalling" class="status-col is-active-call">
+      <!-- CỘT 2: TRẠNG THÁI CUỘC GỌI (CALL STATUS - CENTER EXPANDING ACCORDION) -->
+      <section class="status-col" :class="{ 'is-active-call': isCalling, 'is-idle': !isCalling }">
         <div
           class="call-status-box inCall"
           :class="{ isRinging: callState === 'ringing' }"
@@ -2112,34 +2092,76 @@ onUnmounted(() => {
 }
 
 /* =========================================================================
-   ADAPTIVE 3-TIER GRID SYSTEM
+   CENTER-EXPANDING ACCORDION SYSTEM (SMOOTH 60FPS ZERO-FLICKER LAYOUT)
    ========================================================================= */
 
-/* 1. Màn hình Desktop rộng (>= 1200px): Mặc định 2 Cột khi Rảnh (Bàn phím 340px, Danh bạ 1fr mở rộng), 3 Cột khi Đang Gọi (Bàn phím 300px, Đàm thoại 420px, Danh bạ 1fr) */
+/* Desktop Layout: Căn giữa màn hình, Bàn phím 320px, Danh bạ 580px cố định (hết to thô), Cột thoại mở rộng êm ái ở giữa khi gọi */
 .calls-grid-layout {
-  display: grid;
-  grid-template-columns: 340px 1fr;
-  grid-template-areas: 'dialer contacts';
-  gap: 20px;
+  display: flex;
+  justify-content: center;
   align-items: stretch;
-  transition: all 0.25s ease;
-}
-
-.calls-grid-layout.is-active-call {
-  grid-template-columns: 300px 420px 1fr;
-  grid-template-areas: 'dialer status contacts';
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .dialer-col {
-  grid-area: dialer;
+  width: 320px;
+  min-width: 300px;
+  flex-shrink: 0;
+  margin-right: 20px;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Cột đàm thoại ở giữa: Thu hẹp hoàn toàn 0px khi rảnh, mở rộng êm ái 400px khi có cuộc gọi */
 .status-col {
-  grid-area: status;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  margin-right: 0;
+  transform: scale(0.96);
+  visibility: hidden;
+  flex-shrink: 0;
+  transition: width 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              max-width 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              min-width 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              margin-right 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.35s ease,
+              transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              visibility 0.45s ease;
 }
 
+.status-col.is-active-call {
+  width: 400px;
+  min-width: 380px;
+  max-width: 420px;
+  opacity: 1;
+  overflow: visible;
+  pointer-events: auto;
+  margin-right: 20px;
+  transform: scale(1);
+  visibility: visible;
+}
+
+.status-col .call-status-box {
+  width: 400px;
+  max-width: 400px;
+  min-width: 360px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Khung Danh bạ: Bề rộng chuẩn đẹp 580px, không bị dãn bè ngang to thô */
 .contacts-col {
-  grid-area: contacts;
+  width: 580px;
+  max-width: 620px;
+  flex: 0 1 580px;
+  flex-shrink: 0;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* --- Dialer Box --- */
@@ -3409,21 +3431,35 @@ onUnmounted(() => {
 }
 
 /* =========================================================================
-   2. MÀN HÌNH TRUNG BÌNH (Tablet / Laptop nhỏ 768px - 1199px): 2 Cột Tích Hợp
+   2. MÀN HÌNH TRUNG BÌNH (Tablet / Laptop nhỏ 768px - 1199px): Flex Tự co dãn
    ========================================================================= */
 @media (max-width: 1199px) and (min-width: 768px) {
   .calls-grid-layout {
-    grid-template-columns: 330px 1fr;
-    grid-template-rows: 1fr;
-    grid-template-areas: 'dialer contacts';
-    gap: 16px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px;
   }
 
-  .calls-grid-layout.is-active-call {
-    grid-template-rows: auto 1fr;
-    grid-template-areas:
-      'status contacts'
-      'dialer contacts';
+  .dialer-col {
+    width: 300px;
+    margin-right: 0;
+  }
+
+  .status-col.is-active-call {
+    width: 340px;
+    margin-right: 0;
+  }
+
+  .status-col.is-active-call .call-status-box {
+    width: 340px;
+    max-width: 340px;
+    min-width: 300px;
+  }
+
+  .contacts-col {
+    width: 520px;
+    max-width: 100%;
   }
 
   /* Khi Active: mở rộng đầy đủ */
@@ -3468,10 +3504,29 @@ onUnmounted(() => {
     display: none;
   }
 
-  .calls-grid-layout.mobile-show-dialer .dialer-col,
-  .calls-grid-layout.mobile-show-dialer .status-col {
+  .calls-grid-layout.mobile-show-dialer .dialer-col {
     display: block;
+    width: 100%;
+    margin-right: 0;
     margin-bottom: 16px;
+  }
+
+  .calls-grid-layout.mobile-show-dialer .status-col {
+    display: none;
+  }
+
+  .calls-grid-layout.mobile-show-dialer .status-col.is-active-call {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    margin-right: 0;
+    margin-bottom: 16px;
+  }
+
+  .calls-grid-layout.mobile-show-dialer .status-col.is-active-call .call-status-box {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .calls-grid-layout.mobile-show-contacts .dialer-col,
@@ -3481,6 +3536,8 @@ onUnmounted(() => {
 
   .calls-grid-layout.mobile-show-contacts .contacts-col {
     display: block;
+    width: 100%;
+    max-width: 100%;
   }
 
   .call-status-box {
