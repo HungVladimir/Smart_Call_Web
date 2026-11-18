@@ -1901,8 +1901,8 @@ const confirmAddParticipants = async () => {
   const toAdd = [...selectedAddExtensions.value]
   closeAddParticipantModal()
 
-  // Phân quyền Host và Ủy quyền chuẩn Android
-  if (wazoService.isGroupHost) {
+  // Phân quyền Host và Ủy quyền chuẩn Android: Nếu là Host hoặc từ cuộc gọi 1-1 thì tự gọi trực tiếp
+  if (wazoService.isGroupHost || !wazoService.isGroupCall) {
     await wazoService.addParticipantsToGroupCall(toAdd)
   } else {
     const hostExt =

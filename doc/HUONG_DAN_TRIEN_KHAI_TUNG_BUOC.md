@@ -83,6 +83,7 @@
 | **67** | Đồng bộ Toàn diện Giao thức Gọi nhóm V2 theo Chuẩn Ứng dụng Di động (Ủy quyền Host ADD_REQ, Lọc line_state Available, Timeout 30s & Bộ thẻ Realtime) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Tách hàm isContactAvailableForCall kiểm tra line_state == 'available'; Triển khai ủy quyền Host ADD_REQ khi thành viên thêm người; Bổ sung Timer 30s tự động ngắt nhánh phụ khi không nghe máy; Lắng nghe và phát thẻ NOTICE, LEFT; Tối ưu UI hiển thị Bạn, Tên A, Tên B (N người) và trạng thái Đang kết nối. |
 | **68** | Rà soát Toàn diện Codebase Onboarding, Tích hợp Global ErrorHandler, Router Lazy-Loading Code-Splitting & Dọn sạch Rác Tàn dư | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Best Practices Vue 3 | **HOÀN THÀNH** ✅ | Tích hợp app.config.errorHandler và unhandledrejection trong main.js; Tách chunk bất đồng bộ Lazy-loading cho CallsView, MessagesView, HistoryView trong router; Xóa sạch tàn dư smartcall_offline_mode và triệt tiêu fallback hardcode '1002' trong App.vue; Biên soạn báo cáo doc/BAO_CAO_RA_SOAT_CODEBASE_ONBOARDING.md. |
 | **69** | Chuẩn hóa Điều kiện Kết thúc Cuộc gọi Nhóm & Khôi phục Đăng xuất Đơn Thiết bị Tức thì (0.1s) Chuẩn Android | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Khắc phục lỗi nhánh phụ timeout 30s xóa sớm khỏi map làm ngắt nhầm cuộc gọi chính giữa Host và thành viên đã nghe máy; Bổ sung bộ đếm timeout 30s cho nhánh chính đầu tiên; Hàm an toàn isAnyParticipantConnected() đảm bảo duy trì đàm thoại; Cô lập Tab Client ID qua sessionStorage giải quyết xung đột 2 tab cùng trình duyệt; Loại bỏ độ trễ và race condition verifyTokenHealth, khôi phục kick tức thì 0.1s khi phát hiện login thiết bị khác. |
+| **70** | Tinh chỉnh 5 Trường hợp Biên (Edge Cases): Chặn Kick Oan khi Logout, Call Escalation 1-1 Lên Nhóm, Dọn dẹp Nhánh Chính Cũ & Giải phóng Toàn diện | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Quality Assurance | **HOÀN THÀNH** ✅ | Chặn thiết bị đang online bị kick nhầm khi thiết bị cũ đăng xuất (lọc isOfflineStatus / state == unavailable); Dọn dẹp sạch cuộc gọi và lưu CDR khi bị kick phiên; Xóa sạch tab client id và session id trong sessionStorage khi logout; Nâng cấp từ cuộc gọi 1-1 lên cuộc gọi nhóm (Call Escalation) biến caller thành Host mời người mới; Gỡ số máy nhánh chính cũ khi hoán đổi nhánh phụ lên tiếp tục cuộc gọi nhóm. |
 
 
 ---
@@ -3645,5 +3646,43 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi trong `638ms` (323 modules transformed).
 - Kiểm tra Git: Mã nguồn sạch sẽ, không có file rác.
+
+---
+
+## BƯỚC 70: TINH CHỈNH 5 TRƯỜNG HỢP BIÊN (EDGE CASES): CHẶN KICK OAN KHI LOGOUT, CALL ESCALATION 1-1 LÊN NHÓM, DỌN DẸP NHÁNH CHÍNH CŨ & GIẢI PHÓNG TOÀN DIỆN
+
+### 1. Bối cảnh & Các Vấn đề Biên Được Phát hiện:
+1. **Thiết bị cũ Logout vô tình kick thiết bị đang Online**:
+   - Khi Tab A bấm Đăng xuất, hàm `setPresence('unavailable', 'Ngoại tuyến')` tự động gắn thêm tag `smartcall-web`.
+   - Tab B đang hoạt động nhận presence này thấy chứa `smartcall-web` và khác `this.myClientId` nên lầm tưởng là lượt đăng nhập mới và tự kích hoạt `handleSessionKicked()`!
+2. **Cuộc gọi dở dang khi bị kick phiên chưa được giải phóng**:
+   - Khi bị kick, `handleSessionKicked()` chỉ ngắt kết nối SIP Phone mà chưa gọi `_finalizeCallTermination('ended')`, khiến cuộc gọi dở dang vẫn hiển thị ngầm phía sau modal và CDR chưa được lưu.
+3. **Chưa xóa khóa `sessionStorage` khi Đăng xuất thủ công**:
+   - Khi bấm Đăng xuất, `sessionStorage` vẫn lưu `smartcall_tab_client_id` và `smartcall_session_id`.
+4. **Không thể nâng cấp từ cuộc gọi 1-1 lên cuộc gọi nhóm (Call Escalation)**:
+   - Khi đang đàm thoại 1-1 với B, A bấm nút "Mời thêm người" để mời C. Do ban đầu là cuộc gọi 1-1 nên `isGroupHost = false`, hệ thống ủy quyền cho B mời C thay vì A đứng ra làm Host để mời C.
+5. **Nhánh chính cũ bị từ chối/bận/ngắt máy chưa được lọc sạch khỏi danh sách nhóm**:
+   - Khi Host A gọi B và C: B bận/từ chối, C nghe máy. C được chuyển lên làm nhánh chính tiếp tục cuộc gọi, nhưng số máy của B vẫn còn tồn tại trong `groupParticipantExtensions` trên UI.
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+1. **`src/services/wazo.js`**:
+   - **Chặn kick oan khi nhận presence Logout**:
+     + Bổ sung cờ `const isOfflineStatus = data?.state === 'unavailable' || statusStr.includes('Ngoại tuyến') || statusStr.includes('offline')`.
+     + Chỉ kích hoạt `handleSessionKicked()` khi `!isGroupCallTag && !isOfflineStatus`.
+   - **Dọn dẹp cuộc gọi dở dang trong `handleSessionKicked()`**:
+     + Chủ động gọi `this._finalizeCallTermination('ended')` trước khi gọi `this.disconnectPhone()`.
+   - **Dọn sạch `sessionStorage` trong `logout()`**:
+     + Bổ sung xóa `sessionStorage.removeItem('smartcall_tab_client_id')` và `sessionStorage.removeItem('smartcall_session_id')`.
+   - **Triển khai Cơ chế Call Escalation (Nâng cấp từ 1-1 lên Gọi nhóm)**:
+     + Trong `addParticipantsToGroupCall(extensions)`: Nếu `!this.isGroupCall && this.hasActiveCall()`, tự động thiết lập `this.isGroupCall = true`, `this.isGroupHost = true`, `this.groupHostExtension = myExt`, đưa máy đối phương vào nhóm `[myExt, peerExt]`, và quay số gọi các thành viên mới.
+   - **Dọn dẹp số máy nhánh chính cũ khi hoán đổi nhánh phụ**:
+     + Trong `_finalizeCallTermination`: Khi nhánh chính kết thúc và chuyển giao sang nhánh phụ `nextExt`, tự động lọc bỏ `oldPrimaryExt` khỏi `this.groupParticipantExtensions`, cập nhật lại `callStore.activeCall`, phát toast thông báo và phát thẻ NOTICE.
+2. **`src/views/CallsView.vue`**:
+   - Trong `confirmAddParticipants`: Sửa điều kiện `if (wazoService.isGroupHost || !wazoService.isGroupCall)` để cho phép người dùng đang trong cuộc gọi 1-1 trực tiếp gọi `addParticipantsToGroupCall`.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `619ms` (323 modules transformed).
+- Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
+
 
 

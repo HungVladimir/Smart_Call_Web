@@ -344,6 +344,8 @@ class WazoService {
     sessionKeys.forEach((key) => localStorage.removeItem(key))
     try {
       sessionStorage.removeItem('smartcall_client_id')
+      sessionStorage.removeItem('smartcall_tab_client_id')
+      sessionStorage.removeItem('smartcall_session_id')
     } catch (e) {}
     this.clientId = ''
     this.currentClientId = ''
@@ -407,6 +409,7 @@ class WazoService {
     this._isKicked = true
     logger.warn('AUTH', 'Phiên làm việc bị hủy hoặc tài khoản đăng nhập nơi khác.')
     this.stopTokenHeartbeat()
+    this._finalizeCallTermination('ended')
     this.disconnectPhone()
     if (this.eventWs) {
       try {
@@ -894,7 +897,13 @@ class WazoService {
                 statusStr.includes('[NOTICE:') ||
                 statusStr.includes('[LEFT:')
 
-              if (!isGroupCallTag) {
+              // Bỏ qua nếu là sự kiện chuyển sang trạng thái Ngoại tuyến / Logout của thiết bị khác
+              const isOfflineStatus =
+                data?.state === 'unavailable' ||
+                statusStr.includes('Ngoại tuyến') ||
+                statusStr.includes('offline')
+
+              if (!isGroupCallTag && !isOfflineStatus) {
                 const isAndroidDevice = statusStr.includes('smartcall-android')
                 const isOtherWebDevice = statusStr.includes('smartcall-web') && this.myClientId && !statusStr.includes(this.myClientId)
                 const isLegacyOtherWeb = statusStr.includes('sess_') && this.mySessionId && !statusStr.includes(this.mySessionId) && (!this.myClientId || !statusStr.includes(this.myClientId))
@@ -1118,13 +1127,35 @@ class WazoService {
         if (this.secondaryCallSessions.size > 0) {
           const [nextExt, nextSession] = this.secondaryCallSessions.entries().next().value
           logger.info('CALL', `Nhánh chính kết thúc. Tự động chuyển nhánh [${nextExt}] lên làm nhánh chính tiếp tục cuộc gọi nhóm.`)
+          const oldPrimaryExt = callStore.activeCall?.number
           this.secondaryCallSessions.delete(nextExt)
           this.currentCallSession = nextSession
           if (callStore.activeCall) {
             callStore.activeCall.number = nextExt
             callStore.activeCall.session = nextSession
           }
+
+          // Gỡ số máy nhánh chính cũ khỏi groupParticipantExtensions
+          if (oldPrimaryExt) {
+            this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== oldPrimaryExt)
+            const childCallId = this.extensionToWazoCallIdMap.get(oldPrimaryExt)
+            if (childCallId) {
+              this.hangupUserCall(childCallId).catch(() => {})
+              this.extensionToWazoCallIdMap.delete(oldPrimaryExt)
+              this.mergedCallIds.delete(childCallId)
+            }
+          }
+          if (callStore.activeCall) {
+            callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+            callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+          }
+          window.dispatchEvent(
+            new CustomEvent('app-toast', {
+              detail: { message: `⚠️ Nhánh máy lẻ ${oldPrimaryExt || 'chính'} không thể kết nối hoặc đã kết thúc`, type: 'warning' },
+            }),
+          )
           this.broadcastGroupStateViaPresence()
+          this.broadcastNoticeToGroup(`Nhánh máy lẻ ${oldPrimaryExt} không thể kết nối hoặc đã kết thúc`)
           return // Không cúp cuộc gọi chính!
         } else if (this.isAnyParticipantConnected()) {
           logger.info('CALL', 'Nhánh chính WebRTC chuyển trạng thái nhưng cuộc gọi nhóm vẫn đang kết nối thành viên. Duy trì cuộc gọi.')
@@ -2181,8 +2212,25 @@ class WazoService {
   async addParticipantsToGroupCall(extensions = []) {
     const myExt = this.getMyExtension()
 
-    // VẤN ĐỀ 1 (Chuẩn Android): Nếu máy này KHÔNG phải là Chủ phòng (Host) -> Gửi lệnh ủy quyền về cho Chủ phòng
-    if (!this.isGroupHost) {
+    // Nâng cấp từ Cuộc gọi 1-1 lên Cuộc gọi nhóm Ad-hoc (Call Escalation)
+    if (!this.isGroupCall && this.hasActiveCall()) {
+      logger.info('CALL', '👥 Nâng cấp cuộc gọi 1-1 lên cuộc gọi nhóm Ad-hoc Conference...')
+      this.isGroupCall = true
+      this.isGroupHost = true
+      this.groupHostExtension = myExt
+      const peerExt = String(callStore.activeCall?.number || '').trim()
+      this.groupParticipantExtensions = [myExt]
+      if (peerExt && !this.groupParticipantExtensions.includes(peerExt)) {
+        this.groupParticipantExtensions.push(peerExt)
+      }
+      if (callStore.activeCall) {
+        callStore.activeCall.isGroupCall = true
+        callStore.activeCall.isGroupHost = true
+        callStore.activeCall.groupHostExtension = myExt
+        callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+        callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length + extensions.length} người)`
+      }
+    } else if (!this.isGroupHost) {
       const hostExt = this.groupHostExtension || callStore.activeCall?.number
       if (hostExt && hostExt !== myExt) {
         this.delegateAddParticipantsToHost(hostExt, extensions)
