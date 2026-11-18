@@ -108,7 +108,7 @@ onMounted(async () => {
   if (storedLogin !== 'false' && (storedLogin === 'true' || wazoService.isLogged())) {
     isLoggedIn.value = true
     // Tự động khôi phục phiên Wazo từ Token lưu trữ khi có kết nối
-    if (!wazoService.session && localStorage.getItem('smartcall_offline_mode') !== 'true') {
+    if (!wazoService.session) {
       await wazoService.restoreSession()
     }
     tryConnectPhone()
@@ -149,9 +149,6 @@ const handleLoginSuccess = () => {
 }
 
 const tryConnectPhone = async () => {
-  if (localStorage.getItem('smartcall_offline_mode') === 'true') {
-    return
-  }
   try {
     await wazoService.connectPhone()
     showToast('Tổng đài: Kết nối thoại sẵn sàng!', 'success')
@@ -162,7 +159,7 @@ const tryConnectPhone = async () => {
 
 // --- Xử lý sự kiện Modal cuộc gọi đến (Điều hướng qua wazoService) ---
 const onAcceptIncomingCall = (callData) => {
-  const ext = callData?.extension || callData?.number || '1002'
+  const ext = callData?.extension || callData?.number || ''
   wazoService.acceptIncomingCall(callData)
   showToast(`Đã nhận cuộc gọi từ ${callData?.name || ext}!`, 'success')
 
@@ -207,7 +204,6 @@ const handleToastEvent = (event) => {
 const handleLogout = () => {
   wazoService.logout()
   localStorage.setItem('smartcall_logged_in', 'false')
-  localStorage.removeItem('smartcall_offline_mode')
   isLoggedIn.value = false
   router.push('/login')
 }

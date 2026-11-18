@@ -81,6 +81,8 @@
 | **65** | Đồng bộ Cơ chế Single Device Login & Auto-Refresh Token Không Bị Logout Oan | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu Android | **HOÀN THÀNH** ✅ | Tái cấu trúc refreshSessionToken gọi trực tiếp REST API; Tự động cứu phiên khi 1 giờ hết hạn trong restoreSession; Khắc phục WebSocket onclose 4401 tự động refresh và tái kết nối; Kiểm chứng token health trước khi kick presence hoặc unregister. |
 | **66** | Khắc phục Triệt để Lỗi Call Nhóm (Race Condition HTTP 503, Gộp Nhầm Nhánh Phụ Cục Bộ & Thu hồi Kênh Asterisk khi Cúp máy) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu Android | **HOÀN THÀNH** ✅ | Tích hợp Debounce 350ms & Mutex lock triệt tiêu lỗi HTTP 503; Chỉ lấy peerCallId từ talking_to; Khử bỏ gộp nhầm cid của Host; Gọi DELETE /users/me/calls/{cId} khi Host cúp máy giải phóng kênh C; Tự động xử lý khi thành viên rời phòng. |
 | **67** | Đồng bộ Toàn diện Giao thức Gọi nhóm V2 theo Chuẩn Ứng dụng Di động (Ủy quyền Host ADD_REQ, Lọc line_state Available, Timeout 30s & Bộ thẻ Realtime) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Tách hàm isContactAvailableForCall kiểm tra line_state == 'available'; Triển khai ủy quyền Host ADD_REQ khi thành viên thêm người; Bổ sung Timer 30s tự động ngắt nhánh phụ khi không nghe máy; Lắng nghe và phát thẻ NOTICE, LEFT; Tối ưu UI hiển thị Bạn, Tên A, Tên B (N người) và trạng thái Đang kết nối. |
+| **68** | Rà soát Toàn diện Codebase Onboarding, Tích hợp Global ErrorHandler, Router Lazy-Loading Code-Splitting & Dọn sạch Rác Tàn dư | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Best Practices Vue 3 | **HOÀN THÀNH** ✅ | Tích hợp app.config.errorHandler và unhandledrejection trong main.js; Tách chunk bất đồng bộ Lazy-loading cho CallsView, MessagesView, HistoryView trong router; Xóa sạch tàn dư smartcall_offline_mode và triệt tiêu fallback hardcode '1002' trong App.vue; Biên soạn báo cáo doc/BAO_CAO_RA_SOAT_CODEBASE_ONBOARDING.md. |
+
 
 ---
 
@@ -3550,3 +3552,55 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `515ms` (322 modules transformed).
 - Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.
+
+---
+
+## BƯỚC 68: RÀ SOÁT TOÀN DIỆN CODEBASE ONBOARDING, TÍCH HỢP GLOBAL ERRORHANDLER, ROUTER LAZY-LOADING CODE-SPLITTING & DỌN SẠCH RÁC TÀN DƯ
+
+### 1. Bối cảnh & Mục tiêu Rà soát:
+- **Đóng vai trò kỹ sư mới gia nhập dự án**, tiến hành rà soát chuyên sâu 4 entry points: `src/main.js`, `src/App.vue`, `src/router/index.js`, và `src/services/wazo.js`.
+- **Nhận diện các vấn đề nợ kỹ thuật tồn đọng**:
+  1. *Eager Loading gây phình to Bundle ban đầu*: Toàn bộ ~10.000 dòng code của `CallsView.vue` (4.158 dòng), `MessagesView.vue` (2.717 dòng) và `HistoryView.vue` (1.228 dòng) bị nạp chung vào một bundle lớn ngay tại màn hình Login.
+  2. *Thiếu Global Error Handler trong Vue*: Lỗi bất đồng bộ hoặc render template không được bắt có thể làm văng giao diện (màn hình trắng) mà không để lại vết log nào trong `loggerService`.
+  3. *Tàn dư của Mock Data / Offline Mode*: Các nhánh kiểm tra `smartcall_offline_mode` vẫn còn sót lại trong `router/index.js` và `App.vue`.
+  4. *Giá trị fallback hardcode*: Hàm `onAcceptIncomingCall` trong `App.vue` fallback gán số `'1002'` khi dữ liệu cuộc gọi rỗng.
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+
+1. **`src/main.js`**:
+   - Tích hợp `app.config.errorHandler`:
+     ```javascript
+     app.config.errorHandler = (err, instance, info) => {
+       logger.error('VUE_CORE', `Lỗi giao diện tại [${info}]: ${err?.message || err}`, {
+         stack: err?.stack,
+         component: instance?.$options?.name || 'AnonymousComponent',
+       })
+       console.error('[Vue Global Error]', err, info)
+     }
+     ```
+   - Tích hợp `window.addEventListener('unhandledrejection')` để bắt toàn bộ các Promise rejection bất đồng bộ chưa được `try/catch`.
+
+2. **`src/router/index.js`**:
+   - Chuyển `CallsView`, `MessagesView`, `HistoryView` sang cơ chế **Lazy-loading Router** (`() => import(...)`), chỉ giữ `LoginView` tải tĩnh ban đầu:
+     ```javascript
+     { path: '/calls', name: 'Calls', component: () => import('../views/CallsView.vue') },
+     { path: '/messages', name: 'Messages', component: () => import('../views/MessagesView.vue') },
+     { path: '/history', name: 'History', component: () => import('../views/HistoryView.vue') }
+     ```
+   - Xóa bỏ hoàn toàn biến `isOffline` và logic kiểm tra `localStorage.getItem('smartcall_offline_mode') === 'true'`.
+
+3. **`src/App.vue`**:
+   - Dọn sạch logic kiểm tra `smartcall_offline_mode` trong `onMounted`, `tryConnectPhone`, và `handleLogout`.
+   - Triệt tiêu fallback hardcode `'1002'` tại `onAcceptIncomingCall`, chuyển thành `const ext = callData?.extension || callData?.number || ''`.
+
+4. **Biên soạn Báo cáo Onboarding Chuyên sâu**:
+   - Xuất bản tài liệu `doc/BAO_CAO_RA_SOAT_CODEBASE_ONBOARDING.md` ghi nhận toàn bộ bản đồ kiến trúc 5 phân tầng, ma trận nợ kỹ thuật và lộ trình tái cấu trúc chi tiết cho các giai đoạn tiếp theo.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `689ms` (323 modules transformed).
+- **Code-Splitting hoàn hảo**: Tách riêng các file chunk lazy-load độc lập:
+  - `dist/assets/CallsView-CH8WQBE_.js`: 45.11 kB (gzip: 12.72 kB)
+  - `dist/assets/MessagesView-9ZNiIGhh.js`: 32.53 kB (gzip: 10.10 kB)
+  - `dist/assets/HistoryView-UqvceX1d.js`: 9.92 kB (gzip: 3.80 kB)
+- Kiểm tra Git: Trạng thái Git sạch sẽ, sẵn sàng commit và push.
+

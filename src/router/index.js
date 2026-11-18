@@ -1,8 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
-import HistoryView from '../views/HistoryView.vue'
-import CallsView from '../views/CallsView.vue'
-import MessagesView from '../views/MessagesView.vue'
 import { wazoService } from '../services/wazo'
 import { isFeatureEnabled, getFeatures } from '../config/features'
 
@@ -30,19 +27,19 @@ const router = createRouter({
     {
       path: '/calls',
       name: 'Calls',
-      component: CallsView,
+      component: () => import('../views/CallsView.vue'),
       meta: { requiresAuth: true, title: 'Gọi điện & Danh bạ', featureKey: 'calls' },
     },
     {
       path: '/messages',
       name: 'Messages',
-      component: MessagesView,
+      component: () => import('../views/MessagesView.vue'),
       meta: { requiresAuth: true, title: 'Tin nhắn phòng chat', featureKey: 'messages' },
     },
     {
       path: '/history',
       name: 'History',
-      component: HistoryView,
+      component: () => import('../views/HistoryView.vue'),
       meta: { requiresAuth: true, title: 'Lịch sử gọi', featureKey: 'history' },
     },
     {
@@ -58,12 +55,11 @@ router.beforeEach((to) => {
     document.title = `${to.meta.title} - SmartCall Web`
   }
 
-  // Check login: kiểm tra cờ đăng nhập, token phiên làm việc hoặc chế độ thử nghiệm
+  // Check login: kiểm tra cờ đăng nhập và token phiên làm việc Wazo
   const hasSavedToken = Boolean(localStorage.getItem('smartcall_wazo_token'))
-  const isOffline = localStorage.getItem('smartcall_offline_mode') === 'true'
   const isLogged =
     localStorage.getItem('smartcall_logged_in') === 'true' &&
-    (wazoService.isLogged() || hasSavedToken || isOffline)
+    (wazoService.isLogged() || hasSavedToken)
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
 
   if (requiresAuth && !isLogged) {
