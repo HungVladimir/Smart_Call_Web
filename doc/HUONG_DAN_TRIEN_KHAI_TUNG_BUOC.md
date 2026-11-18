@@ -78,6 +78,7 @@
 | **62** | Tích hợp Nút Thêm Người Trong Cuộc gọi, Modal Cuộc gọi đến Đồ họa Hiện đại & Cơ chế Tự động Refresh Token | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Thay thế Hold bằng nút Thêm người (InCallAddParticipantModal); Thiết kế lại IncomingCallModal phong cách Call Card radar pulse; Triển khai refreshSessionToken và lưu Client ID vào localStorage. |
 | **63** | Triệt tiêu Hoàn toàn Tính năng Hold, Khóa Cơ chế Auto-Hold Wazo SDK & Xử lý Tiếng nhạc MOH | Tiêu chuẩn Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Vô hiệu hóa prototype holdSipSession của WebRTCPhone ngăn Asterisk phát Music On Hold; Dọn sạch 100% logic isHeld khỏi wazo.js và CallsView.vue. |
 | **64** | Khắc phục Triệt để Lỗi Mất Giao diện Cuộc gọi Nhóm trên Callee (Đồng bộ Chuẩn Đối chiếu Android WazoSipCallManager) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu | **HOÀN THÀNH** ✅ | Sửa lỗi trích xuất thiếu peerCallId trong syncActiveCallsToAdhocConference; Loại bỏ việc nhét nhầm nhánh phụ Host vào conference gây SIP BYE; Xử lý Callee 2 nghe trước Callee 1; Bỏ qua ON_CALL_CANCELED cause=26; Đăng ký đầy đủ WebSocket adhoc conference events. |
+| **65** | Đồng bộ Cơ chế Single Device Login & Auto-Refresh Token Không Bị Logout Oan | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu Android | **HOÀN THÀNH** ✅ | Tái cấu trúc refreshSessionToken gọi trực tiếp REST API; Tự động cứu phiên khi 1 giờ hết hạn trong restoreSession; Khắc phục WebSocket onclose 4401 tự động refresh và tái kết nối; Kiểm chứng token health trước khi kick presence hoặc unregister. |
 
 ---
 
@@ -3408,23 +3409,43 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `528ms` (322 modules transformed).
 - Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.
 
+---
 
+## BƯỚC 65: ĐỒNG BỘ CƠ CHẾ SINGLE DEVICE LOGIN VÀ AUTO-REFRESH TOKEN KHÔNG BỊ LOGOUT OAN THEO CHUẨN MÃ NGUỒN THAM CHIẾU
 
+### 1. Phân tích Nguyên nhân Gốc rễ & Đối chiếu Mã nguồn Tham chiếu Mẫu (Android):
+- **Hiện tượng**: Tài khoản người dùng thỉnh thoảng bị văng đăng nhập (kicked / logout) trên nền tảng Web mặc dù không có ai đăng nhập vào tài khoản đó.
+- **Đối chiếu mã nguồn tham chiếu mẫu Android (`codeApp1.py`, `codeApp2.py`, `LoginACtivity.py`)**:
+  1. **Cơ chế cấp mới Token tự động khi hết hạn 1 giờ (`forceLogoutOnTokenExpired`)**:
+     - Token xác thực Wazo Auth có thời hạn mặc định 1 giờ (`3600s`).
+     - Khi WebSocket đóng hoặc REST API trả về lỗi 401 do token 1 giờ hết hạn, mã nguồn tham chiếu gọi `sm.forceLogoutOnTokenExpired()`: dùng `refresh_token` gửi `POST /api/auth/0.1/token` với DTO `WazoAuthRequest.forRefreshToken` (`client_id`, `refresh_token`, `expiration: 604800`) để lấy cặp Token mới.
+     - Sau khi có token mới, Android tự động tái kết nối WebSocket và tiếp tục làm việc bình thường, **TUYỆT ĐỐI KHÔNG LOGOUT**.
+     - Android **CHỈ LOGOUT THỰC SỰ (`performHardLogout`)** khi và chỉ khi Wazo Auth trả về mã `401/400/404` đối với chính yêu cầu Refresh Token (nghĩa là refresh_token đã bị thu hồi trên máy chủ do có thiết bị khác đăng nhập).
+     - Đối với các lỗi mạng chập chờn tạm thời (`onFailure` / timeout), Android bỏ qua và giữ nguyên phiên làm việc để thử lại sau, không kick người dùng.
+  2. **Các lỗi sai lệch tồn tại trên Web trước khi sửa**:
+     - **Lỗi 1 (Thủ phạm chính gây logout oan)**: Trong sự kiện `eventWs.onclose`, khi WebSocket đóng với mã `4401` hoặc `expired` do token 1 giờ hết hạn, Web lập tức gọi `handleSessionKicked()` làm văng người dùng ra trang Đăng nhập mà không thử làm mới token bằng `refresh_token`.
+     - **Lỗi 2**: Khi người dùng F5 hoặc mở lại tab trình duyệt, `restoreSession()` gọi `Wazo.Auth.validateToken(token)`. Nếu token cũ đã hết 1 giờ, hàm này thất bại và hệ thống không tự động gọi `refreshSessionToken()` để cứu phiên làm việc.
+     - **Lỗi 3**: Khi có sự kiện `presence` chứa tên thiết bị khác, Web gọi `handleSessionKicked()` một cách mù quáng ngay lập tức mà không kiểm chứng với máy chủ xác thực qua `refresh_token`, dễ bị văng do "Presence Echo" của chính mình hoặc do mạng.
+     - **Lỗi 4**: Hàm `refreshSessionToken()` cũ gọi qua SDK `Wazo.Auth.logInViaRefreshToken(refreshToken)` truyền `client_id` rỗng (`""`), dẫn đến việc máy chủ Wazo Auth từ chối cấp token mới.
 
+### 2. Các File Triển khai & Chi tiết Xử lý:
+1. **`src/services/wazo.js`**:
+   - **Tái cấu trúc `refreshSessionToken()` gọi trực tiếp REST API `POST /api/auth/0.1/token`**:
+     + Truyền đủ `{ client_id, refresh_token, expiration: 604800 }` chuẩn 100% theo DTO `WazoAuthRequest.forRefreshToken` của mã nguồn tham chiếu mẫu.
+     + Lưu trữ đầy đủ `newToken`, `newRefreshToken`, `newSessionUuid` vào `localStorage` và cập nhật phiên làm việc của `Wazo.Auth.setApiToken(newToken)`.
+     + Đánh dấu cờ `this._lastRefreshRevoked = true` khi và chỉ khi Wazo Auth trả về `401/404/400`. Nếu chỉ là lỗi mạng/timeout tạm thời, đánh dấu `this._lastRefreshRevoked = false`.
+   - **Tự động cứu phiên trong `restoreSession()`**:
+     + Khi `validateToken` ban đầu thất bại (do token 1 giờ hết hạn khi tắt máy/đóng tab), tự động kích hoạt `refreshSessionToken()` để khôi phục phiên liên tục không gián đoạn.
+   - **Bảo vệ `openWebSocketEvents()` $\rightarrow$ `this.eventWs.onclose`**:
+     + Khi WebSocket đóng do `4401` hoặc lý do `expired`, không gọi `handleSessionKicked()` mù quáng.
+     + Tự động gọi `verifyTokenHealth(true)` (thực hiện `refreshSessionToken()`). Nếu cấp mới token thành công, tự động mở lại kết nối WebSocket với token mới và giữ nguyên phiên làm việc.
+     + Chỉ ngắt phiên khi máy chủ Wazo Auth từ chối dứt khoát `401/404/400` trên chính Refresh Token (`_lastRefreshRevoked === true`).
+   - **Kiểm chứng đa tầng trước khi kick phiên từ Presence (`chatd_presence_updated`)**:
+     + Khi nhận presence cập nhật từ thiết bị khác, kích hoạt `verifyTokenHealth(true)` để đối chiếu với Wazo Auth.
+     + Nếu Refresh Token đã bị máy chủ xóa/thu hồi bởi thiết bị mới, hệ thống mới phát thông báo và hiển thị modal đăng nhập lại. Nếu chỉ là tín hiệu trễ hoặc thiết bị cũ, phiên vẫn duy trì an toàn.
+   - **Cải tiến `startTokenHeartbeat()` và `Wazo.Phone.on(ON_UNREGISTERED)`**:
+     + Bổ sung điều kiện kiểm tra `this._lastRefreshRevoked`. Tuyệt đối không kick người dùng khi xảy ra mất mạng tạm thời hoặc gián đoạn SIP ngắn hạn.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `538ms` (322 modules transformed).
+- Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.

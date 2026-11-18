@@ -227,7 +227,26 @@ class WazoService {
     if (token) {
       try {
         logger.info('AUTH', 'Đang khôi phục phiên làm việc Wazo từ Token lưu trữ...')
-        this.session = await Wazo.Auth.validateToken(token, refreshToken)
+        this.session = await Wazo.Auth.validateToken(token, refreshToken).catch(() => null)
+
+        // Nếu token 1 giờ đã hết hạn tự nhiên trong lúc đóng tab/trình duyệt, tự động cứu phiên bằng Refresh Token
+        if (!this.session && refreshToken) {
+          logger.info('AUTH', 'Auth Token cũ đã hết hạn (1 giờ), đang tự động khôi phục phiên bằng Refresh Token...')
+          const refreshed = await this.refreshSessionToken()
+          if (refreshed) {
+            const newToken = this.getToken()
+            this.session = await Wazo.Auth.validateToken(newToken, refreshToken).catch(() => null)
+            if (!this.session) {
+              this.session = {
+                token: newToken,
+                refreshToken: localStorage.getItem('smartcall_wazo_refreshToken') || refreshToken,
+                sessionUuid: localStorage.getItem('smartcall_session_uuid') || '',
+                uuid: localStorage.getItem('smartcall_user_uuid') || '',
+              }
+            }
+          }
+        }
+
         if (this.session) {
           this.currentSessionUuid = this.session.sessionUuid || localStorage.getItem('smartcall_session_uuid') || ''
           if (this.currentSessionUuid) {
@@ -493,8 +512,8 @@ class WazoService {
     this._tokenCheckTimer = setInterval(async () => {
       if (this.isLogged() && !this._isKicked) {
         const isHealthy = await this.verifyTokenHealth()
-        if (!isHealthy) {
-          logger.warn('AUTH', 'Token không còn hợp lệ trên Wazo Auth, phiên đã kết thúc!')
+        if (!isHealthy && this._lastRefreshRevoked) {
+          logger.warn('AUTH', 'Token và Refresh Token không còn hợp lệ trên Wazo Auth, phiên đã kết thúc!')
           this.handleSessionKicked()
         }
       }
@@ -515,58 +534,85 @@ class WazoService {
   async refreshSessionToken() {
     if (this._isRefreshingToken) return this._refreshPromise
     const refreshToken = localStorage.getItem('smartcall_wazo_refreshToken')
-    if (!refreshToken) return false
+    if (!refreshToken) {
+      logger.warn('AUTH', 'Không tìm thấy refresh_token trong localStorage để làm mới phiên.')
+      this._lastRefreshRevoked = true
+      return false
+    }
+
+    const clientId = this.myClientId || this.clientId || localStorage.getItem('smartcall_device_client_id') || 'web_client'
+    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
 
     this._isRefreshingToken = true
     this._refreshPromise = (async () => {
       try {
-        logger.info('AUTH', '🔄 Đang tự động làm mới Auth Token qua Refresh Token...')
-        let newSession = null
-        try {
-          newSession = await Wazo.Auth.logInViaRefreshToken(refreshToken)
-        } catch (sdkErr) {
-          logger.warn('AUTH', 'SDK logInViaRefreshToken cảnh báo, thử gọi REST API:', sdkErr.message)
-          const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
-          const res = await fetch(`${host}/api/auth/0.1/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({
-              client_id: this.myClientId || this.clientId,
-              refresh_token: refreshToken,
-              expiration: 604800,
-            }),
-          })
-          if (res.ok) {
-            const data = await res.json()
-            if (data?.data?.token) {
-              newSession = {
-                token: data.data.token,
-                refreshToken: data.data.refreshToken || refreshToken,
-                sessionUuid: data.data.sessionUuid,
-                uuid: data.data.uuid || this.session?.uuid,
+        logger.info('AUTH', `🔄 Đang gửi yêu cầu làm mới Auth Token tới Wazo Auth (client_id: ${clientId})...`)
+
+        // Gửi trực tiếp REST API POST /api/auth/0.1/token chuẩn 100% theo DTO WazoAuthRequest.forRefreshToken
+        const res = await fetch(`${host}/api/auth/0.1/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            client_id: clientId,
+            refresh_token: refreshToken,
+            expiration: 604800,
+          }),
+          signal: AbortSignal.timeout(6000),
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          const payload = data?.data || data
+          const newToken = payload?.token
+          const newRefreshToken = payload?.refresh_token || payload?.refreshToken || refreshToken
+          const newSessionUuid = payload?.session_uuid || payload?.sessionUuid || payload?.uuid
+
+          if (newToken) {
+            localStorage.setItem('smartcall_wazo_token', newToken)
+            localStorage.setItem('smartcall_wazo_refreshToken', newRefreshToken)
+            if (newSessionUuid) {
+              localStorage.setItem('smartcall_session_uuid', newSessionUuid)
+              this.currentSessionUuid = newSessionUuid
+            }
+
+            if (this.session) {
+              this.session.token = newToken
+              this.session.refreshToken = newRefreshToken
+              if (newSessionUuid) this.session.sessionUuid = newSessionUuid
+            } else {
+              this.session = {
+                token: newToken,
+                refreshToken: newRefreshToken,
+                sessionUuid: newSessionUuid,
+                uuid: payload?.uuid || localStorage.getItem('smartcall_user_uuid') || '',
               }
             }
-          }
-        }
 
-        if (newSession && newSession.token) {
-          this.session = { ...(this.session || {}), ...newSession }
-          localStorage.setItem('smartcall_wazo_token', newSession.token)
-          if (newSession.refreshToken) {
-            localStorage.setItem('smartcall_wazo_refreshToken', newSession.refreshToken)
+            try {
+              Wazo.Auth.setApiToken(newToken)
+              Wazo.Auth.setToken?.(newToken)
+            } catch (e) {}
+
+            this._lastRefreshRevoked = false
+            logger.success('AUTH', '🎉 Đã làm mới Auth Token thành công! Phiên làm việc được duy trì liên tục.')
+            return true
           }
-          if (newSession.sessionUuid) {
-            localStorage.setItem('smartcall_session_uuid', newSession.sessionUuid)
-            this.currentSessionUuid = newSession.sessionUuid
-          }
-          try {
-            Wazo.Auth.setApiToken(newSession.token)
-          } catch (e) {}
-          logger.success('AUTH', '🎉 Đã làm mới Auth Token thành công, phiên làm việc được duy trì liên tục!')
-          return true
+        } else if (res.status === 401 || res.status === 404 || res.status === 400) {
+          logger.warn('AUTH', `Refresh token đã bị thu hồi hoặc không hợp lệ trên máy chủ (HTTP ${res.status}).`)
+          this._lastRefreshRevoked = true
+          return false
+        } else {
+          logger.warn('AUTH', `Không thể làm mới token do lỗi máy chủ tạm thời (HTTP ${res.status}).`)
+          this._lastRefreshRevoked = false
+          return false
         }
       } catch (err) {
-        logger.warn('AUTH', 'Không thể làm mới Auth Token qua Refresh Token:', err.message)
+        logger.warn('AUTH', 'Lỗi mạng khi làm mới Auth Token qua Refresh Token:', err.message)
+        this._lastRefreshRevoked = false
+        return false
       } finally {
         this._isRefreshingToken = false
         this._refreshPromise = null
@@ -577,9 +623,18 @@ class WazoService {
     return this._refreshPromise
   }
 
-  async verifyTokenHealth() {
+  async verifyTokenHealth(forceRefresh = false) {
+    this._lastRefreshRevoked = false
     const token = this.getToken()
     if (!token) return false
+
+    if (forceRefresh) {
+      const refreshed = await this.refreshSessionToken()
+      if (refreshed) return true
+      if (this._lastRefreshRevoked) return false
+      return true // Lỗi mạng tạm thời, không kick nhầm
+    }
+
     try {
       const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
       const res = await fetch(`${host}/api/auth/0.1/token/${token}`, {
@@ -592,7 +647,10 @@ class WazoService {
         if (refreshed) {
           return true
         }
-        return false
+        if (this._lastRefreshRevoked) {
+          return false
+        }
+        return true // Lỗi mạng tạm thời, không kick nhầm
       }
       return true
     } catch (e) {
@@ -758,8 +816,15 @@ class WazoService {
                 const isLegacyOtherWeb = statusStr.includes('sess_') && this.mySessionId && !statusStr.includes(this.mySessionId) && !statusStr.includes(this.myClientId)
 
                 if (isAndroidDevice || isOtherWebDevice || isLegacyOtherWeb) {
-                  logger.warn('AUTH', `Tài khoản vừa đăng nhập phiên mới (${statusStr}) trên thiết bị khác!`)
-                  this.handleSessionKicked()
+                  logger.warn('AUTH', `Phát hiện tín hiệu presence đăng nhập mới (${statusStr}) từ thiết bị khác! Đang kiểm chứng phiên...`)
+                  this.verifyTokenHealth(true).then((isValid) => {
+                    if (!isValid && this._lastRefreshRevoked) {
+                      logger.warn('AUTH', 'Phiên làm việc đã bị thu hồi thực sự trên máy chủ bởi thiết bị mới.')
+                      this.handleSessionKicked()
+                    } else {
+                      logger.info('AUTH', 'Phiên làm việc của thiết bị này vẫn hợp lệ, bỏ qua presence echo.')
+                    }
+                  })
                   return
                 }
               }
@@ -800,7 +865,7 @@ class WazoService {
         }
       }
 
-      this.eventWs.onclose = (ev) => {
+      this.eventWs.onclose = async (ev) => {
         const wasKicked =
           ev?.code === 4001 ||
           ev?.code === 4003 ||
@@ -812,16 +877,24 @@ class WazoService {
               ev.reason.toLowerCase().includes('session') ||
               ev.reason.toLowerCase().includes('kicked')))
 
-        if (wasKicked && this.isLogged()) {
-          this.handleSessionKicked()
-          this.eventWs = null
+        this.eventWs = null
+
+        if (wasKicked && this.isLogged() && !this._isKicked) {
+          logger.info('API', `WebSocket đóng (${ev?.code || 'N/A'}: ${ev?.reason || ''}). Đang kiểm chứng phiên với Wazo Auth...`)
+          const isValid = await this.verifyTokenHealth(true)
+          if (!isValid && this._lastRefreshRevoked) {
+            logger.warn('AUTH', 'Phiên làm việc đã bị thu hồi thực sự trên máy chủ (HTTP 401 trên refresh token).')
+            this.handleSessionKicked()
+            return
+          }
+          logger.success('API', 'Đã cấp mới Token thành công sau khi WebSocket đóng. Đang kết nối lại WebSocket...')
+          this.openWebSocketEvents()
           return
         }
 
-        this.eventWs = null
-        if (this.isLogged()) {
+        if (this.isLogged() && !this._isKicked) {
           setTimeout(() => {
-            if (this.isLogged() && !this.eventWs) {
+            if (this.isLogged() && !this.eventWs && !this._isKicked) {
               this.openWebSocketEvents()
             }
           }, 5000)
@@ -1068,7 +1141,7 @@ class WazoService {
 
       if (this.isLogged() && !this._isKicked && localStorage.getItem('smartcall_offline_mode') !== 'true') {
         this.verifyTokenHealth().then((isValid) => {
-          if (!isValid) {
+          if (!isValid && this._lastRefreshRevoked) {
             logger.warn('SIP', 'Phiên SIP bị ngắt do token không còn hợp lệ hoặc phiên đã chuyển sang thiết bị khác!')
             this.handleSessionKicked()
             return
