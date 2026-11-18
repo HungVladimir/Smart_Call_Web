@@ -79,6 +79,7 @@
 | **63** | Triệt tiêu Hoàn toàn Tính năng Hold, Khóa Cơ chế Auto-Hold Wazo SDK & Xử lý Tiếng nhạc MOH | Tiêu chuẩn Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Vô hiệu hóa prototype holdSipSession của WebRTCPhone ngăn Asterisk phát Music On Hold; Dọn sạch 100% logic isHeld khỏi wazo.js và CallsView.vue. |
 | **64** | Khắc phục Triệt để Lỗi Mất Giao diện Cuộc gọi Nhóm trên Callee (Đồng bộ Chuẩn Đối chiếu Android WazoSipCallManager) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu | **HOÀN THÀNH** ✅ | Sửa lỗi trích xuất thiếu peerCallId trong syncActiveCallsToAdhocConference; Loại bỏ việc nhét nhầm nhánh phụ Host vào conference gây SIP BYE; Xử lý Callee 2 nghe trước Callee 1; Bỏ qua ON_CALL_CANCELED cause=26; Đăng ký đầy đủ WebSocket adhoc conference events. |
 | **65** | Đồng bộ Cơ chế Single Device Login & Auto-Refresh Token Không Bị Logout Oan | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu Android | **HOÀN THÀNH** ✅ | Tái cấu trúc refreshSessionToken gọi trực tiếp REST API; Tự động cứu phiên khi 1 giờ hết hạn trong restoreSession; Khắc phục WebSocket onclose 4401 tự động refresh và tái kết nối; Kiểm chứng token health trước khi kick presence hoặc unregister. |
+| **66** | Khắc phục Triệt để Lỗi Call Nhóm (Race Condition HTTP 503, Gộp Nhầm Nhánh Phụ Cục Bộ & Thu hồi Kênh Asterisk khi Cúp máy) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu Android | **HOÀN THÀNH** ✅ | Tích hợp Debounce 350ms & Mutex lock triệt tiêu lỗi HTTP 503; Chỉ lấy peerCallId từ talking_to; Khử bỏ gộp nhầm cid của Host; Gọi DELETE /users/me/calls/{cId} khi Host cúp máy giải phóng kênh C; Tự động xử lý khi thành viên rời phòng. |
 
 ---
 
@@ -3448,4 +3449,50 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `538ms` (322 modules transformed).
+- Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.
+
+---
+
+## BƯỚC 66: KHẮC PHỤC TRIỆT ĐỂ CÁC LỖI CUỘC GỌI NHÓM (RACE CONDITION HTTP 503, GỘP NHẦM NHÁNH PHỤ CỤC BỘ VÀ THU HỒI KÊNH ASTERISK KHI CÚP MÁY)
+
+### 1. Phân tích Nguyên nhân Gốc rễ từ Log Thực tế & Đối chiếu Mã nguồn Tham chiếu Mẫu (Android):
+- **Hiện tượng thực tế từ Log của người dùng**:
+  - Khi Chủ phòng (Host A) gọi nhóm tới 2 thành viên B (1017) và C (1001):
+    + Khi B và C cùng nghe máy: Có lúc A bị disconnect nhưng B và C vẫn đàm thoại với nhau.
+    + Có lúc B bị disconnect ngay sau khi nghe máy, A và C nói chuyện với nhau.
+    + Có lúc A đã cúp máy nhưng C vẫn hiển thị trạng thái màu đỏ ("Đang gọi"), khiến các máy khác không thể gọi cho C.
+- **Phân tích Log chi tiết từ máy chủ**:
+  1. **Race condition gửi 3 request POST tạo Ad-hoc Conference trong 47ms**:
+     - Lúc `13:03:20.070`, `13:03:20.089`, `13:03:20.116`: Sự kiện `ON_CALL_ACCEPTED`, `call_answered` và `call_updated` kích hoạt đồng thời hàm gộp conference.
+     - Yêu cầu đầu tiên thành công tạo Conference (`5afdc023-9947-4a98-ae27-e76c5b71a686`), 2 yêu cầu đến ngay sau đó bị Wazo Calld trả về `HTTP 503 Service Unavailable` do phòng họp đang trong quá trình khởi tạo/khóa tài nguyên Asterisk.
+  2. **Gộp nhầm nhánh phụ cục bộ (Local Leg CID) của chính Host vào Conference**:
+     - Log: `Ad-hoc Conference IDs: Host=[1794981786.1844], Participants=[1794981787.1845, 1794981787.1847]`
+     - Trong đó: `1794981786.1844` là cuộc gọi WebRTC chính của Host. `1794981787.1847` thực chất là cuộc gọi WebRTC thứ 2 của CHÍNH HOST phát ra từ cùng một trình duyệt, không phải kênh đàm thoại của Callee 1001!
+     - Khi đẩy cả 2 kênh WebRTC của cùng một Host vào Ad-hoc ConfBridge, Asterisk phát hiện xung đột và tự động ngắt (SIP BYE / cause 26) kênh `1794981787.1847`, dẫn đến cuộc gọi của 1001 bị rớt tức thì (`ON_CALL_ENDED`).
+  3. **Treo trạng thái đỏ ("Đang gọi") của máy Callee C khi Host cúp máy**:
+     - Khi Host cúp máy, WebRTC Phone của Host chỉ đóng phiên WebRTC cục bộ (`session.terminate()`).
+     - Web trước đây không phát lệnh gọi API `DELETE /api/calld/1.0/users/me/calls/{cId}` lên từng nhánh cuộc gọi Asterisk của các thành viên.
+     - Kênh Asterisk của Callee C vẫn tiếp tục treo trong Asterisk ở trạng thái `talking` hoặc kẹt trong bridge, khiến Presence của C bị giữ nguyên `talking` $\rightarrow$ `busy` ("Đang gọi" màu đỏ).
+
+### 2. Các File Triển khai & Chi tiết Xử lý:
+1. **`src/services/wazo.js`**:
+   - **Tích hợp Debounce 350ms & Mutex Lock (`_isSyncingAdhoc`, `_syncAdhocDebounceTimer`)**:
+     + Đóng gói hàm `syncActiveCallsToAdhocConference()` qua bộ đệm thời gian 350ms và biến khóa cờ `_isSyncingAdhoc`.
+     + Triệt tiêu hoàn toàn hiện tượng 3 request bắn liên tiếp trong 47ms, đảm bảo chỉ có duy nhất 1 request hợp lệ được gửi lên máy chủ Wazo Calld.
+   - **Chỉ lấy Peer Call ID từ trường `talking_to` của Asterisk (Chuẩn Android `WazoSipCallManager.py` dòng 748-755)**:
+     + Tuyệt đối **KHÔNG** dùng fallback gán ID cuộc gọi cục bộ của Host (`secondaryCallId`) vào mảng `participant_call_ids`.
+     + Nếu nhánh vừa nghe máy nhưng Asterisk chưa kịp cập nhật `talking_to`, hệ thống chủ động chờ 300ms rồi truy vấn lại danh sách active calls để lấy đúng ID kênh từ phía máy Callee.
+     + Chỉ tạo phòng khi có từ 2 thành viên trở lên nghe máy (`participantCallIds.length >= 2`). Nếu mới có 1 thành viên nghe máy, duy trì đàm thoại 1-1 trực tiếp và chờ người tiếp theo.
+     + Nếu `activeAdhocConferenceId` đã tồn tại, chỉ thực hiện `addParticipantToAdhocConference()` đối với các thành viên mới nghe máy chưa được gộp.
+   - **Giải phóng và thu hồi toàn bộ kênh Asterisk khi cúp máy (`hangup` & `_finalizeCallTermination`)**:
+     + Duyệt qua toàn bộ danh sách `this.extensionToWazoCallIdMap` và gửi lệnh `hangupUserCall(cId)` (`DELETE /api/calld/1.0/users/me/calls/{cId}`) cho từng nhánh cuộc gọi.
+     + Xóa sạch phòng họp nhóm Ad-hoc (`deleteAdhocConference`) trên máy chủ Wazo Calld.
+     + Giải phóng triệt để kênh thoại Asterisk của tất cả các Callee, đưa Presence của Callee C và các thành viên về trạng thái sẵn sàng (xanh lá cây), triệt tiêu hoàn toàn lỗi kẹt màu đỏ ("Đang gọi").
+   - **Xử lý sự kiện thành viên rời phòng họp (`handleParticipantLeftGroupCall`)**:
+     + Đăng ký sự kiện WebSocket `adhoc_conference_participant_left`, `conference_user_participant_left` và `call_ended`.
+     + Tự động cập nhật danh sách thành viên còn lại trên giao diện và đồng bộ lại chuỗi Presence `GROUP:host:ext1,ext2...`.
+     + Nếu tất cả các thành viên khác đã rời phòng (chỉ còn lại Host), tự động phát lệnh cúp máy kết thúc cuộc gọi.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `625ms` (322 modules transformed).
 - Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.

@@ -58,6 +58,8 @@ class WazoService {
     this.extensionToWazoCallIdMap = new Map()
     this.mergedCallIds = new Set()
     this.secondaryCallSessions = new Map()
+    this._isSyncingAdhoc = false
+    this._syncAdhocDebounceTimer = null
   }
 
   getHostUrl() {
@@ -831,11 +833,9 @@ class WazoService {
             }
           }
 
-          // Khi có nhánh nghe máy trong cuộc gọi nhóm, tự động kích hoạt đồng bộ Ad-hoc Conference
+          // Khi có nhánh nghe máy trong cuộc gọi nhóm, tự động kích hoạt đồng bộ Ad-hoc Conference (Đã có debounce 350ms)
           if ((name === 'call_answered' || name === 'call_updated') && this.isGroupCall && this.isGroupHost) {
-            setTimeout(() => {
-              this.syncActiveCallsToAdhocConference()
-            }, 400)
+            this.syncActiveCallsToAdhocConference()
           }
 
           // Xử lý sự kiện giải tán phòng Ad-hoc Conference từ Chủ phòng
@@ -852,10 +852,12 @@ class WazoService {
             }
           }
 
-          // Xử lý sự kiện thành viên rời phòng Ad-hoc Conference
-          if (name === 'adhoc_conference_participant_left' || name === 'conference_user_participant_left') {
-            const leftCallId = data?.call_id || data?.participant_id
-            logger.info('CALL', `Thành viên rời phòng Ad-hoc Conference: ${leftCallId}`)
+          // Xử lý sự kiện thành viên rời phòng Ad-hoc Conference hoặc gác máy
+          if (name === 'adhoc_conference_participant_left' || name === 'conference_user_participant_left' || name === 'call_ended') {
+            const leftCallId = data?.call_id || data?.participant_id || data?.id
+            if (this.isGroupCall && this.isGroupHost && leftCallId) {
+              this.handleParticipantLeftGroupCall(leftCallId)
+            }
           }
 
           // Chuyển tiếp tới các subscriber của websocketService (chat, call)
@@ -995,9 +997,16 @@ class WazoService {
 
         logger.warn('CALL', `Nhánh phụ [${endedSecExt}] kết thúc (${reason}). Gỡ khỏi nhóm và duy trì các nhánh còn lại.`)
         this.secondaryCallSessions.delete(endedSecExt)
+        const childCallId = this.extensionToWazoCallIdMap.get(endedSecExt)
+        if (childCallId) {
+          this.hangupUserCall(childCallId).catch(() => {})
+          this.extensionToWazoCallIdMap.delete(endedSecExt)
+          this.mergedCallIds.delete(childCallId)
+        }
         this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== endedSecExt)
         if (callStore.activeCall) {
           callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+          callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
         }
         window.dispatchEvent(
           new CustomEvent('app-toast', {
@@ -1088,10 +1097,16 @@ class WazoService {
     this.stopRemoteAudio()
     audioService.stopAllTones()
 
-    // Dọn dẹp Ad-hoc Group Call nếu phiên này là Chủ phòng
+    // Dọn dẹp Ad-hoc Group Call nếu phiên này là Chủ phòng (Bám sát Android lines 2055-2062)
     if (this.isGroupCall && this.isGroupHost) {
       if (this.activeAdhocConferenceId) {
-        this.deleteAdhocConference(this.activeAdhocConferenceId)
+        this.deleteAdhocConference(this.activeAdhocConferenceId).catch(() => {})
+      }
+      const childCallIds = Array.from(this.extensionToWazoCallIdMap.values())
+      for (const cId of childCallIds) {
+        if (cId) {
+          this.hangupUserCall(cId).catch(() => {})
+        }
       }
       for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
         try {
@@ -1391,10 +1406,17 @@ class WazoService {
     logger.info('CALL', 'Thao tác: Người dùng bấm Cúp máy (Hangup)')
     audioService.stopAllTones()
 
-    // 1. Nếu là Chủ phòng gọi nhóm, giải tán Ad-hoc Conference và ngắt tất cả các nhánh phụ
+    // 1. Nếu là Chủ phòng gọi nhóm, giải tán Ad-hoc Conference và ngắt tất cả các nhánh Asterisk của thành viên
+    // (Bám sát 100% Android WazoSipCallManager.py lines 2044-2062)
     if (this.isGroupCall && this.isGroupHost) {
       if (this.activeAdhocConferenceId) {
-        this.deleteAdhocConference(this.activeAdhocConferenceId)
+        this.deleteAdhocConference(this.activeAdhocConferenceId).catch(() => {})
+      }
+      const childCallIds = Array.from(this.extensionToWazoCallIdMap.values())
+      for (const cId of childCallIds) {
+        if (cId) {
+          this.hangupUserCall(cId).catch(() => {})
+        }
       }
       for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
         try {
@@ -2086,28 +2108,108 @@ class WazoService {
 
   /**
    * Đồng bộ các cuộc gọi active vào Ad-hoc Conference qua Wazo Calld REST API
-   * CHỈ kích hoạt khi có ít nhất 2 nhánh đã thực sự nghe máy (talking)
+   * Tích hợp Debounce 350ms & Mutex Lock triệt tiêu hoàn toàn Race Condition (HTTP 503)
    */
-  async syncActiveCallsToAdhocConference() {
+  syncActiveCallsToAdhocConference() {
+    if (!this.hasActiveCall() || !this.isGroupCall || !this.isGroupHost) return
+
+    if (this._syncAdhocDebounceTimer) {
+      clearTimeout(this._syncAdhocDebounceTimer)
+      this._syncAdhocDebounceTimer = null
+    }
+
+    this._syncAdhocDebounceTimer = setTimeout(async () => {
+      this._syncAdhocDebounceTimer = null
+      if (this._isSyncingAdhoc) return
+      this._isSyncingAdhoc = true
+      try {
+        await this._doSyncActiveCallsToAdhocConference()
+      } catch (err) {
+        logger.warn('CALL', 'Lỗi trong quá trình đồng bộ Ad-hoc Conference:', err)
+      } finally {
+        this._isSyncingAdhoc = false
+      }
+    }, 350)
+  }
+
+  async _doSyncActiveCallsToAdhocConference() {
     if (!this.hasActiveCall() || !this.isGroupCall || !this.isGroupHost) return
 
     const activeCalls = await this.getMyActiveCalls()
     if (!activeCalls || activeCalls.length === 0) return
 
-    // Kiểm tra xem có ít nhất 2 cuộc gọi đã ở trạng thái đàm thoại (talking) hay chưa
-    // Kênh Asterisk chỉ được gộp vào Ad-hoc Conference khi đã answered (talking)
-    const talkingCalls = activeCalls.filter((c) => {
-      const isTalking =
-        c.status === 'talking' ||
-        (c.talking_to && typeof c.talking_to === 'object' && Object.keys(c.talking_to).length > 0)
-      return isTalking
-    })
+    // 1. Xác định hostCallId từ primary session của Host
+    let hostCallId = ''
+    const myPrimarySipId = this.currentCallSession?.sipCallId
 
-    // Nếu chỉ có 1 nhánh nghe máy và chưa có phòng họp nhóm:
-    if (talkingCalls.length < 2 && !this.activeAdhocConferenceId) {
-      logger.info('CALL', `Chưa đủ 2 nhánh đàm thoại (hiện có ${talkingCalls.length}/${activeCalls.length} nhánh nghe máy). Chờ thành viên tiếp theo bắt máy...`)
+    for (const callObj of activeCalls) {
+      const cid = callObj.id || callObj.call_id
+      const sipId = callObj.sip_call_id
+      if (myPrimarySipId && sipId === myPrimarySipId) {
+        hostCallId = cid
+        break
+      }
+    }
+    if (!hostCallId && activeCalls.length > 0) {
+      hostCallId = activeCalls[0].id || activeCalls[0].call_id
+    }
+    if (!hostCallId) return
+
+    // 2. Thu thập TẤT CẢ các peerCallId từ talking_to của các cuộc gọi
+    // BÁM SÁT 100% Android WazoSipCallManager.py lines 748-755:
+    // TUYỆT ĐỐI KHÔNG đưa cid (kênh WebRTC cục bộ của Host) vào participant_call_ids!
+    let hasUnbridgedLeg = false
+    for (const callObj of activeCalls) {
+      const cid = callObj.id || callObj.call_id
+      const sipId = callObj.sip_call_id
+      const isTalking =
+        callObj.status === 'talking' ||
+        (callObj.talking_to && typeof callObj.talking_to === 'object' && Object.keys(callObj.talking_to).length > 0)
+
+      if (callObj.talking_to && typeof callObj.talking_to === 'object') {
+        for (const peerId of Object.keys(callObj.talking_to)) {
+          if (peerId && peerId !== hostCallId) {
+            let matchedExt = null
+            for (const [ext, secSession] of this.secondaryCallSessions.entries()) {
+              if (secSession.sipCallId === sipId) {
+                matchedExt = ext
+                break
+              }
+            }
+            if (matchedExt) {
+              this.extensionToWazoCallIdMap.set(matchedExt, peerId)
+            } else if (callStore.activeCall?.number) {
+              this.extensionToWazoCallIdMap.set(callStore.activeCall.number, peerId)
+            }
+          }
+        }
+      } else if (isTalking && cid !== hostCallId) {
+        hasUnbridgedLeg = true
+      }
+    }
+
+    // Nếu có nhánh phụ đã talking nhưng Asterisk chưa kịp link talking_to -> Hẹn giờ thử lại sau 300ms
+    if (hasUnbridgedLeg && this.extensionToWazoCallIdMap.size < 2) {
+      logger.info('CALL', 'Đang đợi máy chủ Asterisk điền talking_to cho nhánh phụ, sẽ thử lại sau 300ms...')
+      setTimeout(() => {
+        if (this.hasActiveCall() && this.isGroupCall && this.isGroupHost) {
+          this.syncActiveCallsToAdhocConference()
+        }
+      }, 300)
+    }
+
+    const participantCallIds = Array.from(new Set(this.extensionToWazoCallIdMap.values())).filter(
+      (id) => id && id !== hostCallId,
+    )
+
+    // Nếu chưa đủ 2 nhánh thành viên (chỉ có Host + 1 người nghe máy) và chưa có phòng họp nhóm:
+    if (participantCallIds.length < 2 && !this.activeAdhocConferenceId) {
+      logger.info(
+        'CALL',
+        `Chưa đủ 2 thành viên đàm thoại (hiện có ${participantCallIds.length} người nghe máy). Duy trì thoại trực tiếp và chờ người tiếp theo...`,
+      )
       // Nếu nhánh chính vẫn đang ringing mà đã có 1 nhánh phụ talking -> Đưa âm thanh nhánh nghe máy lên đàm thoại ngay (Đối chiếu WazoSipCallManager.py line 1780)
-      if (callStore.activeCall && callStore.activeCall.status === 'ringing' && talkingCalls.length === 1) {
+      if (callStore.activeCall && callStore.activeCall.status === 'ringing' && participantCallIds.length === 1) {
         callStore.activeCall.status = 'connected'
         callStore.activeCall.startTime = Date.now()
         audioService.stopRingbackTone()
@@ -2125,49 +2227,10 @@ class WazoService {
       return
     }
 
-    logger.info('CALL', `👥 Bắt đầu đồng bộ Ad-hoc Conference từ ${activeCalls.length} cuộc gọi active trên Wazo Calld (${talkingCalls.length} nhánh đàm thoại)`)
-
-    // 1. Xác định hostCallId từ primary session của Host
-    let hostCallId = ''
-    const myPrimarySipId = this.currentCallSession?.sipCallId
-
-    for (const callObj of activeCalls) {
-      const cid = callObj.id || callObj.call_id
-      const sipId = callObj.sip_call_id
-      if (myPrimarySipId && sipId === myPrimarySipId) {
-        hostCallId = cid
-        break
-      }
-    }
-    if (!hostCallId && activeCalls.length > 0) {
-      hostCallId = activeCalls[0].id || activeCalls[0].call_id
-    }
-
-    // 2. Trích xuất TẤT CẢ các peer call_ids từ talking_to của TẤT CẢ cuộc gọi (ĐỐI CHIẾU CHUẨN ANDROID WazoSipCallManager.py line 747-765)
-    const participantCallIds = []
-
-    for (const callObj of activeCalls) {
-      const cid = callObj.id || callObj.call_id
-      const isHostLeg = cid === hostCallId
-
-      // Duyệt qua talking_to để lấy call_id của đối phương (peerCallId)
-      if (callObj.talking_to && typeof callObj.talking_to === 'object') {
-        for (const peerId of Object.keys(callObj.talking_to)) {
-          if (peerId && peerId !== hostCallId && !participantCallIds.includes(peerId)) {
-            participantCallIds.push(peerId)
-          }
-        }
-      }
-
-      // TUYỆT ĐỐI KHÔNG thêm nhánh phụ cục bộ của Chủ phòng (cid) nếu đã lấy được peerId từ talking_to
-      // Chỉ khi callObj không phải hostCallId VÀ talking_to rỗng thì mới fallback dùng cid
-      const hasPeerInTalkingTo = callObj.talking_to && typeof callObj.talking_to === 'object' && Object.keys(callObj.talking_to).length > 0
-      if (!isHostLeg && !hasPeerInTalkingTo && cid && cid !== hostCallId && !participantCallIds.includes(cid)) {
-        participantCallIds.push(cid)
-      }
-    }
-
-    logger.info('CALL', `Ad-hoc Conference IDs: Host=[${hostCallId}], Participants=[${participantCallIds.join(', ')}]`)
+    logger.info(
+      'CALL',
+      `👥 Bắt đầu đồng bộ Ad-hoc Conference: Host=[${hostCallId}], Participants=[${participantCallIds.join(', ')}]`,
+    )
 
     // Nếu đã có activeAdhocConferenceId: Thêm các participant chưa merge
     if (this.activeAdhocConferenceId) {
@@ -2180,9 +2243,9 @@ class WazoService {
       return
     }
 
-    // Chưa có conference_id: Tạo mới Ad-hoc Conference
+    // Chưa có conference_id: Tạo mới Ad-hoc Conference khi có ít nhất 2 thành viên
     const toMerge = participantCallIds.filter((id) => id !== hostCallId)
-    if (toMerge.length > 0 && hostCallId) {
+    if (toMerge.length >= 2 && hostCallId) {
       toMerge.forEach((id) => this.mergedCallIds.add(id))
       const confId = await this.createAdhocConference(hostCallId, toMerge)
       if (confId) {
@@ -2193,6 +2256,47 @@ class WazoService {
         this.broadcastGroupStateViaPresence()
       } else {
         this.mergedCallIds.clear()
+      }
+    }
+  }
+
+  /**
+   * Xử lý khi có thành viên rời phòng họp nhóm (Callee cúp máy)
+   * Cập nhật danh sách nhóm và nếu chỉ còn 1 người thì tự động kết thúc cuộc gọi
+   */
+  handleParticipantLeftGroupCall(leftCallId) {
+    if (!this.isGroupCall || !this.isGroupHost) return
+
+    let leftExt = null
+    for (const [ext, cId] of this.extensionToWazoCallIdMap.entries()) {
+      if (cId === leftCallId) {
+        leftExt = ext
+        break
+      }
+    }
+
+    if (leftExt) {
+      logger.info('CALL', `Thành viên [${leftExt}] (Call ID: ${leftCallId}) đã rời cuộc gọi nhóm.`)
+      this.extensionToWazoCallIdMap.delete(leftExt)
+      this.mergedCallIds.delete(leftCallId)
+      this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== leftExt)
+      if (callStore.activeCall) {
+        callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+        callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+      }
+      this.broadcastGroupStateViaPresence()
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: { message: `👋 Máy lẻ ${leftExt} đã rời cuộc gọi nhóm.`, type: 'info' },
+        }),
+      )
+
+      // Nếu trong nhóm chỉ còn lại đúng 1 người (chính là Host)
+      const myExt = this.getMyExtension()
+      const remainingOthers = this.groupParticipantExtensions.filter((e) => e !== myExt)
+      if (remainingOthers.length === 0) {
+        logger.info('CALL', 'Tất cả thành viên đã rời nhóm. Tự động kết thúc cuộc gọi.')
+        this.hangup()
       }
     }
   }
@@ -2211,6 +2315,11 @@ class WazoService {
   }
 
   _resetGroupCallState() {
+    if (this._syncAdhocDebounceTimer) {
+      clearTimeout(this._syncAdhocDebounceTimer)
+      this._syncAdhocDebounceTimer = null
+    }
+    this._isSyncingAdhoc = false
     this.activeAdhocConferenceId = ''
     this.isGroupCall = false
     this.isGroupHost = false
