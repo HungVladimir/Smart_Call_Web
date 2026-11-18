@@ -169,6 +169,9 @@
                 <div v-if="isGroupCall && groupMembersSummary" class="group-members-summary-text">
                   Thành viên: {{ groupMembersSummary }}
                 </div>
+                <div v-if="isGroupCall && pendingRingingMembers.length > 0" class="group-pending-summary-text">
+                  <span class="connecting-pulse-dot">⏳</span> Đang kết nối {{ pendingRingingMembers.join(', ') }}...
+                </div>
                 <p v-if="dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
                 <div v-if="isRecording" class="recording-indicator-tag">
                   <span class="rec-pulse-dot">●</span> {{ formattedRecordingDuration }} Đang ghi âm
@@ -595,7 +598,7 @@
                 >
                   <div
                     class="custom-check-box"
-                    :class="{ checked: isContactSelectedForGroup(c), disabled: isSelf(c) }"
+                    :class="{ checked: isContactSelectedForGroup(c), disabled: isSelf(c) || !contactService.isContactAvailableForCall(c) }"
                   >
                     <svg
                       v-if="isContactSelectedForGroup(c)"
@@ -1044,6 +1047,17 @@ const groupMembersSummary = computed(() => {
   return names.join(', ')
 })
 
+const pendingRingingMembers = computed(() => {
+  if (!wazoService.secondaryCallSessions || wazoService.secondaryCallSessions.size === 0) return []
+  const list = []
+  for (const [secExt] of wazoService.secondaryCallSessions.entries()) {
+    const c = contacts.value.find((ct) => String(ct.number || '').trim() === String(secExt).trim()) || contactService.findContactByExtension(secExt)
+    const name = c?.name || `Máy lẻ ${secExt}`
+    list.push(`${name} (${secExt})`)
+  }
+  return list
+})
+
 const activeCallTitle = computed(() => {
   if (!callStore.activeCall) return ''
   if (isGroupCall.value) {
@@ -1320,6 +1334,17 @@ const toggleGroupContactSelection = (c) => {
   if (isSelf(c)) return
   const ext = String(c?.number || '').trim()
   if (!ext) return
+  if (!contactService.isContactAvailableForCall(c)) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `⚠️ Máy lẻ [${c.number || c.name}] hiện đang ${c.statusLabel || 'bận'} hoặc không khả dụng để gọi nhóm!`,
+          type: 'warning',
+        },
+      }),
+    )
+    return
+  }
   const idx = selectedGroupExtensions.value.indexOf(ext)
   if (idx > -1) {
     selectedGroupExtensions.value.splice(idx, 1)
@@ -1335,7 +1360,7 @@ const clearGroupSelection = () => {
 const selectAllOnlineContacts = () => {
   const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
   const onlineExts = contacts.value
-    .filter((c) => c.status !== 'offline' && c.status !== 'unavailable' && String(c.number || '').trim() !== myExt)
+    .filter((c) => contactService.isContactAvailableForCall(c) && String(c.number || '').trim() !== myExt)
     .map((c) => String(c.number || '').trim())
     .filter(Boolean)
   selectedGroupExtensions.value = [...new Set([...selectedGroupExtensions.value, ...onlineExts])]
@@ -1352,6 +1377,21 @@ const handleStartGroupCallFromContacts = async () => {
       }),
     )
     return
+  }
+
+  // Kiểm tra thời gian thực trạng thái khả dụng của từng thành viên trước khi gọi
+  const unavailableList = selectedGroupExtensions.value.filter((ext) => !contactService.isContactAvailableForCall(ext))
+  if (unavailableList.length > 0) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: `⚠️ Máy lẻ [${unavailableList.join(', ')}] hiện đang bận hoặc không khả dụng. Đã tự động bỏ chọn!`,
+          type: 'warning',
+        },
+      }),
+    )
+    selectedGroupExtensions.value = selectedGroupExtensions.value.filter((e) => !unavailableList.includes(e))
+    if (selectedGroupExtensions.value.length < 2) return
   }
 
   if (isCalling.value || isDialing.value) {
@@ -1818,8 +1858,8 @@ const availableAddParticipants = computed(() => {
 
   let list = contacts.value.filter((c) => {
     const ext = String(c.number || '').trim()
-    const isOnline = c.status !== 'offline' && c.status !== 'unavailable'
-    return isOnline && !inCallExts.has(ext)
+    const isAvail = contactService.isContactAvailableForCall(c)
+    return isAvail && !inCallExts.has(ext)
   })
 
   const q = addParticipantSearch.value.trim().toLowerCase()
@@ -1860,7 +1900,17 @@ const confirmAddParticipants = async () => {
   if (selectedAddExtensions.value.length === 0) return
   const toAdd = [...selectedAddExtensions.value]
   closeAddParticipantModal()
-  await wazoService.addParticipantsToGroupCall(toAdd)
+
+  // Phân quyền Host và Ủy quyền chuẩn Android
+  if (wazoService.isGroupHost) {
+    await wazoService.addParticipantsToGroupCall(toAdd)
+  } else {
+    const hostExt =
+      wazoService.groupHostExtension ||
+      callStore.activeCall?.groupHostExtension ||
+      callStore.activeCall?.number
+    wazoService.delegateAddParticipantsToHost(hostExt, toAdd)
+  }
 }
 
 // Helper Avatar
@@ -3670,6 +3720,23 @@ onUnmounted(() => {
   line-height: 1.35;
   max-width: 320px;
   text-align: center;
+}
+
+.group-pending-summary-text {
+  font-size: 0.8rem;
+  color: #d97706;
+  font-weight: 600;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  animation: pulseOpacity 1.5s infinite;
+}
+
+@keyframes pulseOpacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 .call-avatar.groupCallAvatar {

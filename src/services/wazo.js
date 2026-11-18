@@ -60,6 +60,9 @@ class WazoService {
     this.secondaryCallSessions = new Map()
     this._isSyncingAdhoc = false
     this._syncAdhocDebounceTimer = null
+    this._secondaryInviteTimers = new Map()
+    this._processedAddReqIds = new Set()
+    this._processedNoticeIds = new Set()
   }
 
   getHostUrl() {
@@ -805,6 +808,78 @@ class WazoService {
               }
             }
 
+            // 2. Chủ phòng nhận ủy quyền thêm người [ADD_REQ:reqId:hostExt:ext1,ext2] từ máy thành viên
+            if (this.hasActiveCall() && this.isGroupHost && typeof statusText === 'string' && statusText.includes('[ADD_REQ:')) {
+              const start = statusText.indexOf('[ADD_REQ:') + 9
+              const end = statusText.indexOf(']', start)
+              if (end > start) {
+                const content = statusText.substring(start, end).trim()
+                const parts = content.split(':')
+                let reqId = ''
+                let targetHostExt = ''
+                let csvExts = ''
+                if (parts.length >= 3) {
+                  reqId = parts[0].trim()
+                  targetHostExt = parts[1].trim()
+                  csvExts = parts.slice(2).join(':').trim()
+                } else if (parts.length === 2) {
+                  targetHostExt = parts[0].trim()
+                  csvExts = parts[1].trim()
+                }
+
+                const myExt = this.getMyExtension()
+                if (targetHostExt === myExt) {
+                  if (!reqId || !this._processedAddReqIds.has(reqId)) {
+                    if (reqId) this._processedAddReqIds.add(reqId)
+                    const toInvite = csvExts.split(',').map((s) => s.trim()).filter(Boolean)
+                    if (toInvite.length > 0) {
+                      logger.info('CALL', `Chủ phòng (${myExt}) nhận ủy quyền từ thành viên -> Quay số mời: ${toInvite.join(', ')}`)
+                      window.dispatchEvent(
+                        new CustomEvent('app-toast', {
+                          detail: { message: `📥 Nhận yêu cầu thêm ${toInvite.join(', ')} vào nhóm từ thành viên`, type: 'info' },
+                        }),
+                      )
+                      this.addParticipantsToGroupCall(toInvite)
+                    }
+                  }
+                }
+              }
+            }
+
+            // 3. Đồng bộ thông báo nhóm khi nhận tag [NOTICE:noticeId:hostExt:message]
+            if (this.hasActiveCall() && typeof statusText === 'string' && statusText.includes('[NOTICE:')) {
+              const start = statusText.indexOf('[NOTICE:') + 8
+              const end = statusText.indexOf(']', start)
+              if (end > start) {
+                const content = statusText.substring(start, end).trim()
+                const parts = content.split(':')
+                const noticeId = parts[0]?.trim()
+                const noticeMsg = parts.length >= 3 ? parts.slice(2).join(':').trim() : parts.slice(1).join(':').trim()
+                if (noticeId && !this._processedNoticeIds.has(noticeId) && noticeMsg) {
+                  this._processedNoticeIds.add(noticeId)
+                  window.dispatchEvent(
+                    new CustomEvent('app-toast', {
+                      detail: { message: `🔔 ${noticeMsg}`, type: 'warning' },
+                    }),
+                  )
+                }
+              }
+            }
+
+            // 4. Báo rời nhóm tức thì khi nhận tag [LEFT:ext]
+            if (this.hasActiveCall() && typeof statusText === 'string' && statusText.includes('[LEFT:')) {
+              const start = statusText.indexOf('[LEFT:') + 6
+              const end = statusText.indexOf(']', start)
+              if (end > start) {
+                const leftExt = statusText.substring(start, end).trim()
+                const myExt = this.getMyExtension()
+                if (leftExt && leftExt !== myExt && this.groupParticipantExtensions.includes(leftExt)) {
+                  logger.info('CALL', `Nhận thẻ [LEFT:${leftExt}] từ thành viên rời phòng.`)
+                  this.handleParticipantLeftGroupCall(leftExt)
+                }
+              }
+            }
+
             // Single Device Login: Nếu presence của chính user chứa Session ID mới từ thiết bị khác hoặc thiết bị Android
             const myUuid = this.getMyUserUuid()
             const targetUuid = data?.uuid || data?.user_uuid
@@ -987,6 +1062,7 @@ class WazoService {
       }
 
       if (endedSecExt) {
+        this._clearSecondaryLegTimeout(endedSecExt)
         // Nếu đã có Ad-hoc Conference hoạt động, nhánh SIP phụ WebRTC kết thúc do Asterisk chuyển kênh sang ConfBridge
         // -> Tuyệt đối KHÔNG xóa thành viên khỏi nhóm (Đối chiếu WazoSipCallManager.py line 1164)
         if (this.activeAdhocConferenceId) {
@@ -1014,6 +1090,7 @@ class WazoService {
           }),
         )
         this.broadcastGroupStateViaPresence()
+        this.broadcastNoticeToGroup(`Nhánh máy lẻ ${endedSecExt} không thể kết nối hoặc đã rời nhóm`)
         return // Không cúp cuộc gọi chính!
       }
 
@@ -1099,6 +1176,7 @@ class WazoService {
 
     // Dọn dẹp Ad-hoc Group Call nếu phiên này là Chủ phòng (Bám sát Android lines 2055-2062)
     if (this.isGroupCall && this.isGroupHost) {
+      this._clearAllSecondaryLegTimeouts()
       if (this.activeAdhocConferenceId) {
         this.deleteAdhocConference(this.activeAdhocConferenceId).catch(() => {})
       }
@@ -1281,6 +1359,16 @@ class WazoService {
 
       this.startCallDurationTimer()
 
+      // Xóa timer timeout 30s của nhánh phụ nếu đây là nhánh phụ vừa nghe máy
+      const acceptedSipId = callSession?.sipCallId || (callSession?.getId && callSession.getId())
+      for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
+        const secSipId = secSession.sipCallId || (secSession.getId && secSession.getId())
+        if (secSession === callSession || (acceptedSipId && secSipId === acceptedSipId)) {
+          this._clearSecondaryLegTimeout(secExt)
+          break
+        }
+      }
+
       // Tự động đồng bộ các nhánh vào Ad-hoc Conference nếu đang gọi nhóm
       if (this.isGroupCall && this.isGroupHost) {
         setTimeout(() => {
@@ -1409,6 +1497,7 @@ class WazoService {
     // 1. Nếu là Chủ phòng gọi nhóm, giải tán Ad-hoc Conference và ngắt tất cả các nhánh Asterisk của thành viên
     // (Bám sát 100% Android WazoSipCallManager.py lines 2044-2062)
     if (this.isGroupCall && this.isGroupHost) {
+      this._clearAllSecondaryLegTimeouts()
       if (this.activeAdhocConferenceId) {
         this.deleteAdhocConference(this.activeAdhocConferenceId).catch(() => {})
       }
@@ -1426,6 +1515,12 @@ class WazoService {
         }
       }
       this.secondaryCallSessions.clear()
+    } else if (this.isGroupCall && !this.isGroupHost) {
+      // Nếu là thành viên trong cuộc gọi nhóm, phát thẻ [LEFT:myExt] trước khi cúp máy để các máy khác cập nhật tức thì
+      const myExt = this.getMyExtension()
+      if (myExt) {
+        this.setPresence('available', `[LEFT:${myExt}]`)
+      }
     }
 
     const session = callSession || this.currentCallSession || callStore.activeCall?.session
@@ -2057,6 +2152,16 @@ class WazoService {
    */
   async addParticipantsToGroupCall(extensions = []) {
     const myExt = this.getMyExtension()
+
+    // VẤN ĐỀ 1 (Chuẩn Android): Nếu máy này KHÔNG phải là Chủ phòng (Host) -> Gửi lệnh ủy quyền về cho Chủ phòng
+    if (!this.isGroupHost) {
+      const hostExt = this.groupHostExtension || callStore.activeCall?.number
+      if (hostExt && hostExt !== myExt) {
+        this.delegateAddParticipantsToHost(hostExt, extensions)
+        return
+      }
+    }
+
     const toInvite = []
     for (const ext of extensions) {
       const s = String(ext || '').trim()
@@ -2099,11 +2204,107 @@ class WazoService {
 
         if (session) {
           this.secondaryCallSessions.set(ext, session)
+          this._startSecondaryLegTimeout(ext, session)
         }
       } catch (err) {
         logger.warn('CALL', `Không thể gọi nhánh ${ext}:`, err.message || err)
+        this.broadcastNoticeToGroup(`Không thể kết nối máy lẻ ${ext}`)
       }
     }
+  }
+
+  /**
+   * Bắt đầu bộ đếm Timeout 30 giây cho nhánh phụ mời thêm (Chuẩn Android WazoSipCallManager.java)
+   */
+  _startSecondaryLegTimeout(ext, session) {
+    this._clearSecondaryLegTimeout(ext)
+    const timer = setTimeout(() => {
+      this._cancelSecondaryLegOnTimeout(ext)
+    }, 30000)
+    this._secondaryInviteTimers.set(ext, timer)
+    logger.info('CALL', `⏱️ Đã đặt bộ đếm Timeout 30 giây cho nhánh phụ [${ext}].`)
+  }
+
+  _clearSecondaryLegTimeout(ext) {
+    if (this._secondaryInviteTimers.has(ext)) {
+      clearTimeout(this._secondaryInviteTimers.get(ext))
+      this._secondaryInviteTimers.delete(ext)
+    }
+  }
+
+  _clearAllSecondaryLegTimeouts() {
+    for (const [ext, timer] of this._secondaryInviteTimers.entries()) {
+      clearTimeout(timer)
+    }
+    this._secondaryInviteTimers.clear()
+  }
+
+  _cancelSecondaryLegOnTimeout(targetExt) {
+    this._clearSecondaryLegTimeout(targetExt)
+    const session = this.secondaryCallSessions.get(targetExt)
+    if (session) {
+      logger.warn('CALL', `Nhánh phụ [${targetExt}] quá 30 giây không nhấc máy. Tiến hành ngắt kết nối nhánh phụ.`)
+      try {
+        Wazo.Phone.hangup(session)
+      } catch (e) {
+        /* ignore */
+      }
+      this.secondaryCallSessions.delete(targetExt)
+    }
+
+    // Gỡ khỏi groupParticipantExtensions nếu chưa bao giờ kết nối
+    const idx = this.groupParticipantExtensions.indexOf(targetExt)
+    if (idx >= 0) {
+      this.groupParticipantExtensions.splice(idx, 1)
+      if (callStore.activeCall) {
+        callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+        callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+      }
+      this.broadcastGroupStateViaPresence()
+    }
+
+    // Phát thông báo UI cục bộ và phát thẻ NOTICE cho cả nhóm
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `⏱️ Máy lẻ [${targetExt}] không trả lời sau 30 giây.`, type: 'warning' },
+      }),
+    )
+    this.broadcastNoticeToGroup(`Máy lẻ ${targetExt} không trả lời sau 30 giây`)
+  }
+
+  /**
+   * Thành viên ủy quyền cho Chủ phòng đứng ra quay số và gộp vào nhóm
+   * Phát thẻ [ADD_REQ:reqId:hostExt:ext1,ext2] lên Presence
+   */
+  delegateAddParticipantsToHost(hostExt, targetExtensions) {
+    if (!hostExt || !targetExtensions || targetExtensions.length === 0) return
+    const myExt = this.getMyExtension()
+    const toInviteNow = targetExtensions
+      .map((e) => String(e).trim())
+      .filter((e) => e && e !== myExt && e !== hostExt)
+    if (toInviteNow.length === 0) return
+
+    const reqId = Date.now()
+    const reqTag = `[ADD_REQ:${reqId}:${hostExt}:${toInviteNow.join(',')}]`
+    logger.info('CALL', `Máy thành viên ủy quyền cho Chủ phòng (${hostExt}) mời thêm: ${reqTag}`)
+    this.setPresence('unavailable', `Đang bận ${reqTag}`)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `📤 Đã gửi yêu cầu thêm người tới Chủ phòng (${hostExt})`, type: 'info' },
+      }),
+    )
+  }
+
+  /**
+   * Phát thông báo lỗi/bận cho toàn bộ thành viên trong nhóm
+   * Thẻ: [NOTICE:noticeId:hostExt:message]
+   */
+  broadcastNoticeToGroup(message) {
+    if (!this.isGroupCall || !this.isGroupHost) return
+    const noticeId = Date.now()
+    const myExt = this.getMyExtension()
+    const noticeTag = `[NOTICE:${noticeId}:${myExt}:${message}]`
+    this.setPresence('unavailable', `Đang gọi nhóm ${noticeTag}`)
   }
 
   /**
@@ -2198,6 +2399,13 @@ class WazoService {
       }, 300)
     }
 
+    // Hủy bộ đếm timeout 30s cho các nhánh đã kết nối thành công vào extensionToWazoCallIdMap
+    for (const [secExt] of this.secondaryCallSessions.entries()) {
+      if (this.extensionToWazoCallIdMap.has(secExt)) {
+        this._clearSecondaryLegTimeout(secExt)
+      }
+    }
+
     const participantCallIds = Array.from(new Set(this.extensionToWazoCallIdMap.values())).filter(
       (id) => id && id !== hostCallId,
     )
@@ -2261,44 +2469,77 @@ class WazoService {
   }
 
   /**
-   * Xử lý khi có thành viên rời phòng họp nhóm (Callee cúp máy)
+   * Xử lý khi có thành viên rời phòng họp nhóm (Callee cúp máy hoặc nhận thẻ [LEFT:])
    * Cập nhật danh sách nhóm và nếu chỉ còn 1 người thì tự động kết thúc cuộc gọi
    */
-  handleParticipantLeftGroupCall(leftCallId) {
-    if (!this.isGroupCall || !this.isGroupHost) return
+  handleParticipantLeftGroupCall(leftCallIdOrExt) {
+    if (!this.isGroupCall) return
 
     let leftExt = null
-    for (const [ext, cId] of this.extensionToWazoCallIdMap.entries()) {
-      if (cId === leftCallId) {
-        leftExt = ext
-        break
+    const targetStr = String(leftCallIdOrExt).trim()
+
+    // 1. Kiểm tra xem có khớp thẳng với extension không
+    if (this.groupParticipantExtensions.includes(targetStr)) {
+      leftExt = targetStr
+    } else {
+      // 2. Tìm trong extensionToWazoCallIdMap
+      for (const [ext, cId] of this.extensionToWazoCallIdMap.entries()) {
+        if (cId === targetStr) {
+          leftExt = ext
+          break
+        }
       }
     }
 
-    if (leftExt) {
-      logger.info('CALL', `Thành viên [${leftExt}] (Call ID: ${leftCallId}) đã rời cuộc gọi nhóm.`)
-      this.extensionToWazoCallIdMap.delete(leftExt)
-      this.mergedCallIds.delete(leftCallId)
-      this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== leftExt)
-      if (callStore.activeCall) {
-        callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
-        callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
-      }
-      this.broadcastGroupStateViaPresence()
+    if (!leftExt) return
+
+    const myExt = this.getMyExtension()
+    // Tuyệt đối không tự xóa chính mình khỏi nhóm
+    if (leftExt === myExt) return
+
+    // Hủy timer timeout nếu còn
+    this._clearSecondaryLegTimeout(leftExt)
+
+    logger.info('CALL', `Thành viên [${leftExt}] đã rời cuộc gọi nhóm.`)
+    const cId = this.extensionToWazoCallIdMap.get(leftExt)
+    if (cId) this.mergedCallIds.delete(cId)
+    this.extensionToWazoCallIdMap.delete(leftExt)
+    this.secondaryCallSessions.delete(leftExt)
+
+    this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== leftExt)
+    if (callStore.activeCall) {
+      callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
+      callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+    }
+
+    // Nếu máy này là thành viên và nhận tin Chủ phòng rời khỏi cuộc gọi -> kết thúc cuộc gọi
+    if (!this.isGroupHost && leftExt === this.groupHostExtension) {
+      logger.info('CALL', `Chủ phòng (${this.groupHostExtension}) đã kết thúc cuộc gọi -> Ngắt máy thành viên.`)
       window.dispatchEvent(
         new CustomEvent('app-toast', {
-          detail: { message: `👋 Máy lẻ ${leftExt} đã rời cuộc gọi nhóm.`, type: 'info' },
+          detail: { message: '👥 Chủ phòng đã kết thúc cuộc gọi nhóm.', type: 'info' },
         }),
       )
+      this.hangup()
+      return
+    }
 
-      // Nếu trong nhóm chỉ còn lại đúng 1 người (chính là Host)
-      const myExt = this.getMyExtension()
+    if (this.isGroupHost) {
+      this.broadcastGroupStateViaPresence()
+
+      // Nếu trong nhóm chỉ còn lại đúng 1 người (chính là Host) và không còn nhánh phụ nào đang đổ chuông
       const remainingOthers = this.groupParticipantExtensions.filter((e) => e !== myExt)
-      if (remainingOthers.length === 0) {
+      if (remainingOthers.length === 0 && this.secondaryCallSessions.size === 0) {
         logger.info('CALL', 'Tất cả thành viên đã rời nhóm. Tự động kết thúc cuộc gọi.')
         this.hangup()
       }
     }
+
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: `👋 Máy lẻ ${leftExt} đã rời cuộc gọi nhóm.`, type: 'info' },
+      }),
+    )
   }
 
   /**
@@ -2319,6 +2560,9 @@ class WazoService {
       clearTimeout(this._syncAdhocDebounceTimer)
       this._syncAdhocDebounceTimer = null
     }
+    this._clearAllSecondaryLegTimeouts()
+    this._processedAddReqIds.clear()
+    this._processedNoticeIds.clear()
     this._isSyncingAdhoc = false
     this.activeAdhocConferenceId = ''
     this.isGroupCall = false

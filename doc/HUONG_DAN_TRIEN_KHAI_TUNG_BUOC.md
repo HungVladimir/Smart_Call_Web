@@ -80,6 +80,7 @@
 | **64** | Khắc phục Triệt để Lỗi Mất Giao diện Cuộc gọi Nhóm trên Callee (Đồng bộ Chuẩn Đối chiếu Android WazoSipCallManager) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu | **HOÀN THÀNH** ✅ | Sửa lỗi trích xuất thiếu peerCallId trong syncActiveCallsToAdhocConference; Loại bỏ việc nhét nhầm nhánh phụ Host vào conference gây SIP BYE; Xử lý Callee 2 nghe trước Callee 1; Bỏ qua ON_CALL_CANCELED cause=26; Đăng ký đầy đủ WebSocket adhoc conference events. |
 | **65** | Đồng bộ Cơ chế Single Device Login & Auto-Refresh Token Không Bị Logout Oan | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu Android | **HOÀN THÀNH** ✅ | Tái cấu trúc refreshSessionToken gọi trực tiếp REST API; Tự động cứu phiên khi 1 giờ hết hạn trong restoreSession; Khắc phục WebSocket onclose 4401 tự động refresh và tái kết nối; Kiểm chứng token health trước khi kick presence hoặc unregister. |
 | **66** | Khắc phục Triệt để Lỗi Call Nhóm (Race Condition HTTP 503, Gộp Nhầm Nhánh Phụ Cục Bộ & Thu hồi Kênh Asterisk khi Cúp máy) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu Android | **HOÀN THÀNH** ✅ | Tích hợp Debounce 350ms & Mutex lock triệt tiêu lỗi HTTP 503; Chỉ lấy peerCallId từ talking_to; Khử bỏ gộp nhầm cid của Host; Gọi DELETE /users/me/calls/{cId} khi Host cúp máy giải phóng kênh C; Tự động xử lý khi thành viên rời phòng. |
+| **67** | Đồng bộ Toàn diện Giao thức Gọi nhóm V2 theo Chuẩn Ứng dụng Di động (Ủy quyền Host ADD_REQ, Lọc line_state Available, Timeout 30s & Bộ thẻ Realtime) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Tách hàm isContactAvailableForCall kiểm tra line_state == 'available'; Triển khai ủy quyền Host ADD_REQ khi thành viên thêm người; Bổ sung Timer 30s tự động ngắt nhánh phụ khi không nghe máy; Lắng nghe và phát thẻ NOTICE, LEFT; Tối ưu UI hiển thị Bạn, Tên A, Tên B (N người) và trạng thái Đang kết nối. |
 
 ---
 
@@ -3495,4 +3496,57 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `625ms` (322 modules transformed).
+- Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.
+
+---
+
+## BƯỚC 67: ĐỒNG BỘ TOÀN DIỆN GIAO THỨC GỌI NHÓM V2 THEO CHUẨN ỨNG DỤNG DI ĐỘNG (ỦY QUYỀN HOST ADD_REQ, LỌC LINE_STATE AVAILABLE, TIMEOUT 30S & BỘ THẺ REALTIME)
+
+### 1. Phân tích Nguyên nhân & Cơ sở Thiết kế từ `quest.txt` và `SMCAppV2.txt`:
+- **Bối cảnh**: Để hai nền tảng Web (`Smart_Call_Web`) và Di động (Mobile) hoạt động trơn tru trong kịch bản đàm thoại nhóm hỗn hợp (Web gọi Mobile, Mobile gọi Web), hai hệ thống phải "nói cùng một ngôn ngữ giao thức" trên hạ tầng máy chủ Wazo (Calld, Chatd, Asterisk ConfBridge).
+- **Các vấn đề tồn đọng trước khi đồng bộ**:
+  1. *Nguy cơ hộp thư thoại (VoiceMail) tự nghe máy*: Trước đây Web mới kiểm tra `online/offline` bề mặt, chưa kiểm tra chuyên sâu mảng `lines[].state` từ Wazo Chatd. Nếu gọi trúng số máy đang bận (`talking`/`ringing`) hoặc ngoại tuyến, tổng đài Asterisk có thể tự chuyển vào VoiceMail, trả về `200 OK` giả và bị gộp vào nhóm gây ồn và rác phòng họp.
+  2. *Thiếu cơ chế ủy quyền Host khi thành viên thêm người*: Khi đang đàm thoại nhóm, nếu một thành viên (không phải Host) bấm "Thêm người", thành viên tự ý quay số nhánh phụ khiến cuộc gọi bị phân mảnh và có nguy cơ rớt toàn bộ nhóm nếu thành viên đó ngắt kết nối.
+  3. *Nhánh phụ đổ chuông vô tận*: Chưa có Timer 30 giây tự động hủy (`CANCEL`) khi người được mời không nhấc máy, dẫn đến treo trạng thái "Đang kết nối...".
+  4. *Thiếu bộ thẻ Realtime Presence*: Web mới chỉ hỗ trợ thẻ `[GROUP:]`, chưa có thẻ `[ADD_REQ:]` (ủy quyền), `[NOTICE:]` (thông báo lỗi/bận) và `[LEFT:]` (báo rời nhóm tức thì).
+
+### 2. Các File Triển khai & Chi tiết Xử lý:
+
+1. **`src/services/contactService.js`**:
+   - **Xây dựng hàm `isContactAvailableForCall(contactOrUuidOrExt)`**:
+     + Chuẩn hóa 100% theo DTO `WazoPresencesResponse.java` của mã tham chiếu mẫu:
+     + Chặn ngay nếu `do_not_disturb === true` hoặc `state === 'unavailable' | 'offline'`.
+     + Đọc chi tiết mảng `lines` từ Chatd: Chặn nếu có bất kỳ line nào đang `talking`, `holding`, `ringing`, `progressing`.
+     + Bắt buộc phải có ít nhất một line mang trạng thái `available` (hoặc `line_state === 'available'`).
+
+2. **`src/services/wazo.js`**:
+   - **Tích hợp Bộ đếm Timeout 30 giây cho nhánh phụ (`_secondaryInviteTimers`)**:
+     + Khi Host gọi nhánh phụ trong `addParticipantsToGroupCall()`, tự động đặt timer 30.000ms qua `_startSecondaryLegTimeout(ext, session)`.
+     + Khi nhánh phụ nhấc máy (`ON_CALL_ACCEPTED`, `call_answered`) hoặc được gộp thành công (`_doSyncActiveCallsToAdhocConference`), tự động hủy timer qua `_clearSecondaryLegTimeout(ext)`.
+     + Nếu sau 30 giây nhánh phụ không bắt máy, hàm `_cancelSecondaryLegOnTimeout(ext)` tự động gửi lệnh ngắt (`Wazo.Phone.hangup`), gỡ khỏi danh sách chờ, hiển thị Toast cảnh báo và phát thẻ `[NOTICE]` thông báo cho toàn bộ phòng họp.
+   - **Triển khai Cơ chế Ủy quyền Host `[ADD_REQ]`**:
+     + Bổ sung hàm `delegateAddParticipantsToHost(hostExt, targetExtensions)`: Tạo thẻ `[ADD_REQ:reqId:hostExt:ext1,ext2]` và đồng bộ lên Presence qua `setPresence('unavailable', ...)`.
+     + Trong sự kiện WebSocket Presence `chatd_user_presence_updated` / `chatd_presence_updated`: Host tự động lắng nghe thẻ `[ADD_REQ]`, kiểm tra đúng số máy `targetHostExt === myExt`, lọc chống trùng `reqId` qua `_processedAddReqIds` và tự động quay số nhánh phụ mời người đó vào phòng họp.
+   - **Đồng bộ Bộ thẻ Realtime `[NOTICE]` và `[LEFT]`**:
+     + Thẻ `[NOTICE]`: Khi có lỗi/bận hoặc timeout, Host phát thẻ `[NOTICE:noticeId:hostExt:message]` để tất cả thành viên trong nhóm nhận Toast cảnh báo đồng bộ.
+     + Thẻ `[LEFT]`: Khi một thành viên chủ động cúp máy (`hangup()`), hệ thống tự động phát thẻ `[LEFT:myExt]` lên Presence trước khi hủy session WebRTC. Các máy khác bắt được thẻ `[LEFT]` sẽ lập tức gỡ thành viên khỏi danh sách và cập nhật UI ngay lập tức mà không phải chờ độ trễ của sự kiện WebSocket Asterisk.
+   - **Nâng cấp `handleParticipantLeftGroupCall(leftCallIdOrExt)`**:
+     + Chấp nhận tham số là Call ID hoặc Extension.
+     + Nếu người rời đi là Chủ phòng (Host), các thành viên tự động ngắt máy và hiển thị thông báo "Chủ phòng đã kết thúc cuộc gọi".
+     + Nếu tất cả thành viên khác đã rời phòng (chỉ còn lại Host), Host tự động ngắt máy kết thúc cuộc gọi.
+
+3. **`src/views/CallsView.vue`**:
+   - **Khóa liên hệ bận trên Tab Gọi nhóm (`activeTab === 'group_call'`)**:
+     + `toggleGroupContactSelection(c)`: Kiểm tra `contactService.isContactAvailableForCall(c)`. Nếu đối phương đang bận hoặc ngoại tuyến, thông báo cảnh báo và không cho phép chọn.
+     + Checkbox hiển thị class `disabled` khi `!isContactAvailableForCall(c)`.
+     + `selectAllOnlineContacts()`: Chỉ chọn những liên hệ thực sự khả dụng (`isContactAvailableForCall`).
+     + `handleStartGroupCallFromContacts()`: Kiểm tra lại toàn bộ danh sách ngay thời điểm bấm gọi; tự động lọc bỏ các số vừa chuyển sang trạng thái bận.
+   - **Modal Thêm người vào cuộc gọi (`availableAddParticipants` & `confirmAddParticipants`)**:
+     + `availableAddParticipants`: Lọc theo `contactService.isContactAvailableForCall(c)`, đảm bảo chỉ hiển thị những người sẵn sàng nhận cuộc gọi.
+     + `confirmAddParticipants`: Phân quyền rõ ràng — nếu là Host thì gọi `addParticipantsToGroupCall(toAdd)`, nếu là Thành viên thì gọi `delegateAddParticipantsToHost(hostExt, toAdd)`.
+   - **Tối ưu hiển thị đàm thoại nhóm chuẩn `InCallActivity`**:
+     + Bổ sung `pendingRingingMembers` computed: Hiển thị dòng phụ màu cam nhấp nháy `"⏳ Đang kết nối [Tên C] (1001)..."` trong suốt thời gian nhánh phụ đang đổ chuông chờ bắt máy.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `515ms` (322 modules transformed).
 - Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.

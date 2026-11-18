@@ -237,6 +237,51 @@ class ContactService {
   }
 
   /**
+   * Kiểm tra một liên hệ có đường dây sẵn sàng nhận cuộc gọi (Available) hay không
+   * Chuẩn 100% theo WazoPresencesResponse.java & WazoSipCallManager.java
+   * Chặn người đang talking, holding, ringing, progressing hoặc do_not_disturb, offline
+   */
+  isContactAvailableForCall(contactOrUuidOrExt) {
+    if (!contactOrUuidOrExt) return false
+    let contact = null
+    let uuid = ''
+    if (typeof contactOrUuidOrExt === 'object') {
+      contact = contactOrUuidOrExt
+      uuid = contact.uuid || ''
+    } else {
+      const str = String(contactOrUuidOrExt).trim()
+      contact = this.findContactByExtension(str) || (this.currentContacts || []).find((c) => c.uuid === str || c.id === str)
+      uuid = contact?.uuid || (this.presences?.[str] ? str : '')
+    }
+
+    const p = uuid && this.presences?.[uuid]
+    if (!p) {
+      if (contact) {
+        return contact.status === 'online'
+      }
+      return false
+    }
+
+    // 1. Chặn nếu có cờ Do Not Disturb
+    if (p.do_not_disturb) return false
+
+    // 2. Chặn nếu trạng thái state là offline hoặc unavailable
+    if (p.state === 'unavailable' || p.state === 'offline') return false
+
+    // 3. Đối chiếu mảng lines từ Wazo Chatd (chuẩn WazoPresencesResponse.java)
+    const lines = (p.lines || []).map((l) => l.state)
+    if (lines.length > 0) {
+      // Chặn nếu có bất kỳ line nào đang bận hoặc đổ chuông
+      const isBusy = lines.some((s) => ['talking', 'holding', 'ringing', 'progressing'].includes(s))
+      if (isBusy) return false
+      // Phải có ít nhất 1 line available
+      return lines.some((s) => s === 'available')
+    }
+
+    return p.line_state === 'available' || p.state === 'available' || p.connected === true
+  }
+
+  /**
    * Khớp nối chuỗi tìm kiếm theo tên, phòng ban hoặc số máy lẻ
    */
   matchesSearch(contact, query) {
