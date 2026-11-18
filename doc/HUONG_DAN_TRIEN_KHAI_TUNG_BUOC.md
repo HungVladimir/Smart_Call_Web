@@ -3198,6 +3198,53 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `561ms`.
 
+---
+
+## BƯỚC 60: THANH TRƯỢT DANH MỤC DANH BẠ (CATEGORY TABS SLIDER), NÚT CÀI ĐẶT HIỂN THỊ ⚙️ VÀ KHẮC PHỤC TRIỆT ĐỂ KHUNG NÚT BỎ CHỌN TRONG GỌI NHÓM
+
+### 1. Bối cảnh & Yêu cầu từ Người dùng
+1. **Khắc phục lỗi vỡ khung nút "Bỏ chọn" trong thanh thao tác Gọi nhóm**:
+   - Nút "Bỏ chọn" bị phình to bất thường thành một khối hình vuông bo tròn màu hồng nhạt, mất cân đối hoàn toàn so với các nút pill bo tròn xung quanh (`Đã chọn: X người`, `Chọn trực tuyến`).
+   - Nguyên nhân gốc rễ: Class `.btn-clear` của nút bị xung đột với class `.btn-clear` của nút xóa số lùi trên bàn phím dialer (đang có kích thước cố định `56px x 56px`, `border-radius: 50%`).
+   - Cần đưa nút "Bỏ chọn" về đúng chuẩn thiết kế pill thanh mảnh, đồng bộ với các phần tử khác.
+2. **Thanh trượt danh mục + Nút Cài đặt ⚙️ trên thanh Tab danh bạ**:
+   - Cho phép người dùng chủ động lựa chọn những danh mục muốn hiển thị (trong số 6 nhóm: *Tất cả*, *Yêu thích*, *Trực tuyến*, *Ngoại tuyến*, *Bộ phận*, *Gọi nhóm*).
+   - Quy tắc hiển thị linh hoạt:
+     - Khi người dùng chọn từ 5 danh mục trở xuống (ví dụ 4 hoặc 5 tab): Toàn bộ các tab được tự động căn đều theo tỷ lệ phần trăm (100% chiều rộng, chia đều tỷ lệ 20% hoặc 25%), hiển thị ngay ngắn, không có thanh trượt.
+     - Khi người dùng chọn trên 5 danh mục (ví dụ cả 6 nhóm): Kích hoạt chế độ Slider, hiển thị chuẩn 5 danh mục trong khung nhìn với các nút điều hướng trượt sang trái/phải (`‹`, `›`), đồng thời hỗ trợ cuộn chuột ngang mượt mà.
+   - Thêm nút bánh răng ⚙️ ở cuối thanh tab để mở modal cài đặt checkbox bật/tắt từng danh mục, có hiển thị preview số lượng nhân viên thực tế và nút khôi phục mặc định.
+   - Lưu trữ cấu hình hiển thị vào `localStorage` (`smartcall_visible_tabs`) chuẩn theo quy tắc kỹ thuật máy khách.
+
+### 2. Chi tiết Triển khai Kỹ thuật
+
+#### A. Khắc phục Triệt để Khung Nút Bỏ chọn (`CallsView.vue`)
+1. **Tách biệt class tránh xung đột**:
+   - Đổi class từ `.btn-action-pill.btn-clear` sang `.btn-action-pill.btn-deselect-group`.
+2. **Chuẩn hóa CSS Pill Action**:
+   - Thiết lập `height: 26px; box-sizing: border-box; width: auto;` cho `.btn-action-pill`.
+   - Thiết lập giao diện riêng cho `.btn-deselect-group`: nền hồng pastel mềm `#fff5f5`, viền `#fecaca`, chữ đỏ `#dc2626`.
+   - Hiệu ứng hover nhẹ nhàng: nền `#fee2e2`, viền `#fca5a5`, chữ đậm `#b91c1c`.
+
+#### B. Triển khai Hệ thống Dynamic Category Tabs & Thanh Trượt Thông minh (`CallsView.vue`)
+1. **Cấu hình Danh mục Khả dụng**:
+   - `AVAILABLE_CATEGORY_TABS`: gồm 6 nhóm: `all` (Tất cả - bắt buộc), `favorites` (Yêu thích), `online` (Trực tuyến), `offline` (Ngoại tuyến), `department` (Bộ phận), `group_call` (Gọi nhóm).
+   - Tự động lưu và khôi phục từ `localStorage`: `smartcall_visible_tabs`.
+2. **Cơ chế Layout Tự Động Phân Chia (Even-Split vs. Slider Mode)**:
+   - Khi `visibleTabs.length <= 5`: Gán class `.is-even-split`. Mỗi tab nhận `flex: 1 1 0; min-width: 0; padding: 8px 4px;`, chia đều 100% diện tích thanh tab đẹp mắt.
+   - Khi `visibleTabs.length > 5`: Gán class `.is-slider-mode`. Mỗi tab nhận `flex: 0 0 calc((100% - 16px) / 5); min-width: 105px;`, đảm bảo luôn hiển thị 5 tab trong viewport, phần còn lại cuộn trượt mượt mà.
+3. **Thanh Điều Hướng Trượt & Cuộn Chuột**:
+   - Các nút trượt mũi tên `btn-tabs-nav` (`‹` và `›`) tự động ẩn/hiện thông minh (`canScrollLeft`, `canScrollRight`) dựa trên vị trí cuộn thực tế của thanh slider.
+   - Hỗ trợ cuộn chuột ngang (`@wheel.passive="onTabsWheel"`): cuộn con lăn chuột trên thanh tab sẽ tự động trượt các tab sang trái/phải mượt mà.
+4. **Nút Bánh Răng ⚙️ & Modal Tùy chỉnh Danh mục (`tab-config-overlay`)**:
+   - Nút icon vector SVG bánh răng kích thước $30 \times 30\text{ px}$ đặt gọn gàng ở góc phải thanh tab.
+   - Modal hiển thị trực quan từng danh mục, icon tương ứng, nhãn tên, checkbox chọn, và badge hiển thị số lượng nhân viên thực tế đang có (`getTabPreviewCount`).
+   - Có cơ chế bảo vệ: Danh mục `Tất cả` là bắt buộc không thể tắt; chặn người dùng bỏ chọn nếu số danh mục còn lại dưới 2.
+   - Nút "Khôi phục mặc định" giúp đưa về trạng thái chuẩn chỉ với 1 cú click.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `2.67s` (322 modules transformed).
+
+
 
 
 

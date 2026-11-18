@@ -359,69 +359,117 @@
             </button>
           </div>
 
-          <!-- Filter Tabs: Tất cả vs Yêu thích ⭐ vs Trực tuyến 🟢 vs Ngoại tuyến ⚪ vs Gọi nhóm 📞 -->
+          <!-- Filter Tabs: Dynamic Slider + Cài đặt ⚙️ -->
           <div class="panel-tabs-bar">
+            <!-- Nút cuộn trái khi > 5 tabs -->
             <button
-              class="panel-tab-btn"
-              :class="{ active: activeTab === 'all' }"
-              @click="activeTab = 'all'"
+              v-if="visibleTabs.length > 5 && canScrollLeft"
+              class="btn-tabs-nav btn-tabs-left"
+              @click="scrollTabs('left')"
+              title="Trượt sang trái"
             >
-              <span class="tab-icon">👥</span>
-              <span class="tab-label">Tất cả</span>
-              <span class="tab-badge">{{ contacts.length }}</span>
+              ‹
             </button>
-            <button
-              class="panel-tab-btn"
-              :class="{ active: activeTab === 'favorites' }"
-              @click="activeTab = 'favorites'"
+
+            <!-- Container trượt hoặc chia đều -->
+            <div
+              ref="tabsSliderRef"
+              class="panel-tabs-slider"
+              :class="{
+                'is-even-split': visibleTabs.length <= 5,
+                'is-slider-mode': visibleTabs.length > 5,
+              }"
+              @wheel.passive="onTabsWheel"
+              @scroll="checkScrollButtons"
             >
-              <span class="tab-icon">⭐</span>
-              <span class="tab-label">Yêu thích</span>
-              <span class="tab-badge">{{ favoriteCount }}</span>
+              <button
+                v-for="tab in visibleTabs"
+                :key="tab.id"
+                class="panel-tab-btn"
+                :class="{ active: activeTab === tab.id, [`tab-${tab.id}`]: true }"
+                @click="activeTab = tab.id"
+              >
+                <span v-if="tab.id === 'all'" class="tab-icon">👥</span>
+                <span v-else-if="tab.id === 'favorites'" class="tab-icon">⭐</span>
+                <span v-else-if="tab.id === 'online'" class="tab-icon">🟢</span>
+                <span v-else-if="tab.id === 'offline'" class="tab-icon">⚪</span>
+                <svg
+                  v-else-if="tab.id === 'department'"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="tab-svg-icon"
+                >
+                  <path d="M3 21h18"></path>
+                  <path d="M5 21V7l8-4v18"></path>
+                  <path d="M19 21V11l-6-4"></path>
+                  <line x1="9" y1="9" x2="9.01"></line>
+                  <line x1="9" y1="13" x2="9" y2="13.01"></line>
+                  <line x1="9" y1="17" x2="9" y2="17.01"></line>
+                </svg>
+                <svg
+                  v-else-if="tab.id === 'group_call'"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="tab-svg-icon"
+                >
+                  <path
+                    d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+                  ></path>
+                </svg>
+
+                <span class="tab-label">{{ tab.label }}</span>
+
+                <span v-if="tab.id === 'all'" class="tab-badge">{{ contacts.length }}</span>
+                <span v-else-if="tab.id === 'favorites'" class="tab-badge">{{ favoriteCount }}</span>
+                <span v-else-if="tab.id === 'online'" class="tab-badge badge-online">{{ onlineCount }}</span>
+                <span v-else-if="tab.id === 'offline'" class="tab-badge badge-offline">{{ offlineCount }}</span>
+                <span v-else-if="tab.id === 'department'" class="tab-badge badge-dept">{{ departmentTabCount }}</span>
+              </button>
+            </div>
+
+            <!-- Nút cuộn phải khi > 5 tabs -->
+            <button
+              v-if="visibleTabs.length > 5 && canScrollRight"
+              class="btn-tabs-nav btn-tabs-right"
+              @click="scrollTabs('right')"
+              title="Trượt sang phải"
+            >
+              ›
             </button>
+
+            <!-- Nút bánh răng Cài đặt hiển thị tab -->
             <button
-              class="panel-tab-btn"
-              :class="{ active: activeTab === 'online' }"
-              @click="activeTab = 'online'"
+              class="btn-tab-config"
+              @click="showTabConfigModal = true"
+              title="Tùy chỉnh danh mục hiển thị"
             >
-              <span class="tab-icon">🟢</span>
-              <span class="tab-label">Trực tuyến</span>
-              <span class="tab-badge badge-online">{{ onlineCount }}</span>
-            </button>
-            <button
-              class="panel-tab-btn"
-              :class="{ active: activeTab === 'offline' }"
-              @click="activeTab = 'offline'"
-            >
-              <span class="tab-icon">⚪</span>
-              <span class="tab-label">Ngoại tuyến</span>
-              <span class="tab-badge badge-offline">{{ offlineCount }}</span>
-            </button>
-            <button
-              class="panel-tab-btn"
-              :class="{ active: activeTab === 'department' }"
-              @click="activeTab = 'department'"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tab-svg-icon">
-                <path d="M3 21h18"></path>
-                <path d="M5 21V7l8-4v18"></path>
-                <path d="M19 21V11l-6-4"></path>
-                <line x1="9" y1="9" x2="9.01"></line>
-                <line x1="9" y1="13" x2="9" y2="13.01"></line>
-                <line x1="9" y1="17" x2="9" y2="17.01"></line>
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="3"></circle>
+                <path
+                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                ></path>
               </svg>
-              <span class="tab-label">Bộ phận</span>
-              <span class="tab-badge badge-dept">{{ departmentTabCount }}</span>
-            </button>
-            <button
-              class="panel-tab-btn tab-group-call"
-              :class="{ active: activeTab === 'group_call' }"
-              @click="activeTab = 'group_call'"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tab-svg-icon">
-                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
-              </svg>
-              <span class="tab-label">Gọi nhóm</span>
             </button>
           </div>
 
@@ -480,7 +528,7 @@
                   </button>
                   <button
                     v-if="selectedGroupExtensions.length > 0"
-                    class="btn-action-pill btn-clear"
+                    class="btn-action-pill btn-deselect-group"
                     @click="clearGroupSelection"
                     title="Bỏ chọn tất cả"
                   >
@@ -707,11 +755,131 @@
         </div>
       </section>
     </div>
+
+    <!-- Modal Tùy chỉnh danh mục hiển thị (Category Tabs Config Modal) -->
+    <div
+      v-if="showTabConfigModal"
+      class="tab-config-overlay"
+      @click.self="showTabConfigModal = false"
+    >
+      <div class="tab-config-card">
+        <div class="tab-config-header">
+          <div class="tab-config-title">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#2563eb"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="3"></circle>
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+              ></path>
+            </svg>
+            <span>Tùy chỉnh danh mục danh bạ</span>
+          </div>
+          <button
+            class="tab-config-close"
+            @click="showTabConfigModal = false"
+            title="Đóng"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="tab-config-body">
+          <p class="tab-config-desc">
+            Chọn các danh mục muốn hiển thị trên thanh tab. Nếu chọn từ 5 danh mục trở xuống, các tab sẽ tự động căn đều theo tỷ lệ đẹp mắt; nếu chọn trên 5 danh mục, thanh trượt sẽ được kích hoạt để cuộn mượt mà.
+          </p>
+
+          <div class="tab-config-list">
+            <div
+              v-for="tab in AVAILABLE_CATEGORY_TABS"
+              :key="tab.id"
+              class="tab-config-item"
+              :class="{
+                selected: isTabVisible(tab.id),
+                disabled: tab.required,
+              }"
+              @click="toggleTabVisibility(tab.id)"
+            >
+              <div class="tab-config-item-left">
+                <input
+                  type="checkbox"
+                  :checked="isTabVisible(tab.id)"
+                  :disabled="tab.required"
+                  class="tab-config-checkbox"
+                  @click.stop="toggleTabVisibility(tab.id)"
+                />
+                <span v-if="tab.id === 'all'" class="tab-config-icon">👥</span>
+                <span v-else-if="tab.id === 'favorites'" class="tab-config-icon">⭐</span>
+                <span v-else-if="tab.id === 'online'" class="tab-config-icon">🟢</span>
+                <span v-else-if="tab.id === 'offline'" class="tab-config-icon">⚪</span>
+                <svg
+                  v-else-if="tab.id === 'department'"
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M3 21h18"></path>
+                  <path d="M5 21V7l8-4v18"></path>
+                  <path d="M19 21V11l-6-4"></path>
+                  <line x1="9" y1="9" x2="9.01"></line>
+                  <line x1="9" y1="13" x2="9" y2="13.01"></line>
+                  <line x1="9" y1="17" x2="9" y2="17.01"></line>
+                </svg>
+                <svg
+                  v-else-if="tab.id === 'group_call'"
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+                  ></path>
+                </svg>
+                <span class="tab-config-item-label">{{ tab.label }}</span>
+                <span v-if="tab.required" class="tab-config-item-badge">Bắt buộc</span>
+              </div>
+              <span
+                v-if="getTabPreviewCount(tab.id) !== null"
+                class="tab-config-item-count"
+              >
+                {{ getTabPreviewCount(tab.id) }} mục
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-config-footer">
+          <button class="btn-tab-config-reset" @click="resetTabVisibility">
+            Khôi phục mặc định
+          </button>
+          <button class="btn-tab-config-done" @click="showTabConfigModal = false">
+            Hoàn tất ({{ visibleTabIds.length }} mục)
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { wazoService, callStore } from '@/services/wazo'
 import { audioService } from '@/services/audioService'
@@ -935,6 +1103,119 @@ const departmentTabCount = computed(() => {
     return contacts.value.filter((c) => Boolean((c.dept || '').trim())).length || contacts.value.length
   }
   return getDepartmentCount(selectedDepartment.value)
+})
+
+// --- CẤU HÌNH & THANH TRƯỢT DANH MỤC (CATEGORY TABS CONFIG & SLIDER) ---
+const AVAILABLE_CATEGORY_TABS = [
+  { id: 'all', label: 'Tất cả', icon: 'all', required: true },
+  { id: 'favorites', label: 'Yêu thích', icon: 'favorites' },
+  { id: 'online', label: 'Trực tuyến', icon: 'online' },
+  { id: 'offline', label: 'Ngoại tuyến', icon: 'offline' },
+  { id: 'department', label: 'Bộ phận', icon: 'department' },
+  { id: 'group_call', label: 'Gọi nhóm', icon: 'group_call' },
+]
+
+const DEFAULT_VISIBLE_TAB_IDS = ['all', 'favorites', 'online', 'offline', 'department', 'group_call']
+
+const loadSavedVisibleTabs = () => {
+  try {
+    const saved = localStorage.getItem('smartcall_visible_tabs')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        if (!parsed.includes('all')) parsed.unshift('all')
+        return parsed
+      }
+    }
+  } catch (e) {
+    console.warn('Lỗi đọc visible tabs:', e)
+  }
+  return [...DEFAULT_VISIBLE_TAB_IDS]
+}
+
+const visibleTabIds = ref(loadSavedVisibleTabs())
+const showTabConfigModal = ref(false)
+const tabsSliderRef = ref(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+
+const visibleTabs = computed(() => {
+  return AVAILABLE_CATEGORY_TABS.filter((t) => visibleTabIds.value.includes(t.id))
+})
+
+const isTabVisible = (id) => visibleTabIds.value.includes(id)
+
+const toggleTabVisibility = (id) => {
+  if (id === 'all') return
+  const idx = visibleTabIds.value.indexOf(id)
+  if (idx > -1) {
+    if (visibleTabIds.value.length <= 2) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: { message: '⚠️ Cần giữ lại ít nhất 2 danh mục hiển thị!', type: 'warning' },
+        }),
+      )
+      return
+    }
+    visibleTabIds.value.splice(idx, 1)
+    if (activeTab.value === id) {
+      activeTab.value = 'all'
+    }
+  } else {
+    const newIds = AVAILABLE_CATEGORY_TABS
+      .map((t) => t.id)
+      .filter((tid) => visibleTabIds.value.includes(tid) || tid === id)
+    visibleTabIds.value = newIds
+  }
+  localStorage.setItem('smartcall_visible_tabs', JSON.stringify(visibleTabIds.value))
+  nextTick(() => checkScrollButtons())
+}
+
+const resetTabVisibility = () => {
+  visibleTabIds.value = [...DEFAULT_VISIBLE_TAB_IDS]
+  localStorage.setItem('smartcall_visible_tabs', JSON.stringify(visibleTabIds.value))
+  nextTick(() => checkScrollButtons())
+}
+
+const getTabPreviewCount = (id) => {
+  if (id === 'all') return contacts.value.length
+  if (id === 'favorites') return favoriteCount.value
+  if (id === 'online') return onlineCount.value
+  if (id === 'offline') return offlineCount.value
+  if (id === 'department') return departmentTabCount.value
+  return null
+}
+
+const checkScrollButtons = () => {
+  const el = tabsSliderRef.value
+  if (!el) {
+    canScrollLeft.value = false
+    canScrollRight.value = false
+    return
+  }
+  canScrollLeft.value = el.scrollLeft > 5
+  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 5
+}
+
+const scrollTabs = (direction) => {
+  const el = tabsSliderRef.value
+  if (!el) return
+  const step = 140
+  el.scrollBy({ left: direction === 'left' ? -step : step, behavior: 'smooth' })
+  setTimeout(() => checkScrollButtons(), 300)
+}
+
+const onTabsWheel = (e) => {
+  const el = tabsSliderRef.value
+  if (!el) return
+  if (e.deltaY !== 0 && el.scrollWidth > el.clientWidth) {
+    el.scrollLeft += e.deltaY * 0.7
+    checkScrollButtons()
+  }
+}
+
+watch(visibleTabs, () => {
+  nextTick(() => checkScrollButtons())
 })
 
 // Chuẩn hóa xóa dấu Tiếng Việt phục vụ tìm kiếm chính xác
@@ -2280,20 +2561,101 @@ onUnmounted(() => {
 
 .panel-tabs-bar {
   display: flex;
+  align-items: center;
   background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
-  padding: 4px 8px 0;
+  padding: 4px 6px 0;
   gap: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.panel-tabs-slider {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  gap: 4px;
+  scroll-behavior: smooth;
+}
+
+.panel-tabs-slider::-webkit-scrollbar {
+  display: none;
+}
+
+/* Khi <= 5 danh mục: chia đều 100% chiều rộng */
+.panel-tabs-slider.is-even-split {
+  width: 100%;
+}
+.panel-tabs-slider.is-even-split .panel-tab-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 4px;
+}
+
+/* Khi > 5 danh mục: hiển thị 5 tab trong viewport, phần còn lại trượt */
+.panel-tabs-slider.is-slider-mode .panel-tab-btn {
+  flex: 0 0 calc((100% - 16px) / 5);
+  min-width: 105px;
+  padding: 8px 6px;
+}
+
+.btn-tabs-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 32px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  color: #475569;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.btn-tabs-nav:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+  border-color: #94a3b8;
+}
+
+.btn-tab-config {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #64748b;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  transition: all 0.15s ease;
+}
+
+.btn-tab-config:hover {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #2563eb;
 }
 
 .panel-tab-btn {
-  flex: 1;
-  min-width: fit-content;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 8px 8px;
   border: none;
   background: transparent;
   font-size: 0.8rem;
@@ -2305,6 +2667,12 @@ onUnmounted(() => {
   white-space: nowrap;
   border-radius: 6px 6px 0 0;
   flex-shrink: 0;
+}
+
+.panel-tab-btn .tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-tab-btn:hover {
@@ -2963,6 +3331,8 @@ onUnmounted(() => {
   transition: all 0.15s ease;
   white-space: nowrap;
   flex-shrink: 0;
+  height: 26px;
+  box-sizing: border-box;
 }
 
 .btn-action-pill:hover {
@@ -2971,13 +3341,17 @@ onUnmounted(() => {
   border-color: #94a3b8;
 }
 
-.btn-action-pill.btn-clear {
+.btn-action-pill.btn-deselect-group {
   color: #dc2626;
   border-color: #fecaca;
-  background: #ffffff;
+  background: #fff5f5;
+  width: auto;
+  height: 26px;
 }
-.btn-action-pill.btn-clear:hover {
+.btn-action-pill.btn-deselect-group:hover {
   background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
 }
 
 .pill-dot {
@@ -3161,5 +3535,217 @@ onUnmounted(() => {
 
 .call-avatar.groupCallAvatar {
   background: #059669 !important;
+}
+
+/* Modal Tùy chỉnh danh mục hiển thị */
+.tab-config-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeInModal 0.2s ease-out;
+}
+
+.tab-config-card {
+  background: #ffffff;
+  border-radius: 14px;
+  width: 90%;
+  max-width: 440px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: scaleUpModal 0.2s ease-out;
+}
+
+@keyframes fadeInModal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleUpModal {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.tab-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+
+.tab-config-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tab-config-close {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.tab-config-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.tab-config-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tab-config-desc {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.tab-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tab-config-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.tab-config-item:hover {
+  border-color: #93c5fd;
+  background: #f8fafc;
+}
+
+.tab-config-item.selected {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.tab-config-item.disabled {
+  cursor: default;
+  background: #f8fafc;
+  opacity: 0.85;
+}
+
+.tab-config-item-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tab-config-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.tab-config-icon {
+  font-size: 1rem;
+}
+
+.tab-config-item-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.tab-config-item-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  background: #e2e8f0;
+  color: #475569;
+  border-radius: 4px;
+}
+
+.tab-config-item-count {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #64748b;
+  background: #ffffff;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+}
+
+.tab-config-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+
+.btn-tab-config-reset {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.btn-tab-config-reset:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.btn-tab-config-done {
+  background: #2563eb;
+  color: #ffffff;
+  border: none;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-tab-config-done:hover {
+  background: #1d4ed8;
 }
 </style>
