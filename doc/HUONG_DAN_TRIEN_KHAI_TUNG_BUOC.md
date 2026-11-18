@@ -3306,6 +3306,46 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `Smart_Call_Web`: `npm run build` $\rightarrow$ Thành công 100% với 0 lỗi cú pháp trong `508ms` (322 modules transformed).
 
+---
+
+## BƯỚC 62: THAY THẾ TÍNH NĂNG HOLD BẰNG THÊM THÀNH VIÊN VÀO CUỘC GỌI (IN-CALL ADD MEMBER), TÁI THIẾT KẾ CARD CUỘC GỌI ĐẾN HIỆN ĐẠI & KHẮC PHỤC TRIỆT ĐỂ LỖI TỰ ĐỘNG LOGOUT QUA AUTO REFRESH TOKEN
+
+### 1. Mục tiêu và Bối cảnh Nghiệp vụ:
+1. **Loại bỏ tính năng Hold & Bổ sung Modal Thêm thành viên vào cuộc gọi (`CallsView.vue`)**:
+   - Loại bỏ hoàn toàn nút Hold và trạng thái `isHeld` trên thanh điều khiển cuộc gọi.
+   - Thay thế bằng nút "Thêm người" (`UserPlus` SVG) cho phép người dùng mở Modal mời thêm thành viên vào cuộc hội thoại đang diễn ra (dù là cuộc gọi 1-1 hay nhóm 3 người).
+   - Modal chỉ hiển thị các đồng nghiệp đang trực tuyến (`online`), tự động loại trừ chính mình và các thành viên đã có mặt trong cuộc gọi.
+   - Khi xác nhận mời, hệ thống gọi `addParticipantsToGroupCall(selectedExtensions)` phát tín hiệu gọi nhánh và tự động hợp nhất vào Ad-hoc Conference khi họ nghe máy.
+2. **Tái thiết kế Card Cuộc gọi đến Hiện đại (`IncomingCallModal.vue`)**:
+   - Loại bỏ hoàn toàn thanh topbar "Registered" và các khối chữ nhật thô cũ, loại bỏ emoji `📵`, `📞`.
+   - Card bo tròn mềm mại (`border-radius: 28px`), đổ bóng nổi khối cao cấp.
+   - Header dạng pill badge rung động: `CUỘC GỌI ĐẾN`.
+   - Avatar tròn lớn kèm 2 vòng sóng xung kích (Radar Pulse Wave) lan tỏa mềm mại.
+   - Cặp nút tròn nổi chuẩn UX ($62 \times 62\text{ px}$): Nút Từ chối đỏ với vector phone-down, Nút Nghe máy xanh lá với vector phone-up và hiệu ứng sóng xung quanh `answerPulse`.
+3. **Khắc phục Triệt để Lỗi Tự động Logout Bất thường (`wazo.js`)**:
+   - **Tự động làm mới Auth Token (`refreshSessionToken`)**: Khi token 1 giờ hết hạn (máy chủ báo 401/404), hàm `verifyTokenHealth()` tự động gọi API Refresh Token để gia hạn phiên làm việc liên tục nhiều ngày mà không bị gián đoạn.
+   - **Triệt tiêu hiện tượng Presence Echo tự kick chính mình**: Tạo và lưu `smartcall_device_client_id` cố định trong `localStorage`, gắn tag `-smartcall-web-${myClientId}` vào Presence Status. Khi nhận sự kiện Presence, nếu chứa đúng `myClientId` của máy hiện tại thì bỏ qua, chỉ đăng xuất khi phát hiện thiết bị khác đăng nhập. Bổ sung cơ chế khóa 5 giây đầu sau khi WebSocket kết nối lại.
+4. **Chuẩn hóa Khung nút "Bỏ chọn" trong Gọi nhóm (`CallsView.vue`)**:
+   - Căn chỉnh lại `btn-deselect-group` thành dạng pill bo tròn `20px`, chiều cao `28px`, padding `4px 12px`, đồng bộ tuyệt đối về kích thước và thẩm mỹ với pill `Đã chọn: X người`.
+
+### 2. Các File Triển khai & Chi tiết Thay đổi:
+1. **`src/services/wazo.js`**:
+   - Cập nhật `getOrCreateClientId()` lưu `smartcall_device_client_id` vào `localStorage`.
+   - Thêm `refreshSessionToken()` tự động gọi Wazo Auth qua SDK `logInViaRefreshToken` hoặc REST API fallback.
+   - Cập nhật `verifyTokenHealth()` kích hoạt `refreshSessionToken()` trước khi quyết định logout.
+   - Cập nhật `setPresence()` tự động đính kèm `smartcall-web-${this.myClientId}`.
+   - Cập nhật Single-Device Logout listener trong `openWebSocketEvents()` kiểm tra `myClientId` và bộ đếm 5 giây chống echo.
+2. **`src/views/CallsView.vue`**:
+   - Thay thế nút Hold bằng nút "Thêm người" (`btn-add-member`) với biểu tượng SVG `UserPlus`.
+   - Tích hợp Modal `InCallAddParticipantModal`: hiển thị người đang trực tuyến, tìm kiếm và chọn nhiều thành viên để mời vào cuộc gọi.
+   - Chuẩn hóa CSS của `.selection-pill` và `.btn-action-pill.btn-deselect-group` đạt độ cao và bo góc đồng đều 100%.
+3. **`src/components/call/IncomingCallModal.vue`**:
+   - Tái thiết kế toàn diện theo phong cách Call Card hiện đại: Badge cuộc gọi đến, Avatar với Radar Pulse, thông tin người gọi rõ nét và cặp nút tròn nổi UX Floating Circle.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `598ms` (322 modules transformed).
+
+
 
 
 

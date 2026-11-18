@@ -259,27 +259,26 @@
                 </svg>
               </button>
 
-              <!-- Nút Giữ máy (Hold) -->
+              <!-- Nút Thêm người vào cuộc gọi (Add Member) -->
               <button
-                class="control-btn"
-                :class="{ active: isHeld }"
-                :disabled="!isCalling"
-                :title="isHeld ? 'Tiếp tục cuộc gọi' : 'Giữ cuộc gọi (Hold)'"
-                @click="toggleHold"
+                class="control-btn btn-add-member"
+                :disabled="!isCalling || callState === 'ringing'"
+                title="Mời thêm thành viên vào cuộc gọi"
+                @click="openAddParticipantModal"
               >
                 <svg
-                  v-if="!isHeld"
                   class="ctrl-svg-icon"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
                   stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 >
-                  <rect x="6" y="4" width="4" height="16" rx="1" />
-                  <rect x="14" y="4" width="4" height="16" rx="1" />
-                </svg>
-                <svg v-else class="ctrl-svg-icon" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z" />
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="8.5" cy="7" r="4" />
+                  <line x1="20" y1="8" x2="20" y2="14" />
+                  <line x1="23" y1="11" x2="17" y2="11" />
                 </svg>
               </button>
 
@@ -864,6 +863,88 @@
           </button>
           <button class="btn-tab-config-done" @click="showTabConfigModal = false">
             Hoàn tất ({{ visibleTabIds.length }} mục)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Thêm thành viên vào cuộc gọi đang diễn ra -->
+    <div
+      v-if="showAddParticipantModal"
+      class="add-participant-overlay"
+      @click.self="closeAddParticipantModal"
+    >
+      <div class="add-participant-card">
+        <div class="add-participant-header">
+          <div class="add-participant-title">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="8.5" cy="7" r="4"></circle>
+              <line x1="20" y1="8" x2="20" y2="14"></line>
+              <line x1="23" y1="11" x2="17" y2="11"></line>
+            </svg>
+            <span>Thêm người vào cuộc gọi</span>
+          </div>
+          <button class="btn-close-modal" @click="closeAddParticipantModal" title="Đóng">✕</button>
+        </div>
+
+        <div class="add-participant-search">
+          <input
+            v-model="addParticipantSearch"
+            type="text"
+            placeholder="Tìm theo tên, số máy lẻ..."
+            class="add-search-input"
+          />
+        </div>
+
+        <div class="add-participant-list">
+          <div
+            v-if="availableAddParticipants.length === 0"
+            class="add-participant-empty"
+          >
+            <p>Không có đồng nghiệp trực tuyến nào khả dụng để mời.</p>
+          </div>
+          <div
+            v-for="c in availableAddParticipants"
+            :key="c.uuid || c.number"
+            class="add-participant-item"
+            :class="{ selected: selectedAddExtensions.includes(String(c.number).trim()) }"
+            @click="toggleAddExtension(c.number)"
+          >
+            <div class="add-item-checkbox">
+              <input
+                type="checkbox"
+                :checked="selectedAddExtensions.includes(String(c.number).trim())"
+                @click.stop="toggleAddExtension(c.number)"
+              />
+            </div>
+            <div
+              class="add-item-avatar"
+              :style="{ backgroundColor: getAvatarColor(c.name) }"
+            >
+              {{ getInitials(c.name) }}
+            </div>
+            <div class="add-item-info">
+              <div class="add-item-name">{{ c.name }}</div>
+              <div class="add-item-sub">
+                <span class="add-item-ext">Máy lẻ {{ c.number }}</span>
+                <span v-if="c.dept" class="add-item-dept">• {{ c.dept }}</span>
+              </div>
+            </div>
+            <span class="badge-status-pill online">Trực tuyến</span>
+          </div>
+        </div>
+
+        <div class="add-participant-footer">
+          <button class="btn-add-cancel" @click="closeAddParticipantModal">
+            Hủy
+          </button>
+          <button
+            class="btn-add-confirm"
+            :disabled="selectedAddExtensions.length === 0"
+            @click="confirmAddParticipants"
+          >
+            Mời vào cuộc gọi ({{ selectedAddExtensions.length }})
           </button>
         </div>
       </div>
@@ -1727,8 +1808,67 @@ const toggleMute = () => {
   wazoService.toggleMute()
 }
 
-const toggleHold = () => {
-  wazoService.toggleHold()
+// State & methods cho Modal Thêm người vào cuộc gọi đang diễn ra
+const showAddParticipantModal = ref(false)
+const addParticipantSearch = ref('')
+const selectedAddExtensions = ref([])
+
+const availableAddParticipants = computed(() => {
+  const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
+  const activeExt = String(callStore.activeCall?.number || '').trim()
+  const inCallExts = new Set(
+    (callStore.activeCall?.groupParticipantExtensions || wazoService.groupParticipantExtensions || []).map((e) =>
+      String(e).trim(),
+    ),
+  )
+  if (activeExt) inCallExts.add(activeExt)
+  if (myExt) inCallExts.add(myExt)
+
+  let list = contacts.value.filter((c) => {
+    const ext = String(c.number || '').trim()
+    const isOnline = c.status !== 'offline' && c.status !== 'unavailable'
+    return isOnline && !inCallExts.has(ext)
+  })
+
+  const q = addParticipantSearch.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(
+      (c) =>
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.number || '').includes(q) ||
+        (c.dept || '').toLowerCase().includes(q),
+    )
+  }
+  return list
+})
+
+const openAddParticipantModal = () => {
+  selectedAddExtensions.value = []
+  addParticipantSearch.value = ''
+  showAddParticipantModal.value = true
+}
+
+const closeAddParticipantModal = () => {
+  showAddParticipantModal.value = false
+  selectedAddExtensions.value = []
+  addParticipantSearch.value = ''
+}
+
+const toggleAddExtension = (ext) => {
+  const s = String(ext).trim()
+  const idx = selectedAddExtensions.value.indexOf(s)
+  if (idx >= 0) {
+    selectedAddExtensions.value.splice(idx, 1)
+  } else {
+    selectedAddExtensions.value.push(s)
+  }
+}
+
+const confirmAddParticipants = async () => {
+  if (selectedAddExtensions.value.length === 0) return
+  const toAdd = [...selectedAddExtensions.value]
+  closeAddParticipantModal()
+  await wazoService.addParticipantsToGroupCall(toAdd)
 }
 
 // Helper Avatar
@@ -3297,16 +3437,18 @@ onUnmounted(() => {
 .selection-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.82rem;
+  gap: 5px;
+  font-size: 0.8rem;
   color: #1e40af;
   background: #eff6ff;
   border: 1px solid #bfdbfe;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 20px;
   font-weight: 500;
   white-space: nowrap;
   flex-shrink: 0;
+  height: 28px;
+  box-sizing: border-box;
 }
 
 .selection-pill strong {
@@ -3325,9 +3467,9 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 10px;
-  border-radius: 16px;
-  font-size: 0.76rem;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.8rem;
   font-weight: 600;
   border: 1px solid #cbd5e1;
   background: #ffffff;
@@ -3336,7 +3478,7 @@ onUnmounted(() => {
   transition: all 0.15s ease;
   white-space: nowrap;
   flex-shrink: 0;
-  height: 26px;
+  height: 28px;
   box-sizing: border-box;
 }
 
@@ -3347,16 +3489,16 @@ onUnmounted(() => {
 }
 
 .btn-action-pill.btn-deselect-group {
-  color: #dc2626;
-  border-color: #fecaca;
-  background: #fff5f5;
+  color: #e11d48;
+  border-color: #fecdd3;
+  background: #fff1f2;
   width: auto;
-  height: 26px;
+  height: 28px;
 }
 .btn-action-pill.btn-deselect-group:hover {
-  background: #fee2e2;
-  border-color: #fca5a5;
-  color: #b91c1c;
+  background: #ffe4e6;
+  border-color: #fda4af;
+  color: #be123c;
 }
 
 .pill-dot {
@@ -3752,5 +3894,206 @@ onUnmounted(() => {
 
 .btn-tab-config-done:hover {
   background: #1d4ed8;
+}
+
+/* Modal Thêm người vào cuộc gọi đang diễn ra */
+.add-participant-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease;
+}
+
+.add-participant-card {
+  width: 90%;
+  max-width: 440px;
+  max-height: 80vh;
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.add-participant-header {
+  padding: 18px 20px 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.add-participant-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.btn-close-modal {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.btn-close-modal:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.add-participant-search {
+  padding: 12px 20px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.add-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  outline: none;
+  box-sizing: border-box;
+}
+.add-search-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.add-participant-list {
+  padding: 8px 12px;
+  overflow-y: auto;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.add-participant-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.88rem;
+}
+
+.add-participant-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.add-participant-item:hover {
+  background: #f8fafc;
+}
+.add-participant-item.selected {
+  background: #eff6ff;
+}
+
+.add-item-checkbox input {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+
+.add-item-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.add-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.add-item-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.add-item-sub {
+  font-size: 0.76rem;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.add-participant-footer {
+  padding: 14px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.btn-add-cancel {
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-add-cancel:hover {
+  background: #f1f5f9;
+}
+
+.btn-add-confirm {
+  padding: 8px 18px;
+  border-radius: 10px;
+  border: none;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-add-confirm:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.btn-add-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control-btn.btn-add-member {
+  color: #2563eb;
+}
+.control-btn.btn-add-member:hover:not(:disabled) {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
 }
 </style>

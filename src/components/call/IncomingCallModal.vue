@@ -2,51 +2,58 @@
   <transition name="call-pop">
     <div v-if="isOpen" class="incoming-call-overlay">
       <div class="incoming-call-card">
-        <!-- 1. Thanh trạng thái trên cùng -->
-        <div class="card-topbar">
-          <div class="reg-status">
-            <span class="reg-dot"></span>
-            <span class="reg-text">Registered</span>
-          </div>
-          <div class="topbar-right">
-            <span class="lock-icon" title="Cuộc gọi được mã hóa SRTP">🔒</span>
+        <!-- 1. Header tinh tế dạng badge nổi -->
+        <div class="card-header">
+          <div class="incoming-badge">
+            <svg class="incoming-badge-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+            </svg>
+            <span>CUỘC GỌI ĐẾN</span>
           </div>
         </div>
 
-        <!-- 2. Tiêu đề INCOMING CALL -->
-        <div class="call-type-banner">
-          <h2>INCOMING CALL</h2>
+        <!-- 2. Avatar vòng tròn lớn với hiệu ứng sóng Radar Pulse -->
+        <div class="avatar-wrapper">
+          <div class="pulse-ring"></div>
+          <div class="pulse-ring delay"></div>
+          <div class="avatar-circle" :style="{ background: avatarBg }">
+            <span class="avatar-initials">{{ initials }}</span>
+          </div>
         </div>
 
         <!-- 3. Thông tin người gọi đến -->
         <div class="caller-profile">
           <h1 class="caller-name">{{ callerName }}</h1>
-          <p class="caller-sip">{{ callerSip }}</p>
-          <span v-if="callerDept" class="caller-dept">{{ callerDept }}</span>
-        </div>
-
-        <!-- 4. Avatar vòng tròn lớn có hiệu ứng sóng xung quanh (Radar Pulse) -->
-        <div class="avatar-wrapper">
-          <div class="pulse-ring"></div>
-          <div class="pulse-ring delay"></div>
-          <div class="avatar-circle">
-            <span class="avatar-initials">{{ initials }}</span>
+          <div class="caller-info-pill">
+            <span class="pill-ext">Máy lẻ {{ callerExt }}</span>
+            <span v-if="callerDept" class="pill-divider">•</span>
+            <span v-if="callerDept" class="pill-dept">{{ callerDept }}</span>
           </div>
+          <p class="caller-sip">{{ callerSip }}</p>
         </div>
 
-        <!-- 5. Hai nút hành động (Từ chối & Chấp nhận) -->
+        <!-- 4. Cặp nút tròn nổi chuẩn UX (Từ chối & Nghe máy) -->
         <div class="action-footer">
-          <!-- Nút Từ chối (Bên trái, màu xám/đỏ có biểu tượng cúp máy) -->
-          <button class="btn-call-action btn-reject" title="Từ chối cuộc gọi" @click="handleReject">
-            <span class="btn-icon">📵</span>
-            <span class="btn-label">TỪ CHỐI</span>
-          </button>
+          <!-- Nút Từ chối -->
+          <div class="action-btn-item">
+            <button class="btn-circle btn-reject" title="Từ chối cuộc gọi" @click="handleReject">
+              <svg viewBox="0 0 24 24" class="action-svg" fill="currentColor">
+                <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 0 1 0-1.41C2.56 9.42 6.98 8 12 8s9.44 1.42 11.71 3.67c.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+              </svg>
+            </button>
+            <span class="action-text text-reject">Từ chối</span>
+          </div>
 
-          <!-- Nút Nghe máy (Bên phải, màu xanh lam/xanh lá có biểu tượng nhấc máy) -->
-          <button class="btn-call-action btn-accept" title="Chấp nhận cuộc gọi" @click="handleAccept">
-            <span class="btn-icon">📞</span>
-            <span class="btn-label">NGHE MÁY</span>
-          </button>
+          <!-- Nút Nghe máy -->
+          <div class="action-btn-item">
+            <button class="btn-circle btn-accept" title="Nghe máy" @click="handleAccept">
+              <div class="btn-pulse-wave"></div>
+              <svg viewBox="0 0 24 24" class="action-svg" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+              </svg>
+            </button>
+            <span class="action-text text-accept">Nghe máy</span>
+          </div>
         </div>
       </div>
     </div>
@@ -76,6 +83,10 @@ const callerName = computed(() => {
   return props.callData?.name || props.callData?.remote_name || `Máy lẻ ${props.callData?.extension || '1007'}`
 })
 
+const callerExt = computed(() => {
+  return props.callData?.extension || props.callData?.number || '1007'
+})
+
 const callerSip = computed(() => {
   if (props.callData?.sipUri) return props.callData.sipUri
   const ext = props.callData?.extension || '1007'
@@ -89,10 +100,27 @@ const callerDept = computed(() => {
 
 const initials = computed(() => {
   const name = callerName.value
-  if (!name) return '📞'
-  const parts = name.trim().split(' ')
+  if (!name) return 'SC'
+  const parts = name.trim().split(/\s+/)
   if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+})
+
+const avatarBg = computed(() => {
+  const name = callerName.value || ''
+  const colors = [
+    'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+    'linear-gradient(135deg, #0ea5e9, #0284c7)',
+    'linear-gradient(135deg, #10b981, #047857)',
+    'linear-gradient(135deg, #f59e0b, #b45309)',
+    'linear-gradient(135deg, #8b5cf6, #6d28d9)',
+    'linear-gradient(135deg, #ec4899, #be185d)',
+  ]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return colors[Math.abs(hash) % colors.length]
 })
 
 let ringTimer = null
@@ -139,8 +167,8 @@ const handleTimeout = () => {
 .incoming-call-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(6px);
+  background-color: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -149,19 +177,21 @@ const handleTimeout = () => {
 
 .incoming-call-card {
   width: 90%;
-  max-width: 380px;
+  max-width: 360px;
   background: #ffffff;
-  border-radius: 20px;
-  overflow: hidden;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35);
+  border-radius: 28px;
+  padding: 28px 24px 32px 24px;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
+  align-items: center;
   animation: cardIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
 }
 
 @keyframes cardIn {
   from {
-    transform: scale(0.9) translateY(20px);
+    transform: scale(0.92) translateY(24px);
     opacity: 0;
   }
   to {
@@ -170,109 +200,67 @@ const handleTimeout = () => {
   }
 }
 
-/* 1. Top bar */
-.card-topbar {
-  background-color: #0284c7;
-  color: #ffffff;
-  padding: 10px 16px;
+/* 1. Card Header */
+.card-header {
+  width: 100%;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.incoming-badge {
+  display: inline-flex;
   align-items: center;
+  gap: 6px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 5px 14px;
+  border-radius: 20px;
 }
 
-.reg-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
-  font-weight: 600;
+.incoming-badge-icon {
+  width: 14px;
+  height: 14px;
+  animation: badgeShake 1.2s ease-in-out infinite;
 }
 
-.reg-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: #22c55e;
-  box-shadow: 0 0 6px #22c55e;
+@keyframes badgeShake {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-15deg); }
+  40% { transform: rotate(15deg); }
+  60% { transform: rotate(-10deg); }
+  80% { transform: rotate(10deg); }
 }
 
-.lock-icon {
-  font-size: 0.85rem;
-  opacity: 0.85;
-}
-
-/* 2. Banner INCOMING CALL */
-.call-type-banner {
-  background-color: #f1f5f9;
-  padding: 12px 16px;
-  text-align: center;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.call-type-banner h2 {
-  font-size: 1.1rem;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-  color: #475569;
-  margin: 0;
-}
-
-/* 3. Thông tin người gọi */
-.caller-profile {
-  text-align: center;
-  padding: 24px 20px 12px 20px;
-}
-
-.caller-name {
-  font-size: 1.4rem;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0 0 6px 0;
-}
-
-.caller-sip {
-  font-family: monospace;
-  font-size: 0.85rem;
-  color: #0284c7;
-  margin: 0 0 8px 0;
-}
-
-.caller-dept {
-  display: inline-block;
-  background-color: #f8fafc;
-  border: 1px solid #e2e8f0;
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  color: #64748b;
-  font-weight: 500;
-}
-
-/* 4. Avatar lớn có hiệu ứng radar pulse */
+/* 2. Avatar Wrapper với Radar Pulse */
 .avatar-wrapper {
   position: relative;
-  width: 140px;
-  height: 140px;
-  margin: 20px auto 30px auto;
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 18px auto;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .avatar-circle {
-  width: 110px;
-  height: 110px;
+  width: 90px;
+  height: 90px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #334155, #1e293b);
-  border: 4px solid #0284c7;
+  border: 3px solid #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #ffffff;
-  font-size: 2.2rem;
+  font-size: 2rem;
   font-weight: 800;
+  letter-spacing: 1px;
   z-index: 2;
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4);
 }
 
 .pulse-ring {
@@ -280,7 +268,7 @@ const handleTimeout = () => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  border: 2px solid #0284c7;
+  border: 2px solid #3b82f6;
   animation: pulseEffect 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
   opacity: 0;
   z-index: 1;
@@ -292,67 +280,158 @@ const handleTimeout = () => {
 
 @keyframes pulseEffect {
   0% {
-    transform: scale(0.8);
+    transform: scale(0.75);
     opacity: 0.8;
   }
   100% {
-    transform: scale(1.4);
+    transform: scale(1.35);
     opacity: 0;
   }
 }
 
-/* 5. Hai nút hành động ở chân modal */
-.action-footer {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  border-top: 1px solid #e2e8f0;
+/* 3. Thông tin người gọi */
+.caller-profile {
+  text-align: center;
+  width: 100%;
+  margin-bottom: 28px;
 }
 
-.btn-call-action {
-  border: none;
-  padding: 20px 10px;
-  cursor: pointer;
+.caller-name {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 8px 0;
+  line-height: 1.3;
+}
+
+.caller-info-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f1f5f9;
+  padding: 4px 12px;
+  border-radius: 14px;
+  font-size: 0.8rem;
+  color: #475569;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.pill-divider {
+  color: #94a3b8;
+}
+
+.caller-sip {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  margin: 0;
+}
+
+/* 4. Chân Card: Cặp nút tròn nổi */
+.action-footer {
+  width: 100%;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.action-btn-item {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 8px;
+}
+
+.btn-circle {
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 6px;
-  transition: all 0.2s;
+  position: relative;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.2);
+}
+
+.btn-circle:hover {
+  transform: scale(1.08);
+}
+
+.btn-circle:active {
+  transform: scale(0.96);
 }
 
 .btn-reject {
-  background-color: #64748b;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
   color: #ffffff;
-  border-right: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 20px -4px rgba(239, 68, 68, 0.45);
 }
 
 .btn-reject:hover {
-  background-color: #dc2626;
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  box-shadow: 0 10px 24px -4px rgba(220, 38, 38, 0.6);
 }
 
 .btn-accept {
-  background-color: #0284c7;
+  background: linear-gradient(135deg, #10b981, #059669);
   color: #ffffff;
+  box-shadow: 0 8px 20px -4px rgba(16, 185, 129, 0.45);
 }
 
 .btn-accept:hover {
-  background-color: #059669;
+  background: linear-gradient(135deg, #059669, #047857);
+  box-shadow: 0 10px 24px -4px rgba(5, 150, 105, 0.6);
 }
 
-.btn-icon {
-  font-size: 1.8rem;
+.btn-pulse-wave {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid #10b981;
+  animation: answerPulse 1.6s ease-out infinite;
+  pointer-events: none;
 }
 
-.btn-label {
-  font-size: 0.8rem;
-  font-weight: 800;
-  letter-spacing: 0.5px;
+@keyframes answerPulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
 }
 
-/* Transition hiệu ứng bật/tắt */
+.action-svg {
+  width: 26px;
+  height: 26px;
+  z-index: 2;
+}
+
+.action-text {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.text-reject {
+  color: #ef4444;
+}
+
+.text-accept {
+  color: #059669;
+}
+
+/* Transition Modal */
 .call-pop-enter-active,
 .call-pop-leave-active {
-  transition: opacity 0.3s ease;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 .call-pop-enter-from,
@@ -360,4 +439,3 @@ const handleTimeout = () => {
   opacity: 0;
 }
 </style>
-

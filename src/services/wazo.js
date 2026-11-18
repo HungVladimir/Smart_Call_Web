@@ -34,16 +34,20 @@ class WazoService {
     // Client ID duy nhất cho phiên Web (đối ứng chuẩn mã nguồn tham chiếu mẫu Android)
     this.clientId = ''
     this.currentClientId = ''
+    this.myClientId = ''
     this.getOrCreateClientId()
     this.listenersAttached = false
     this.isRegistered = false
     this.eventWs = null
+    this._wsConnectTime = 0
     this._durationInterval = null
     this._isDialing = false
     this.mySessionId = ''
     this.currentSessionUuid = ''
     this._isKicked = false
     this._tokenCheckTimer = null
+    this._isRefreshingToken = false
+    this._refreshPromise = null
 
     // Trạng thái Gọi nhóm Ad-hoc (Ad-hoc Group Conference) - Parity với Android WazoSipCallManager
     this.activeAdhocConferenceId = ''
@@ -63,17 +67,18 @@ class WazoService {
   getOrCreateClientId() {
     let storedClientId = ''
     try {
-      storedClientId = sessionStorage.getItem('smartcall_client_id') || ''
+      storedClientId = localStorage.getItem('smartcall_device_client_id') || ''
     } catch (e) {}
     if (!storedClientId) {
-      const rand = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 10)
-      storedClientId = `smartcall-web-${rand}`
+      const rand = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 10)
+      storedClientId = `web_${rand}`
       try {
-        sessionStorage.setItem('smartcall_client_id', storedClientId)
+        localStorage.setItem('smartcall_device_client_id', storedClientId)
       } catch (e) {}
     }
     this.clientId = storedClientId
     this.currentClientId = storedClientId
+    this.myClientId = storedClientId
     return storedClientId
   }
 
@@ -150,8 +155,11 @@ class WazoService {
         logger.warn('SIP', 'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)', phoneErr.message)
       }
 
-      // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên Wazo Chatd
+      // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên máy chủ Chatd
       this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+      try {
+        localStorage.setItem('smartcall_session_id', this.mySessionId)
+      } catch (e) {}
       this._isKicked = false
       try {
         await this.setPresence('available', this.mySessionId)
@@ -209,7 +217,10 @@ class WazoService {
           } catch (phoneErr) {
             logger.warn('SIP', 'Khôi phục WebRTC phone cảnh báo', phoneErr.message)
           }
-          this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+          this.mySessionId = localStorage.getItem('smartcall_session_id') || ('sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7))
+          try {
+            localStorage.setItem('smartcall_session_id', this.mySessionId)
+          } catch (e) {}
           this._isKicked = false
           try {
             await this.setPresence('available', this.mySessionId)
@@ -276,6 +287,9 @@ class WazoService {
       })
     } catch (e) {}
     this.stopTokenHeartbeat()
+    try {
+      localStorage.removeItem('smartcall_session_id')
+    } catch (e) {}
     this.mySessionId = ''
     this.currentSessionUuid = ''
     this._isKicked = false
@@ -450,6 +464,75 @@ class WazoService {
     }
   }
 
+  /**
+   * Tự động làm mới Auth Token khi phiên 1 giờ hết hạn qua Refresh Token
+   * Đảm bảo phiên làm việc được duy trì liên tục, chỉ logout khi chính refresh_token bị thu hồi
+   */
+  async refreshSessionToken() {
+    if (this._isRefreshingToken) return this._refreshPromise
+    const refreshToken = localStorage.getItem('smartcall_wazo_refreshToken')
+    if (!refreshToken) return false
+
+    this._isRefreshingToken = true
+    this._refreshPromise = (async () => {
+      try {
+        logger.info('AUTH', '🔄 Đang tự động làm mới Auth Token qua Refresh Token...')
+        let newSession = null
+        try {
+          newSession = await Wazo.Auth.logInViaRefreshToken(refreshToken)
+        } catch (sdkErr) {
+          logger.warn('AUTH', 'SDK logInViaRefreshToken cảnh báo, thử gọi REST API:', sdkErr.message)
+          const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+          const res = await fetch(`${host}/api/auth/0.1/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+              client_id: this.myClientId || this.clientId,
+              refresh_token: refreshToken,
+              expiration: 604800,
+            }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            if (data?.data?.token) {
+              newSession = {
+                token: data.data.token,
+                refreshToken: data.data.refreshToken || refreshToken,
+                sessionUuid: data.data.sessionUuid,
+                uuid: data.data.uuid || this.session?.uuid,
+              }
+            }
+          }
+        }
+
+        if (newSession && newSession.token) {
+          this.session = { ...(this.session || {}), ...newSession }
+          localStorage.setItem('smartcall_wazo_token', newSession.token)
+          if (newSession.refreshToken) {
+            localStorage.setItem('smartcall_wazo_refreshToken', newSession.refreshToken)
+          }
+          if (newSession.sessionUuid) {
+            localStorage.setItem('smartcall_session_uuid', newSession.sessionUuid)
+            this.currentSessionUuid = newSession.sessionUuid
+          }
+          try {
+            Wazo.Auth.setApiToken(newSession.token)
+          } catch (e) {}
+          logger.success('AUTH', '🎉 Đã làm mới Auth Token thành công, phiên làm việc được duy trì liên tục!')
+          return true
+        }
+      } catch (err) {
+        logger.warn('AUTH', 'Không thể làm mới Auth Token qua Refresh Token:', err.message)
+      } finally {
+        this._isRefreshingToken = false
+        this._refreshPromise = null
+      }
+      return false
+    })()
+
+    return this._refreshPromise
+  }
+
   async verifyTokenHealth() {
     const token = this.getToken()
     if (!token) return false
@@ -460,6 +543,11 @@ class WazoService {
         signal: AbortSignal.timeout(3500),
       })
       if (res.status === 401 || res.status === 404) {
+        logger.info('AUTH', 'Token hết hạn trên máy chủ xác thực (401/404), đang kích hoạt làm mới tự động...')
+        const refreshed = await this.refreshSessionToken()
+        if (refreshed) {
+          return true
+        }
         return false
       }
       return true
@@ -541,6 +629,7 @@ class WazoService {
       this.eventWs = new WebSocket(`wss://${cleanHost}/api/websocketd/?token=${token}&version=2`)
 
       this.eventWs.onopen = () => {
+        this._wsConnectTime = Date.now()
         logger.info('API', 'Kết nối wazo-websocketd đã mở thành công.')
         try {
           const defaultEvents = [
@@ -609,14 +698,19 @@ class WazoService {
             const myUuid = this.getMyUserUuid()
             const targetUuid = data?.uuid || data?.user_uuid
             if (myUuid && targetUuid === myUuid && data?.status) {
-              const statusStr = String(data.status)
-              const isAndroidDevice = statusStr.includes('smartcall-android')
-              const isOtherWebSession = statusStr.includes('sess_') && this.mySessionId && !statusStr.includes(this.mySessionId)
+              const timeSinceConnect = Date.now() - (this._wsConnectTime || 0)
+              // Bỏ qua sự kiện Presence trong 5 giây đầu sau khi WebSocket vừa kết nối lại để triệt tiêu Presence Echo
+              if (timeSinceConnect > 5000) {
+                const statusStr = String(data.status)
+                const isAndroidDevice = statusStr.includes('smartcall-android')
+                const isOtherWebDevice = statusStr.includes('smartcall-web') && this.myClientId && !statusStr.includes(this.myClientId)
+                const isLegacyOtherWeb = statusStr.includes('sess_') && this.mySessionId && !statusStr.includes(this.mySessionId) && !statusStr.includes(this.myClientId)
 
-              if (isAndroidDevice || isOtherWebSession) {
-                logger.warn('AUTH', `Tài khoản vừa đăng nhập phiên mới (${statusStr}) trên thiết bị khác!`)
-                this.handleSessionKicked()
-                return
+                if (isAndroidDevice || isOtherWebDevice || isLegacyOtherWeb) {
+                  logger.warn('AUTH', `Tài khoản vừa đăng nhập phiên mới (${statusStr}) trên thiết bị khác!`)
+                  this.handleSessionKicked()
+                  return
+                }
               }
             }
           }
@@ -1992,7 +2086,11 @@ class WazoService {
     let baseStatus = statusText || (state === 'available' ? 'Sẵn sàng' : 'Bận')
     let finalStatus = baseStatus
     if (!finalStatus.includes('smartcall-web')) {
-      finalStatus = `${finalStatus}-smartcall-web`
+      finalStatus = this.myClientId
+        ? `${finalStatus}-smartcall-web-${this.myClientId}`
+        : `${finalStatus}-smartcall-web`
+    } else if (this.myClientId && !finalStatus.includes(this.myClientId)) {
+      finalStatus = `${finalStatus}-${this.myClientId}`
     }
 
     logger.info('API', `Cập nhật Presence: state=${state}, status=${finalStatus}`)
