@@ -73,6 +73,11 @@
 | **57** | Khôi phục Bố cục Calls View Nhỏ Gọn (Compact Grid 1200px), Căn Đều 5 Tab 100% & Tinh chỉnh Nút Quản lý Nhóm bằng SVG Vector Hiện đại | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Trả container về `max-width: 1200px` và lưới `300px 420px 440px` cân đối chuẩn ban đầu; Căn đều 5 tab bộ lọc (`flex: 1; justify-content: center;`) triệt tiêu hoàn toàn khoảng trống thừa sau Gọi nhóm; Nâng cấp 2 nút Thêm thành viên và Xóa nhóm bằng SVG vector sắc nét trên nền pill pastel hiện đại. |
 | **58** | Khôi phục Kích thước Rộng Rãi Calls View, Đồng bộ Chiều cao 3 Cột (Stretch) & Căn Đều 5 Mục Tab | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Khôi phục `max-width: 1560px` và lưới `300px 420px 1fr`; Áp dụng `align-items: stretch` và `min-height: 500px` cho danh bạ triệt tiêu co ngắn khi ít liên hệ; Giữ tỷ lệ chia đều `flex: 1` hiển thị đầy đủ cả 5 tab không bị che khuất hay tràn dòng. |
 | **59** | Triển khai Tab Bộ phận (Department Selector Bar), Khắc phục Nút Xóa Rớt 2 Dòng & Chuẩn hóa Từ khóa theo Rule mới | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Bổ sung Tab 5 `🏢 Bộ phận` với thanh chọn phòng ban động dạng chip pills; Hỗ trợ tìm kiếm kết hợp trong phạm vi bộ phận; Khóa chặt `white-space: nowrap;` kèm icon SVG cho nút xóa/bỏ chọn; Thay thế toàn bộ từ khóa tên tổng đài trong comments và giao diện UI theo rule mới. |
+| **60** | Xử lý Triệt để Race Condition Lỗi Tạo Phòng Trùng & Rà soát Lọc Trực tuyến Danh bạ | Tiêu chuẩn Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Khóa tạo phòng chat trùng lặp bằng debounce & cache Map; Rà soát bộ lọc trực tuyến danh bạ. |
+| **61** | Ngắt Thác Cuộc gọi Nhóm (Cascading Disconnect Fix) & Tinh chỉnh Ngưỡng Đàm thoại Ad-hoc Conference | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu | **HOÀN THÀNH** ✅ | Khắc phục ngắt toàn bộ cuộc gọi khi nhánh phụ từ chối; Bắt buộc tối thiểu 2 nhánh đàm thoại mới tạo Ad-hoc Conference triệt tiêu lỗi HTTP 400. |
+| **62** | Tích hợp Nút Thêm Người Trong Cuộc gọi, Modal Cuộc gọi đến Đồ họa Hiện đại & Cơ chế Tự động Refresh Token | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu Người dùng | **HOÀN THÀNH** ✅ | Thay thế Hold bằng nút Thêm người (InCallAddParticipantModal); Thiết kế lại IncomingCallModal phong cách Call Card radar pulse; Triển khai refreshSessionToken và lưu Client ID vào localStorage. |
+| **63** | Triệt tiêu Hoàn toàn Tính năng Hold, Khóa Cơ chế Auto-Hold Wazo SDK & Xử lý Tiếng nhạc MOH | Tiêu chuẩn Mục 7 & 8 GEMINI.md | **HOÀN THÀNH** ✅ | Vô hiệu hóa prototype holdSipSession của WebRTCPhone ngăn Asterisk phát Music On Hold; Dọn sạch 100% logic isHeld khỏi wazo.js và CallsView.vue. |
+| **64** | Khắc phục Triệt để Lỗi Mất Giao diện Cuộc gọi Nhóm trên Callee (Đồng bộ Chuẩn Đối chiếu Android WazoSipCallManager) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu mẫu | **HOÀN THÀNH** ✅ | Sửa lỗi trích xuất thiếu peerCallId trong syncActiveCallsToAdhocConference; Loại bỏ việc nhét nhầm nhánh phụ Host vào conference gây SIP BYE; Xử lý Callee 2 nghe trước Callee 1; Bỏ qua ON_CALL_CANCELED cause=26; Đăng ký đầy đủ WebSocket adhoc conference events. |
 
 ---
 
@@ -3368,6 +3373,41 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra:
 - Toàn bộ từ khóa và logic điều khiển `isHeld` đã được làm sạch 100% khỏi toàn bộ thư mục `src/`.
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `518ms` (322 modules transformed).
+
+---
+
+## BƯỚC 64: KHẮC PHỤC TRIỆT ĐỂ LỖI MẤT GIAO DIỆN CUỘC GỌI NHÓM TRÊN CALLEE (ĐỐI CHIẾU CHUẨN ANDROID WAZOSIPCALLMANAGER)
+
+### 1. Phân tích Nguyên nhân Gốc rễ:
+- **Hiện tượng**: Chủ phòng A gọi nhóm cho 2 người B và C. Cả B và C đều ấn "Nghe". Máy chủ tổng đài Wazo Asterisk ghi nhận trạng thái cả 2 nhánh đều `call_answered` / `talking`. Tuy nhiên, trên máy của một người (Callee), giao diện cuộc gọi đang hoạt động không xuất hiện (bị văng về màn hình bàn phím / rảnh rỗi).
+- **Nguyên nhân cốt lõi trong `syncActiveCallsToAdhocConference()`**:
+  1. **Bỏ sót `peerCallId` của nhánh chính**: Khi duyệt qua `activeCalls`, nhánh matching với `currentCallSession.sipCallId` của Host chỉ gán `hostCallId = cid` và bỏ qua khối `else`. Do đó, `talking_to` của nhánh chính (chứa `peerCallId` của Callee 1) không bao giờ được trích xuất vào `participant_call_ids`!
+  2. **Gộp nhầm nhánh phụ cục bộ của Chủ phòng vào Conference**: Khối `else` vô tình thêm `cid` (nhánh WebRTC phụ của chính Chủ phòng A) vào `participant_call_ids`. Asterisk cố gắng gộp đồng thời cả 2 kênh WebRTC của cùng 1 máy A vào ConfBridge gây xung đột SDP và đóng kênh của Callee bằng SIP `BYE`.
+  3. **Callee bị văng trạng thái**: Khi nhận SIP `BYE` từ Asterisk, máy của Callee kích hoạt sự kiện `ON_CALL_ENDED`, dẫn tới hàm `_finalizeCallTermination('ended')` xóa sạch `callStore.activeCall = null`, biến mất giao diện "Đang đàm thoại".
+
+### 2. Các File Triển khai & Chi tiết Xử lý:
+1. **`src/services/wazo.js`**:
+   - **Tái cấu trúc `syncActiveCallsToAdhocConference()` chuẩn 100% theo Android `WazoSipCallManager.py`**:
+     + Xác định `hostCallId` từ `currentCallSession.sipCallId` của Chủ phòng.
+     + Duyệt qua `callObj.talking_to` của **TẤT CẢ** các cuộc gọi trong `activeCalls` để lấy toàn bộ `peerCallId` của các thành viên được gọi.
+     + Tuyệt đối **KHÔNG** đưa nhánh phụ cục bộ của Chủ phòng (`cid`) vào `participant_call_ids`.
+     + Đảm bảo mảng `participant_call_ids` gửi lên `POST /api/calld/1.0/users/me/conferences/adhoc` luôn chứa đầy đủ tất cả các kênh đàm thoại của Callee 1 và Callee 2.
+   - **Xử lý tình huống Callee 2 nghe máy trước Callee 1 (Tương đương `swapSecondaryLegToPrimaryAndConnect`)**:
+     + Khi có 1 nhánh phụ `talking` trong lúc nhánh chính vẫn đang `ringing`, tự động chuyển luồng âm thanh đàm thoại của nhánh phụ lên nghe ngay với Chủ phòng (`this.playRemoteStream(stream)`), không để người nghe trước rơi vào trạng thái im lặng.
+   - **Cơ chế bảo vệ trạng thái nhóm khi nhánh phụ chuyển kênh**:
+     + Trong `_finalizeCallTermination`: Nếu `activeAdhocConferenceId` đã hoạt động, việc nhánh WebRTC phụ kết thúc là do Asterisk đã chuyển kênh sang ConfBridge, không xóa thành viên khỏi danh sách nhóm (Đối chiếu `WazoSipCallManager.py` dòng 1164).
+   - **Bỏ qua sự kiện hủy giả mạo `ON_CALL_CANCELED` (cause=26 / elsewhere)**:
+     + Nếu thiết bị đã bấm nghe thành công (`status === 'connected'`) và nhận sự kiện `ON_CALL_CANCELED` với cờ `elsewhere` (do kênh được chuyển vào ConfBridge), bỏ qua không ngắt cuộc gọi (Đối chiếu `WazoSipCallManager.py` dòng 1168).
+   - **Kế thừa metadata cuộc gọi nhóm trong `acceptIncomingCall()`**:
+     + Đính kèm đầy đủ `isGroupCall`, `isGroupHost`, `groupHostExtension`, `groupParticipantExtensions`, `groupTitle` vào `callStore.activeCall` khi tiếp nhận cuộc gọi đến.
+   - **Đăng ký đầy đủ WebSocket Ad-hoc Conference Events**:
+     + Bổ sung lắng nghe: `adhoc_conference_created`, `adhoc_conference_deleted`, `adhoc_conference_participant_joined`, `adhoc_conference_participant_left`, `conference_user_participant_joined`, `conference_user_participant_left`, `call_updated`.
+     + Tự động dọn dẹp và ngắt cuộc gọi đồng bộ khi Chủ phòng xóa phòng họp nhóm (`adhoc_conference_deleted`).
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% với 0 lỗi cú pháp trong `528ms` (322 modules transformed).
+- Kiểm tra tính toàn vẹn Git: Không phát sinh file rác untracked.
+
 
 
 

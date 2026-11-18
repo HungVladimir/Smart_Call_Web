@@ -679,7 +679,14 @@ class WazoService {
           const defaultEvents = [
             'call_created',
             'call_answered',
+            'call_updated',
             'call_ended',
+            'adhoc_conference_created',
+            'adhoc_conference_deleted',
+            'adhoc_conference_participant_joined',
+            'adhoc_conference_participant_left',
+            'conference_user_participant_joined',
+            'conference_user_participant_left',
             'chatd_user_room_message_created',
             'chatd_user_message_created',
             'chatd_user_room_created',
@@ -764,6 +771,26 @@ class WazoService {
             setTimeout(() => {
               this.syncActiveCallsToAdhocConference()
             }, 400)
+          }
+
+          // Xử lý sự kiện giải tán phòng Ad-hoc Conference từ Chủ phòng
+          if (name === 'adhoc_conference_deleted') {
+            const confId = data?.conference_id || data?.id
+            if (this.isGroupCall && this.hasActiveCall() && !this.isGroupHost) {
+              logger.info('CALL', `Phòng họp Ad-hoc [${confId}] đã kết thúc bởi Chủ phòng.`)
+              window.dispatchEvent(
+                new CustomEvent('app-toast', {
+                  detail: { message: '👥 Chủ phòng đã kết thúc cuộc gọi nhóm.', type: 'info' },
+                }),
+              )
+              this.hangup()
+            }
+          }
+
+          // Xử lý sự kiện thành viên rời phòng Ad-hoc Conference
+          if (name === 'adhoc_conference_participant_left' || name === 'conference_user_participant_left') {
+            const leftCallId = data?.call_id || data?.participant_id
+            logger.info('CALL', `Thành viên rời phòng Ad-hoc Conference: ${leftCallId}`)
           }
 
           // Chuyển tiếp tới các subscriber của websocketService (chat, call)
@@ -885,6 +912,14 @@ class WazoService {
       }
 
       if (endedSecExt) {
+        // Nếu đã có Ad-hoc Conference hoạt động, nhánh SIP phụ WebRTC kết thúc do Asterisk chuyển kênh sang ConfBridge
+        // -> Tuyệt đối KHÔNG xóa thành viên khỏi nhóm (Đối chiếu WazoSipCallManager.py line 1164)
+        if (this.activeAdhocConferenceId) {
+          logger.info('CALL', `Nhánh WebRTC phụ [${endedSecExt}] đã chuyển giao sang Ad-hoc Conference [${this.activeAdhocConferenceId}]. Tiếp tục duy trì thành viên trong nhóm.`)
+          this.secondaryCallSessions.delete(endedSecExt)
+          return
+        }
+
         logger.warn('CALL', `Nhánh phụ [${endedSecExt}] kết thúc (${reason}). Gỡ khỏi nhóm và duy trì các nhánh còn lại.`)
         this.secondaryCallSessions.delete(endedSecExt)
         this.groupParticipantExtensions = this.groupParticipantExtensions.filter((e) => e !== endedSecExt)
@@ -1231,8 +1266,14 @@ class WazoService {
       this._finalizeCallTermination('rejected', callSession)
     })
 
-    Wazo.Phone.on(Wazo.Phone.ON_CALL_CANCELED, (callSession) => {
-      logger.warn('CALL', '⚠️ Sự kiện Wazo: Cuộc gọi bị hủy (ON_CALL_CANCELED)')
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_CANCELED, (callSession, elsewhere) => {
+      logger.warn('CALL', '⚠️ Sự kiện Wazo: Cuộc gọi bị hủy (ON_CALL_CANCELED)', { elsewhere })
+      // Nếu thiết bị đã nhấc máy và có cờ elsewhere (cause=26 completed elsewhere do chuyển kênh / ConfBridge)
+      // -> Bỏ qua không ngắt cuộc gọi (Đối chiếu WazoSipCallManager.py line 1168)
+      if (elsewhere && callStore.activeCall && callStore.activeCall.status === 'connected') {
+        logger.info('CALL', 'Bỏ qua ON_CALL_CANCELED vì cuộc gọi đã được kết nối (completed elsewhere / bridged).')
+        return
+      }
       this._finalizeCallTermination('canceled', callSession)
     })
   }
@@ -1360,6 +1401,13 @@ class WazoService {
       duration: 0,
       isMuted: false,
       isRecorded: false,
+      isGroupCall: Boolean(this.isGroupCall || incoming.isGroupCall),
+      isGroupHost: Boolean(this.isGroupHost),
+      groupHostExtension: this.groupHostExtension || incoming.groupHostExtension || '',
+      groupParticipantExtensions: this.groupParticipantExtensions.length > 0
+        ? [...this.groupParticipantExtensions]
+        : (incoming.groupParticipantExtensions || []),
+      groupTitle: this.groupTitle || incoming.groupTitle || '',
     }
     callStore.incomingCall = null
     this.startCallDurationTimer()
@@ -1982,43 +2030,71 @@ class WazoService {
       return isTalking
     })
 
+    // Nếu chỉ có 1 nhánh nghe máy và chưa có phòng họp nhóm:
     if (talkingCalls.length < 2 && !this.activeAdhocConferenceId) {
       logger.info('CALL', `Chưa đủ 2 nhánh đàm thoại (hiện có ${talkingCalls.length}/${activeCalls.length} nhánh nghe máy). Chờ thành viên tiếp theo bắt máy...`)
+      // Nếu nhánh chính vẫn đang ringing mà đã có 1 nhánh phụ talking -> Đưa âm thanh nhánh nghe máy lên đàm thoại ngay (Đối chiếu WazoSipCallManager.py line 1780)
+      if (callStore.activeCall && callStore.activeCall.status === 'ringing' && talkingCalls.length === 1) {
+        callStore.activeCall.status = 'connected'
+        callStore.activeCall.startTime = Date.now()
+        audioService.stopRingbackTone()
+        for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
+          try {
+            const stream = Wazo.Phone.getRemoteStream(secSession)
+            if (stream) {
+              this.playRemoteStream(stream)
+              logger.info('AUDIO', `Đã kết nối âm thanh với nhánh phụ nghe trước: ${secExt}`)
+              break
+            }
+          } catch (e) {}
+        }
+      }
       return
     }
 
-    logger.info('CALL', `Đồng bộ Ad-hoc Conference từ ${activeCalls.length} cuộc gọi active trên Wazo Calld (${talkingCalls.length} nhánh đàm thoại)`)
+    logger.info('CALL', `👥 Bắt đầu đồng bộ Ad-hoc Conference từ ${activeCalls.length} cuộc gọi active trên Wazo Calld (${talkingCalls.length} nhánh đàm thoại)`)
 
-    // Tìm host call_id và các participant call_id
+    // 1. Xác định hostCallId từ primary session của Host
     let hostCallId = ''
-    const participantCallIds = []
+    const myPrimarySipId = this.currentCallSession?.sipCallId
 
     for (const callObj of activeCalls) {
       const cid = callObj.id || callObj.call_id
       const sipId = callObj.sip_call_id
-      if (!cid) continue
-
-      // Nếu sip_call_id trùng với currentCallSession của Host
-      if (this.currentCallSession && sipId === this.currentCallSession.sipCallId) {
+      if (myPrimarySipId && sipId === myPrimarySipId) {
         hostCallId = cid
-      } else {
-        // Kiểm tra trong talking_to
-        if (callObj.talking_to && typeof callObj.talking_to === 'object') {
-          for (const peerId of Object.keys(callObj.talking_to)) {
-            if (!participantCallIds.includes(peerId) && peerId !== hostCallId) {
-              participantCallIds.push(peerId)
-            }
-          }
-        }
-        if (!participantCallIds.includes(cid)) {
-          participantCallIds.push(cid)
-        }
+        break
       }
     }
-
     if (!hostCallId && activeCalls.length > 0) {
       hostCallId = activeCalls[0].id || activeCalls[0].call_id
     }
+
+    // 2. Trích xuất TẤT CẢ các peer call_ids từ talking_to của TẤT CẢ cuộc gọi (ĐỐI CHIẾU CHUẨN ANDROID WazoSipCallManager.py line 747-765)
+    const participantCallIds = []
+
+    for (const callObj of activeCalls) {
+      const cid = callObj.id || callObj.call_id
+      const isHostLeg = cid === hostCallId
+
+      // Duyệt qua talking_to để lấy call_id của đối phương (peerCallId)
+      if (callObj.talking_to && typeof callObj.talking_to === 'object') {
+        for (const peerId of Object.keys(callObj.talking_to)) {
+          if (peerId && peerId !== hostCallId && !participantCallIds.includes(peerId)) {
+            participantCallIds.push(peerId)
+          }
+        }
+      }
+
+      // TUYỆT ĐỐI KHÔNG thêm nhánh phụ cục bộ của Chủ phòng (cid) nếu đã lấy được peerId từ talking_to
+      // Chỉ khi callObj không phải hostCallId VÀ talking_to rỗng thì mới fallback dùng cid
+      const hasPeerInTalkingTo = callObj.talking_to && typeof callObj.talking_to === 'object' && Object.keys(callObj.talking_to).length > 0
+      if (!isHostLeg && !hasPeerInTalkingTo && cid && cid !== hostCallId && !participantCallIds.includes(cid)) {
+        participantCallIds.push(cid)
+      }
+    }
+
+    logger.info('CALL', `Ad-hoc Conference IDs: Host=[${hostCallId}], Participants=[${participantCallIds.join(', ')}]`)
 
     // Nếu đã có activeAdhocConferenceId: Thêm các participant chưa merge
     if (this.activeAdhocConferenceId) {
