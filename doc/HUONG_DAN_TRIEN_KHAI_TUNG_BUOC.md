@@ -87,6 +87,7 @@
 | **71** | Tối ưu Toàn diện 4 Vấn đề Giao diện & Nghiệp vụ (Tabs Cân đối 2 Hàng, Triệt tiêu Đọng số Bàn phím, Tombstone Nhóm Chat & Bố cục 2 Cột Động) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu thực tế UI/UX | **HOÀN THÀNH** ✅ | Cân đối động 2 hàng cho panel tabs khi chọn 6-10 tabs, loại bỏ thanh cuộn ngang và nút trượt; Xóa sạch extension.value khi cúp máy, bấm gọi, hoặc chuyển trạng thái; Bổ sung addMembersToGroup phát Tombstone đóng nhóm cũ khi mở rộng nhóm chat; Tự động ẩn cột thoại khi rảnh chuyển layout 2 cột, bổ sung thẻ Smart Contact Preview xem trước thông tin khi gõ số. |
 | **72** | Thiết lập Lớp Bảo vệ Hiện diện Chuyên sâu cho Cuộc gọi Nhóm (Hardened Presence Guards) — Chặn Voicemail Trap & Xung đột Kênh Asterisk | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Tích hợp isContactAvailableForCall vào startGroupCall, addParticipantsToGroupCall và delegateAddParticipantsToHost; Tự động loại bỏ máy lẻ bận/đang đổ chuông/dnd/offline và cảnh báo toast; Fallback gọi 1-1 nếu chỉ còn 1 người; Đồng bộ số đếm badge và bộ lọc tab group_call trong CallsView. |
 | **73** | Nâng cấp Bố cục Cửa Trượt Trung tâm (Center-Expanding Accordion 60fps), Khóa Kích thước Vàng Danh bạ & Sửa Lỗi Call Nhóm Tin nhắn | Trải nghiệm UI/UX & Khớp nối Dữ liệu Chatd | **HOÀN THÀNH** ✅ | Thay thế chuyển đổi DOM v-if bằng Center-Expanding Flexbox chuyển động mượt mà 0.45s không giật; Khóa kích thước vàng danh bạ 580px căn giữa triệt tiêu hoàn toàn cảm giác to thô; Xóa nút call xanh trùng lặp trên preview card; Sửa lỗi đọc trường m.ext và tra cứu danh bạ dự phòng khi gọi nhóm từ phòng chat; Tự động điều hướng /calls khi bắt đầu cuộc gọi từ tin nhắn. |
+| **74** | Cố định Vị trí Thẻ Xem trước Liên hệ Bàn phím (Permanent Preview Slot 54px), Triệt tiêu 100% Giật Bàn phím Số | Trải nghiệm UI/UX & Độ ổn định Layout | **HOÀN THÀNH** ✅ | Loại bỏ v-if trên thẻ xem trước; Cố định chiều cao khe cắm 54px vĩnh viễn trên bàn phím số; Sử dụng lớp is-empty ẩn sạch khi chưa gõ số không thêm avatar hay dòng trạng thái thừa; Bàn phím số đứng yên tuyệt đối không bị tụt/nảy khi gõ số. |
 
 
 ---
@@ -3824,6 +3825,29 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `608ms` (323 modules transformed).
 - Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
+
+---
+
+## BƯỚC 74: CỐ ĐỊNH VỊ TRÍ THẺ XEM TRƯỚC LIÊN HỆ BÀN PHÍM (PERMANENT PREVIEW SLOT 54PX), TRIỆT TIÊU 100% GIẬT BÀN PHÍM SỐ
+
+### 1. Bối cảnh & Vấn đề Cần Xử lý:
+- Sau khi tối ưu bố cục Cửa trượt trung tâm (Bước 73), Danh bạ đã trượt êm ái và không còn giật ngang.
+- Tuy nhiên, trên cột Bàn phím số (Dialer), khi người dùng bắt đầu gõ số đầu tiên, thẻ xem trước (`smart-contact-preview-card`) dùng `v-if="extension"` mới bắt đầu mount vào DOM, đẩy toàn bộ 12 phím số và nút Gọi bên dưới tụt xuống 54px. Khi xóa hết số, thẻ unmount làm bàn phím lại giật nảy ngược lên 54px.
+- Người dùng yêu cầu cố định view search trên bàn phím làm mặc định, không cần thêm avatar hay dòng trạng thái thừa khi chưa có số, giữ đúng giao diện chuẩn như hiện tại nhưng triệt tiêu hoàn toàn hiện tượng giật bàn phím.
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+1. **`src/views/CallsView.vue`**:
+   - **Thẻ xem trước cố định vị trí (Permanent Preview Slot)**:
+     + Bỏ `v-if` và wrapper `transition preview-fade` trên thẻ xem trước.
+     + Thẻ luôn có mặt trong DOM với chiều cao cố định đúng `54px` (`height: 54px; min-height: 54px; max-height: 54px; box-sizing: border-box;`).
+     + Khi chưa gõ số (`!extension || isCalling`): Gắn class `.is-empty`, thiết lập `opacity: 0; visibility: hidden; pointer-events: none; border-color: transparent; background: transparent;`. Thẻ hoàn toàn trong suốt và trống rỗng, không hiển thị avatar hay dòng trạng thái thừa.
+     + Khi gõ số (`extension` có giá trị): Gỡ class `.is-empty`, nội dung xem trước (Avatar, Tên, Phòng ban, Trạng thái, Số máy lẻ) hiện ra êm ái ngay tại vị trí đã được dành sẵn 54px.
+     + **12 phím số và nút Gọi bên dưới ĐỨNG YÊN HOÀN TOÀN 100%**, không bị xê dịch hay giật nảy lên xuống dù chỉ 1 pixel.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `859ms` (323 modules transformed).
+- Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
+
 
 
 

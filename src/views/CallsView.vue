@@ -66,45 +66,42 @@
             />
           </div>
 
-          <!-- SMART CONTACT PREVIEW KHI GÕ SỐ (HIỂN THỊ DƯỚI THANH NHẬP SỐ KHI RẢNH) -->
-          <transition name="preview-fade">
-            <div
-              v-if="extension && !isCalling"
-              class="smart-contact-preview-card"
-              :class="{ 'has-contact': Boolean(matchedDialContact) }"
-            >
-              <template v-if="matchedDialContact">
-                <div class="preview-avatar" :style="{ backgroundColor: dialAvatarBg }">
-                  {{ dialAvatarText }}
+          <!-- SMART CONTACT PREVIEW KHI GÕ SỐ (CỐ ĐỊNH VỊ TRÍ, KHÔNG GÂY GIẬT BÀN PHÍM) -->
+          <div
+            class="smart-contact-preview-card"
+            :class="{ 'is-empty': !extension || isCalling, 'has-contact': Boolean(matchedDialContact && extension) }"
+          >
+            <template v-if="extension && matchedDialContact">
+              <div class="preview-avatar" :style="{ backgroundColor: dialAvatarBg }">
+                {{ dialAvatarText }}
+              </div>
+              <div class="preview-info">
+                <div class="preview-header-line">
+                  <span class="preview-name">{{ matchedDialContact.name }}</span>
+                  <span v-if="matchedDialContact.dept" class="preview-dept-badge">{{ matchedDialContact.dept }}</span>
                 </div>
-                <div class="preview-info">
-                  <div class="preview-header-line">
-                    <span class="preview-name">{{ matchedDialContact.name }}</span>
-                    <span v-if="matchedDialContact.dept" class="preview-dept-badge">{{ matchedDialContact.dept }}</span>
-                  </div>
-                  <div class="preview-meta-line">
-                    <span class="preview-status-dot" :class="matchedDialContact.status || 'offline'"></span>
-                    <span class="preview-status-label">{{ matchedDialContact.statusLabel || 'Ngoại tuyến' }}</span>
-                    <span class="preview-sep">•</span>
-                    <span class="preview-ext-number">Máy lẻ: {{ extension }}</span>
-                  </div>
+                <div class="preview-meta-line">
+                  <span class="preview-status-dot" :class="matchedDialContact.status || 'offline'"></span>
+                  <span class="preview-status-label">{{ matchedDialContact.statusLabel || 'Ngoại tuyến' }}</span>
+                  <span class="preview-sep">•</span>
+                  <span class="preview-ext-number">Máy lẻ: {{ extension }}</span>
                 </div>
-              </template>
-              <template v-else>
-                <div class="preview-avatar unknown-avatar">
-                  <span>#</span>
+              </div>
+            </template>
+            <template v-else-if="extension">
+              <div class="preview-avatar unknown-avatar">
+                <span>#</span>
+              </div>
+              <div class="preview-info">
+                <div class="preview-header-line">
+                  <span class="preview-name">Máy lẻ {{ extension }}</span>
                 </div>
-                <div class="preview-info">
-                  <div class="preview-header-line">
-                    <span class="preview-name">Máy lẻ {{ extension }}</span>
-                  </div>
-                  <div class="preview-meta-line">
-                    <span class="preview-unknown-note">Số nội bộ chưa lưu trong danh bạ</span>
-                  </div>
+                <div class="preview-meta-line">
+                  <span class="preview-unknown-note">Số nội bộ chưa lưu trong danh bạ</span>
                 </div>
-              </template>
-            </div>
-          </transition>
+              </div>
+            </template>
+          </div>
 
           <div class="keypad-grid">
             <button v-for="k in keys" :key="k.num" class="key-btn" @click="pressKey(k.num)">
@@ -2195,7 +2192,7 @@ onUnmounted(() => {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
-/* --- Smart Contact Preview Card (Hiển thị ngay dưới ô nhập số khi gõ số và không trong cuộc gọi) --- */
+/* --- Smart Contact Preview Card (Cố định vị trí 54px, triệt tiêu 100% giật bàn phím) --- */
 .smart-contact-preview-card {
   display: flex;
   align-items: center;
@@ -2206,6 +2203,21 @@ onUnmounted(() => {
   padding: 8px 10px;
   margin-bottom: 14px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  height: 54px;
+  min-height: 54px;
+  max-height: 54px;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: opacity 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.smart-contact-preview-card.is-empty {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .smart-contact-preview-card.has-contact {
@@ -2344,17 +2356,6 @@ onUnmounted(() => {
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
-}
-
-.preview-fade-enter-active,
-.preview-fade-leave-active {
-  transition: all 0.2s ease;
-}
-
-.preview-fade-enter-from,
-.preview-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
 }
 
 .keypad-grid {
