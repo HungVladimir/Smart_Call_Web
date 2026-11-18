@@ -1249,7 +1249,7 @@ const resetTabVisibility = () => {
 const groupCallOnlineCount = computed(() => {
   const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
   return contacts.value.filter(
-    (c) => c.status !== 'offline' && c.status !== 'unavailable' && String(c.number || '').trim() !== myExt,
+    (c) => contactService.isContactAvailableForCall(c) && String(c.number || '').trim() !== myExt,
   ).length
 })
 
@@ -1398,10 +1398,10 @@ const filteredContacts = computed(() => {
       list = list.filter((c) => (c.dept || '').trim().toLowerCase() === targetDept)
     }
   } else if (activeTab.value === 'group_call') {
-    // Chỉ hiển thị các liên hệ đang trực tuyến (Online) và ẩn chính mình
+    // Chỉ hiển thị các liên hệ khả dụng sẵn sàng nhận cuộc gọi (Available) và ẩn chính mình
     const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
     list = list.filter(
-      (c) => c.status !== 'offline' && c.status !== 'unavailable' && String(c.number || '').trim() !== myExt,
+      (c) => contactService.isContactAvailableForCall(c) && String(c.number || '').trim() !== myExt,
     )
   }
   const q = searchTerm.value.trim()

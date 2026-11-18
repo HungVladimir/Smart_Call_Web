@@ -84,6 +84,8 @@
 | **68** | Rà soát Toàn diện Codebase Onboarding, Tích hợp Global ErrorHandler, Router Lazy-Loading Code-Splitting & Dọn sạch Rác Tàn dư | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Best Practices Vue 3 | **HOÀN THÀNH** ✅ | Tích hợp app.config.errorHandler và unhandledrejection trong main.js; Tách chunk bất đồng bộ Lazy-loading cho CallsView, MessagesView, HistoryView trong router; Xóa sạch tàn dư smartcall_offline_mode và triệt tiêu fallback hardcode '1002' trong App.vue; Biên soạn báo cáo doc/BAO_CAO_RA_SOAT_CODEBASE_ONBOARDING.md. |
 | **69** | Chuẩn hóa Điều kiện Kết thúc Cuộc gọi Nhóm & Khôi phục Đăng xuất Đơn Thiết bị Tức thì (0.1s) Chuẩn Android | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Khắc phục lỗi nhánh phụ timeout 30s xóa sớm khỏi map làm ngắt nhầm cuộc gọi chính giữa Host và thành viên đã nghe máy; Bổ sung bộ đếm timeout 30s cho nhánh chính đầu tiên; Hàm an toàn isAnyParticipantConnected() đảm bảo duy trì đàm thoại; Cô lập Tab Client ID qua sessionStorage giải quyết xung đột 2 tab cùng trình duyệt; Loại bỏ độ trễ và race condition verifyTokenHealth, khôi phục kick tức thì 0.1s khi phát hiện login thiết bị khác. |
 | **70** | Tinh chỉnh 5 Trường hợp Biên (Edge Cases): Chặn Kick Oan khi Logout, Call Escalation 1-1 Lên Nhóm, Dọn dẹp Nhánh Chính Cũ & Giải phóng Toàn diện | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Quality Assurance | **HOÀN THÀNH** ✅ | Chặn thiết bị đang online bị kick nhầm khi thiết bị cũ đăng xuất (lọc isOfflineStatus / state == unavailable); Dọn dẹp sạch cuộc gọi và lưu CDR khi bị kick phiên; Xóa sạch tab client id và session id trong sessionStorage khi logout; Nâng cấp từ cuộc gọi 1-1 lên cuộc gọi nhóm (Call Escalation) biến caller thành Host mời người mới; Gỡ số máy nhánh chính cũ khi hoán đổi nhánh phụ lên tiếp tục cuộc gọi nhóm. |
+| **71** | Tối ưu Toàn diện 4 Vấn đề Giao diện & Nghiệp vụ (Tabs Cân đối 2 Hàng, Triệt tiêu Đọng số Bàn phím, Tombstone Nhóm Chat & Bố cục 2 Cột Động) | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Yêu cầu thực tế UI/UX | **HOÀN THÀNH** ✅ | Cân đối động 2 hàng cho panel tabs khi chọn 6-10 tabs, loại bỏ thanh cuộn ngang và nút trượt; Xóa sạch extension.value khi cúp máy, bấm gọi, hoặc chuyển trạng thái; Bổ sung addMembersToGroup phát Tombstone đóng nhóm cũ khi mở rộng nhóm chat; Tự động ẩn cột thoại khi rảnh chuyển layout 2 cột, bổ sung thẻ Smart Contact Preview xem trước thông tin khi gõ số. |
+| **72** | Thiết lập Lớp Bảo vệ Hiện diện Chuyên sâu cho Cuộc gọi Nhóm (Hardened Presence Guards) — Chặn Voicemail Trap & Xung đột Kênh Asterisk | Tiêu chuẩn Mục 7 & 8 GEMINI.md & Mã tham chiếu SMCAppV2 | **HOÀN THÀNH** ✅ | Tích hợp isContactAvailableForCall vào startGroupCall, addParticipantsToGroupCall và delegateAddParticipantsToHost; Tự động loại bỏ máy lẻ bận/đang đổ chuông/dnd/offline và cảnh báo toast; Fallback gọi 1-1 nếu chỉ còn 1 người; Đồng bộ số đếm badge và bộ lọc tab group_call trong CallsView. |
 
 
 ---
@@ -3748,6 +3750,44 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 ### 3. Kết quả Kiểm tra Biên dịch:
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `607ms` (323 modules transformed).
 - Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
+
+---
+
+## BƯỚC 72: THIẾT LẬP LỚP BẢO VỆ HIỆN DIỆN CHUYÊN SÂU CHO CUỘC GỌI NHÓM (HARDENED PRESENCE GUARDS) — CHẶN VOICEMAIL TRAP & XUNG ĐỘNG KÊNH TỔNG ĐÀI
+
+### 1. Bối cảnh & Phân tích Rủi ro Kỹ thuật:
+- Khi khởi tạo cuộc gọi nhóm hoặc mời thêm thành viên vào cuộc gọi nhóm đang diễn ra, nếu một thành viên đang trong các trạng thái:
+  + **Đang bận đàm thoại (`talking`, `holding`)**
+  + **Đang đổ chuông (`ringing`, `progressing`)**
+  + **Bật Không làm phiền (`dnd`) hoặc Ngoại tuyến (`offline`, `unavailable`)**
+- Nếu hệ thống máy khách vẫn phát lệnh `SIP INVITE` tới thành viên đó, sẽ phát sinh các rủi ro nghiêm trọng trên tổng đài Asterisk / Wazo:
+  1. **Bẫy Hộp thư thoại (Voicemail Trap - Cực kỳ nguy hiểm)**: Nếu máy lẻ bận có cấu hình Chuyển tiếp cuộc gọi vào Hộp thư thoại (Voicemail), máy chủ tổng đài Asterisk sẽ tự động nhấc máy và trả về `SIP 200 OK`. Máy khách Chủ phòng (Host) sẽ nhầm tưởng thành viên đó đã nghe máy và tự động gọi API `POST /api/calld/1.0/users/me/conferences/adhoc/...` gộp luồng âm thanh hộp thư thoại vào phòng hội nghị. Khi đó, toàn bộ thành viên trong phòng đều phải nghe lời chào tự động của hộp thư thoại!
+  2. **Lãng phí tài nguyên SIP**: Asterisk phản hồi `SIP 486 Busy Here`, chiếm dụng kênh tạm thời.
+  3. **Xung đột cuộc gọi (Call Waiting Collision)**: Làm gián đoạn cuộc gọi của người đang đàm thoại.
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+1. **`src/services/wazo.js`**:
+   - **Trong `startGroupCall(targetExtensions = [], meta = {})`**:
+     + Áp dụng `contactService.isContactAvailableForCall(ext)` để sàng lọc danh sách thành viên trước khi thực hiện cuộc gọi.
+     + Nếu phát hiện máy lẻ không khả dụng (`talking`, `holding`, `ringing`, `progressing`, `dnd`, `offline`), tự động loại bỏ khỏi danh sách, ghi log cảnh báo và hiển thị toast: `⚠️ [Danh sách máy lẻ] hiện đang bận hoặc không khả dụng để gọi nhóm! Đã tự động loại bỏ.`.
+     + Nếu sau khi lọc còn 0 máy lẻ: Hủy lệnh gọi an toàn, trả về `{ success: false, reason: 'NO_AVAILABLE_TARGETS' }`.
+     + Nếu sau khi lọc chỉ còn 1 máy lẻ khả dụng: Tự động chuyển cấp sang cuộc gọi thoại 1-1 thông qua `validateAndMakeCall(availableTargets[0], meta)`.
+     + Nếu còn $\ge 2$ máy lẻ khả dụng: Tiến hành thiết lập phòng hội nghị nhóm với các thành viên thực sự khả dụng.
+   - **Trong `addParticipantsToGroupCall(extensions = [])`**:
+     + Sàng lọc `extensions` trước khi thực hiện `Wazo.Phone.call(ext, false)`.
+     + Nếu có máy lẻ không khả dụng: Loại bỏ khỏi danh sách mời, thông báo toast cảnh báo cho Host và phát thông báo thẻ nhóm: `[NOTICE:noticeId:hostExt:Máy lẻ ... đang bận]`.
+     + Chỉ phát tín hiệu WebRTC gọi các máy lẻ có đường dây ở trạng thái khả dụng (`line_state == "available"`).
+   - **Trong `delegateAddParticipantsToHost(hostExt, targetExtensions)`**:
+     + Kiểm tra `contactService.isContactAvailableForCall(e)` trước khi tạo thẻ ủy quyền `[ADD_REQ]`.
+     + Cảnh báo toast ngay trên máy thành viên nếu người được chọn đang bận, không gửi thẻ rác lên máy Host.
+2. **`src/views/CallsView.vue`**:
+   - **`groupCallOnlineCount`**: Cập nhật hàm tính toán số lượng máy lẻ hiển thị trên huy hiệu (badge) Tab "Gọi nhóm" bằng cách dùng `contactService.isContactAvailableForCall(c)`, đảm bảo số đếm chỉ phản ánh chính xác những người sẵn sàng nhận cuộc gọi.
+   - **`filteredContacts` (Tab `group_call`)**: Lọc danh sách hiển thị chỉ gồm các liên hệ khả dụng (`contactService.isContactAvailableForCall(c)`), loại bỏ các máy lẻ đang bận hoặc đổ chuông.
+
+### 3. Kết quả Kiểm tra Biên dịch:
+- `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `652ms` (323 modules transformed).
+- Kiểm tra Git: Mã nguồn sạch sẽ, tuân thủ nghiêm ngặt chuẩn kiến trúc Wazo và quy tắc dự án.
+
 
 
 

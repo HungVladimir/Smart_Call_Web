@@ -2146,11 +2146,41 @@ class WazoService {
       return { success: false, reason: 'NO_VALID_TARGETS' }
     }
 
-    if (cleanList.length === 1) {
-      return this.validateAndMakeCall(cleanList[0], meta)
+    // Lọc loại bỏ các máy lẻ đang bận (talking/holding), đang đổ chuông (ringing/progressing), không làm phiền (dnd) hoặc offline
+    const availableTargets = []
+    const busyTargets = []
+    for (const ext of cleanList) {
+      if (contactService.isContactAvailableForCall(ext)) {
+        availableTargets.push(ext)
+      } else {
+        const c = contactService.findContactByExtension(ext)
+        busyTargets.push(c?.name ? `${c.name} (${ext})` : `Máy lẻ ${ext}`)
+      }
     }
 
-    logger.info('CALL', `👥 Bắt đầu gọi nhóm (Ad-hoc) tới ${cleanList.length} thành viên: ${cleanList.join(', ')}`)
+    if (busyTargets.length > 0) {
+      logger.warn('CALL', `Các máy lẻ bận/không khả dụng bị loại khỏi gọi nhóm: ${busyTargets.join(', ')}`)
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `⚠️ [${busyTargets.join(', ')}] hiện đang bận hoặc không khả dụng để gọi nhóm! Đã tự động loại bỏ.`,
+            type: 'warning',
+          },
+        }),
+      )
+    }
+
+    if (availableTargets.length === 0) {
+      logger.warn('CALL', 'Không còn máy lẻ nào khả dụng để bắt đầu cuộc gọi nhóm.')
+      return { success: false, reason: 'NO_AVAILABLE_TARGETS' }
+    }
+
+    if (availableTargets.length === 1) {
+      logger.info('CALL', `Chỉ còn 1 máy lẻ khả dụng [${availableTargets[0]}]. Chuyển sang cuộc gọi thoại 1-1.`)
+      return this.validateAndMakeCall(availableTargets[0], meta)
+    }
+
+    logger.info('CALL', `👥 Bắt đầu gọi nhóm (Ad-hoc) tới ${availableTargets.length} thành viên khả dụng: ${availableTargets.join(', ')}`)
 
     // Thiết lập trạng thái Host & Group
     this.isGroupHost = true
@@ -2161,10 +2191,10 @@ class WazoService {
     this.mergedCallIds.clear()
     this.secondaryCallSessions.clear()
 
-    this.groupParticipantExtensions = [myExt, ...cleanList]
+    this.groupParticipantExtensions = [myExt, ...availableTargets]
 
-    const firstTarget = cleanList[0]
-    const remainingTargets = cleanList.slice(1)
+    const firstTarget = availableTargets[0]
+    const remainingTargets = availableTargets.slice(1)
 
     // Khởi tạo cuộc gọi nhánh đầu tiên
     const callResult = await this.validateAndMakeCall(firstTarget, {
@@ -2239,14 +2269,38 @@ class WazoService {
     }
 
     const toInvite = []
+    const busyOrUnavailable = []
     for (const ext of extensions) {
       const s = String(ext || '').trim()
-      if (s && s !== myExt && !this.groupParticipantExtensions.includes(s)) {
+      if (!s || s === myExt) continue
+
+      if (!contactService.isContactAvailableForCall(s)) {
+        const c = contactService.findContactByExtension(s)
+        const nameOrExt = c?.name ? `${c.name} (${s})` : `Máy lẻ ${s}`
+        busyOrUnavailable.push({ ext: s, label: nameOrExt })
+        continue
+      }
+
+      if (!this.groupParticipantExtensions.includes(s)) {
         this.groupParticipantExtensions.push(s)
-        toInvite.push(s)
-      } else if (s && s !== myExt && !toInvite.includes(s)) {
+      }
+      if (!toInvite.includes(s)) {
         toInvite.push(s)
       }
+    }
+
+    if (busyOrUnavailable.length > 0) {
+      const busyNames = busyOrUnavailable.map((b) => b.label).join(', ')
+      logger.warn('CALL', `Không thể mời các máy lẻ bận/không khả dụng vào nhóm: ${busyNames}`)
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `⚠️ [${busyNames}] hiện đang bận hoặc không khả dụng, không thể mời vào nhóm!`,
+            type: 'warning',
+          },
+        }),
+      )
+      this.broadcastNoticeToGroup(`Máy lẻ ${busyOrUnavailable.map((b) => b.ext).join(', ')} đang bận`)
     }
 
     if (toInvite.length === 0) return
@@ -2467,9 +2521,31 @@ class WazoService {
   delegateAddParticipantsToHost(hostExt, targetExtensions) {
     if (!hostExt || !targetExtensions || targetExtensions.length === 0) return
     const myExt = this.getMyExtension()
-    const toInviteNow = targetExtensions
-      .map((e) => String(e).trim())
-      .filter((e) => e && e !== myExt && e !== hostExt)
+    const toInviteNow = []
+    const dropped = []
+
+    for (const rawExt of targetExtensions) {
+      const e = String(rawExt || '').trim()
+      if (!e || e === myExt || e === hostExt) continue
+      if (contactService.isContactAvailableForCall(e)) {
+        toInviteNow.push(e)
+      } else {
+        const c = contactService.findContactByExtension(e)
+        dropped.push(c?.name ? `${c.name} (${e})` : `Máy lẻ ${e}`)
+      }
+    }
+
+    if (dropped.length > 0) {
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            message: `⚠️ [${dropped.join(', ')}] hiện đang bận hoặc không khả dụng, không thể gửi yêu cầu mời vào nhóm!`,
+            type: 'warning',
+          },
+        }),
+      )
+    }
+
     if (toInviteNow.length === 0) return
 
     const reqId = Date.now()
