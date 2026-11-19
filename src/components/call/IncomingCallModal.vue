@@ -80,18 +80,19 @@ const emit = defineEmits(['accept', 'reject', 'timeout'])
 
 // Lấy thông tin người gọi
 const callerName = computed(() => {
-  return props.callData?.name || props.callData?.remote_name || `Máy lẻ ${props.callData?.extension || '1007'}`
+  const ext = props.callData?.extension || props.callData?.number
+  return props.callData?.name || props.callData?.remote_name || (ext ? `Máy lẻ ${ext}` : 'Chưa xác định người gọi')
 })
 
 const callerExt = computed(() => {
-  return props.callData?.extension || props.callData?.number || '1007'
+  return props.callData?.extension || props.callData?.number || ''
 })
 
 const callerSip = computed(() => {
   if (props.callData?.sipUri) return props.callData.sipUri
-  const ext = props.callData?.extension || '1007'
+  const ext = props.callData?.extension || props.callData?.number || ''
   const domain = (wazoService.host || '').trim().replace(/^https?:\/\//, '').split(':')[0]
-  return `sip:${ext}@${domain || 'smartcall'}`
+  return ext && domain ? `sip:${ext}@${domain}` : ''
 })
 
 const callerDept = computed(() => {

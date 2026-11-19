@@ -113,29 +113,6 @@
             </svg>
           </button>
 
-          <!-- Dải phân cách & Chế độ thử nghiệm Offline (Chỉ hiện khi bật cờ mockData) -->
-          <div v-if="features.mockData" class="auth-divider">
-            <span class="divider-line"></span>
-            <span class="divider-text">HOẶC</span>
-            <span class="divider-line"></span>
-          </div>
-
-          <!-- Nút Chạy chế độ thử nghiệm Offline -->
-          <button
-            v-if="features.mockData"
-            type="button"
-            class="btn-offline-mode"
-            @click="enterOfflineMode"
-            :disabled="loading"
-            title="Khởi chạy giao diện sử dụng dữ liệu mẫu nội bộ"
-          >
-            <svg class="offline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M8 21h8m-4-4v4" />
-            </svg>
-            <span>Chạy chế độ thử nghiệm Offline</span>
-          </button>
-
           <!-- Gợi ý xác nhận chứng chỉ SSL -->
           <div class="ssl-cert-hint">
             <svg class="hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -194,15 +171,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { wazoService, callStore } from '@/services/wazo'
-import { getFeatures } from '@/config/features'
 import { logger } from '@/services/loggerService'
 import { captureSessionContext, assertSessionContext, createSessionFetch } from '@/services/sessionScope'
 
 const router = useRouter()
-const features = ref(getFeatures())
 
 const showForgotModal = ref(false)
 const resetIdentifier = ref('')
@@ -245,18 +220,6 @@ const handleResetPassword = async () => {
   }
 }
 
-const onFeaturesChanged = (e) => {
-  features.value = e.detail || getFeatures()
-}
-
-onMounted(() => {
-  window.addEventListener('smartcall-features-changed', onFeaturesChanged)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
-})
-
 const username = ref(localStorage.getItem('smartcall_remembered_username') || '')
 const password = ref('')
 const showPassword = ref(false)
@@ -267,7 +230,7 @@ const serverHost = ref((wazoService.host || '107.126.11.126:9443').replace(/^htt
 
 const handleLogin = async () => {
   const u = username.value.trim()
-  const p = password.value.trim()
+  const p = password.value
   if (!u || !p) return
 
   loading.value = true
@@ -277,10 +240,7 @@ const handleLogin = async () => {
   let realExtension = ''
 
   try {
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout máy chủ tổng đài')), 15000),
-    )
-    const session = await Promise.race([wazoService.login(u, p), timeoutPromise])
+    const session = await wazoService.login(u, p)
     const loginContext = captureSessionContext()
     const fetch = createSessionFetch(loginContext)
     let profileUuid = ''
@@ -329,7 +289,8 @@ const handleLogin = async () => {
     }
 
     assertSessionContext(loginContext)
-    if (profileUuid) localStorage.setItem('smartcall_user_uuid', profileUuid)
+    // UUID SDK là danh tính phiên; profile Confd chỉ bổ sung khi SDK chưa có UUID.
+    if (!session?.uuid && !wazoService.session?.uuid && profileUuid) localStorage.setItem('smartcall_user_uuid', profileUuid)
     // Ghi nhớ tên đăng nhập nếu bật Remember me
     if (rememberMe.value) {
       localStorage.setItem('smartcall_remembered_username', u)
@@ -368,7 +329,7 @@ const handleLogin = async () => {
     router.push('/calls')
   } catch (err) {
     loading.value = false
-    console.error('Lỗi đăng nhập:', err)
+    console.error('Lỗi đăng nhập:', err.name || 'Error', err.status || '')
 
     let msg = ''
     if (
@@ -402,26 +363,6 @@ const handleLogin = async () => {
   }
 }
 
-// Chạy ứng dụng ở chế độ thử nghiệm Offline (Sử dụng dữ liệu mẫu, không cần kết nối máy chủ tổng đài)
-const enterOfflineMode = () => {
-  const fallbackUser = username.value.trim() || 'Người dùng thử nghiệm'
-  localStorage.setItem('smartcall_username', fallbackUser)
-  localStorage.setItem('smartcall_extension', '1001')
-  localStorage.setItem('smartcall_role', 'user')
-  localStorage.setItem('smartcall_is_admin', 'false')
-  localStorage.setItem('smartcall_logged_in', 'true')
-  localStorage.setItem('smartcall_offline_mode', 'true')
-  localStorage.setItem('smartcall_wazo_token', 'offline_mode_token')
-
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: 'Đang khởi chạy giao diện ở chế độ thử nghiệm Offline', type: 'info' },
-    }),
-  )
-
-  window.dispatchEvent(new CustomEvent('app-login-success'))
-  router.push('/calls')
-}
 </script>
 
 <style scoped>

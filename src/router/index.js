@@ -56,10 +56,9 @@ router.beforeEach((to) => {
   }
 
   // Check login: kiểm tra cờ đăng nhập và token phiên làm việc Wazo
-  const hasSavedToken = Boolean(localStorage.getItem('smartcall_wazo_token'))
   const isLogged =
     localStorage.getItem('smartcall_logged_in') === 'true' &&
-    (wazoService.isLogged() || hasSavedToken)
+    wazoService.isLogged()
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
 
   if (requiresAuth && !isLogged) {
@@ -70,7 +69,8 @@ router.beforeEach((to) => {
   }
 
   if (to.name === 'Login' && isLogged) {
-    return getFirstAvailableRoute()
+    const target = getFirstAvailableRoute()
+    if (target !== to.path) return target
   }
 
   // Kiểm tra cờ tính năng (Feature Flag)

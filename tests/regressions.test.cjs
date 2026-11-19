@@ -7,7 +7,7 @@ const { reactive, shallowReactive, ref, computed } = require('vue')
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
 const noop = () => {}
-const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r }); return { promise, resolve } }
+const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { promise, resolve, reject } }
 const response = (data, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => data, text: async () => '', blob: async () => ({ size: 1 }) })
 
 // Execute application logic with browser/SDK/network boundaries replaced, never the real SDK.
@@ -15,6 +15,7 @@ function fixture() {
   const values = new Map([['smartcall_user_uuid', 'a'], ['smartcall_wazo_token', 'fixture']])
   const storage = { getItem: (k) => values.get(k) || null, setItem: (k, v) => values.set(k, String(v)), removeItem: (k) => values.delete(k) }
   const events = [], timers = new Map(), hooks = { mounted: [], activated: [], deactivated: [], unmounted: [] }
+  const listeners = new Map()
   let timerId = 0
   const phone = { on: noop, off: noop, eventEmitter: { removeAllListeners: noop }, disconnect: async () => {}, hangup: async () => {}, accept: async () => 'sip', call: async () => ({ sipCallId: 's' }), getRemoteStream: () => null }
   for (const name of ['REGISTERED', 'UNREGISTERED', 'PROGRESS', 'CALL_INCOMING', 'CALL_ACCEPTED', 'CALL_ENDED', 'CALL_FAILED', 'CALL_REJECTED', 'CALL_CANCELED']) phone['ON_' + name] = name
@@ -26,9 +27,13 @@ function fixture() {
     historyService: { addRecord: noop, reset: noop, reload: noop, getLocalHistory: () => [] },
     recordService: { isRecording: () => false, cancelPendingStart: noop, clearSessionCache: noop },
     contactService: { currentContacts: [{}], findContactByExtension: () => null, findContactByUuid: () => null, reset: noop },
-    chatService: { reset: noop }, websocketService: { on: noop, emit: noop }, Wazo: { Phone: phone, Auth: {} },
+    chatService: { reset: noop }, websocketService: { on: noop, emit: noop }, Wazo: { Phone: phone, Auth: { init: noop, setClientId: noop, setHost: noop, logout: async () => {} } },
     document: { getElementById: () => null, querySelectorAll: () => [] }, navigator: {},
-    window: { dispatchEvent: (e) => events.push(e), addEventListener: noop, removeEventListener: noop },
+    window: {
+      dispatchEvent: (e) => { events.push(e); for (const listener of listeners.get(e.type) || []) listener(e); return true },
+      addEventListener: (type, listener) => { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(listener) },
+      removeEventListener: (type, listener) => listeners.get(type)?.delete(listener),
+    },
     CustomEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options) } },
     setTimeout: (cb) => { timers.set(++timerId, cb); return timerId }, clearTimeout: (id) => timers.delete(id),
     setInterval: (cb) => { timers.set(++timerId, cb); return timerId }, clearInterval: (id) => timers.delete(id),
@@ -305,13 +310,14 @@ test('BUG-010: nested presence changes invalidate computed UI state', () => {
 })
 
 test('call cancellation: late secondary session is hung up without restoring group', async () => {
-  const c = wazo(), pending = deferred(), hung = []
+  const c = wazo(), pending = deferred(), started = deferred(), hung = []
   c.state.activeCall = { callId: 'old', number: 'peer', status: 'connected' }
   c.svc.currentCallSession = {}; c.svc.isGroupCall = c.svc.isGroupHost = true
   c.contactService.isContactAvailableForCall = () => true
   c.svc.broadcastGroupStateViaPresence = noop; c.svc.broadcastNoticeToGroup = noop; c.svc.setPresence = async () => {}
-  c.Wazo.Phone.call = () => pending.promise; c.Wazo.Phone.hangup = async (session) => hung.push(session)
+  c.Wazo.Phone.call = () => { started.resolve(); return pending.promise }; c.Wazo.Phone.hangup = async (session) => hung.push(session)
   const inviting = c.svc.addParticipantsToGroupCall(['4321'])
+  await started.promise
   c.svc._finalizeCallTermination('ended', null, true)
   const late = { sipCallId: 'late' }; pending.resolve(late); await inviting
   assert.equal(c.svc.secondaryCallSessions.size, 0); assert.equal(c.state.activeCall, null); assert.deepEqual(hung, [late])
@@ -333,4 +339,577 @@ test('recording stop: missing credentials reject cleanly and allow retry', async
   assert.equal(c.state.isStopping, false); assert.equal(c.svc._stopPromise, null)
   c.localStorage.setItem('smartcall_wazo_token', 'fixture'); c.fetch = async () => response({}, 204)
   await c.svc.stopRecording(); assert.equal(c.state.isRecording, false)
+})
+
+const drain = () => new Promise((resolve) => setImmediate(resolve))
+
+function groupFixture() {
+  const c = wazo()
+  c.svc.getMyExtension = () => '1000'
+  c.state.activeCall = { number: '2000', status: 'connected', session: { sipCallId: 'current' } }
+  c.svc.currentCallSession = c.state.activeCall.session
+  c.contactService.currentContacts = [{ uuid: 'a', number: '1000' }, { uuid: 'peer', number: '2000' }, { uuid: 'member', number: '3000' }, { uuid: 'outsider', number: '9000' }]
+  c.contactService.findContactByUuid = (uuid) => c.contactService.currentContacts.find((item) => item.uuid === uuid)
+  c.svc.isGroupCall = c.svc.isGroupHost = true
+  c.svc.groupHostExtension = '1000'
+  c.svc.groupParticipantExtensions = ['1000', '2000', '3000']
+  c.invited = []; c.left = []
+  c.svc.addParticipantsToGroupCall = async (targets) => c.invited.push([...targets])
+  c.svc.handleParticipantLeftGroupCall = (ext) => c.left.push(ext)
+  vm.runInContext('globalThis.signal = (data) => handleGroupPresenceSignal({ wazoService, callStore, contactService }, data)', c)
+  return c
+}
+
+test('F01: người ngoài không được mời hoặc gỡ thành viên bằng presence', () => {
+  const c = groupFixture()
+  c.signal({ uuid: 'outsider', status: '[ADD_REQ:r:1000:4000]' })
+  c.signal({ uuid: 'outsider', status: '[LEFT:2000]' })
+  c.signal({ uuid: 'peer', status: '[LEFT:3000]' })
+  assert.equal(c.invited.length, 0); assert.equal(c.left.length, 0)
+  c.signal({ uuid: 'peer', status: '[LEFT:2000]' })
+  assert.deepEqual(c.left, ['2000'])
+})
+
+test('F01: thành viên đã kết nối được mời, ADD_REQ cũ/mới được gộp lặp', async () => {
+  const c = groupFixture()
+  c.signal({ uuid: 'member', status: '[ADD_REQ:x:1000:4000]' })
+  assert.equal(c.invited.length, 0)
+  c.svc.extensionToWazoCallIdMap.set('3000', 'confirmed')
+  c.signal({ uuid: 'member', status: '[ADD_REQ:x:1000:4000]' })
+  c.signal({ uuid: 'member', status: '[ADD_REQ:x:1000:4000]' })
+  c.signal({ uuid: 'peer', status: '[ADD_REQ:1000:5000]' })
+  c.signal({ uuid: 'peer', status: '[ADD_REQ:1000:5000]' })
+  assert.deepEqual(c.invited, [['4000'], ['5000']])
+})
+
+test('F01: không tin UUID mâu thuẫn, máy lẻ trùng hoặc nhiều tag điều khiển', () => {
+  const c = groupFixture()
+  c.signal({ uuid: 'peer', user_uuid: 'outsider', status: '[ADD_REQ:x:1000:4000]' })
+  c.signal({ uuid: 'peer', status: '[ADD_REQ:x:1000:4000][LEFT:2000]' })
+  c.contactService.currentContacts.push({ uuid: 'duplicate', number: '2000' })
+  c.signal({ uuid: 'peer', status: '[ADD_REQ:x:1000:4000]' })
+  assert.equal(c.invited.length, 0)
+})
+
+test('F01: chỉ peer hiện tại được khởi tạo host; không tự chuyển quyền host', () => {
+  const c = groupFixture()
+  c.svc.isGroupCall = c.svc.isGroupHost = false
+  c.svc.groupHostExtension = ''
+  c.signal({ uuid: 'outsider', status: '[GROUP:9000:1000,9000]' })
+  assert.equal(c.svc.isGroupCall, false)
+  c.signal({ uuid: 'peer', status: '[GROUP:2000:1000,2000,3000]' })
+  assert.equal(c.svc.groupHostExtension, '2000')
+  c.signal({ uuid: 'member', status: '[GROUP:3000:1000,2000,3000]' })
+  assert.equal(c.svc.groupHostExtension, '2000')
+  const count = c.events.length
+  c.signal({ uuid: 'member', status: '[NOTICE:n:2000:fake]' })
+  assert.equal(c.events.length, count)
+  c.signal({ uuid: 'peer', status: '[NOTICE:n:2000:valid]' })
+  c.signal({ uuid: 'peer', status: '[NOTICE:n:2000:valid]' })
+  assert.equal(c.events.length, count + 1)
+})
+
+test('F02: tích hợp login timeout giữ khóa SDK; retry sau cleanup giữ đúng tài khoản mới', async () => {
+  const c = wazo(), pending = deferred()
+  c.Wazo.Auth.logIn = () => pending.promise.then(() => { c.Wazo.Auth.token = 'late'; return { token: 'late', uuid: 'old' } })
+  c.Wazo.Auth.logout = async () => { c.Wazo.Auth.token = '' }
+  const login = c.svc.login('old', 'secret')
+  await drain()
+  const timeout = [...c.timers.values()][0]
+  timeout()
+  await assert.rejects(login, /thời gian chờ/)
+  await assert.rejects(c.svc.login('new', 'secret'), /chưa kết thúc/)
+  pending.resolve()
+  await c.svc._authenticationGate.tail
+  assert.equal(c.Wazo.Auth.token, '')
+  assert.equal(c.svc.isLogged(), false)
+  c.Wazo.Auth.logIn = async () => { c.Wazo.Auth.token = 'new'; return { token: 'new', uuid: 'new' } }
+  c.svc.connectPhone = async () => true
+  await c.svc.login('new', 'secret')
+  assert.equal(c.svc.getToken(), 'new'); assert.equal(c.Wazo.Auth.token, 'new')
+})
+
+test('F03: thu hồi phiên dọn token/cache và bỏ kết quả body tin nhắn đang chờ', async () => {
+  const c = wazo(), body = deferred()
+  service(c, 'chatService', 'globalThis.chat = chatService')
+  const receiving = deferred(); let signal
+  c.fetch = async (url, options) => { signal = options.signal; receiving.resolve(); return { ok: true, json: () => body.promise } }
+  c.chat.rooms = [{ id: 'room', isDirect: true, messages: [] }]
+  const request = c.chat.getRoomMessages('room')
+  await receiving.promise; await drain()
+  c.localStorage.setItem('smartcall_sip_user', 'legacy')
+  c.svc.handleSessionKicked()
+  assert.equal(c.svc.isLogged(), false); assert.equal(c.svc.getToken(), '')
+  assert.equal(c.localStorage.getItem('smartcall_sip_user'), null)
+  assert.equal(c.chat.rooms.length, 0); assert.equal(signal.aborted, true)
+  body.resolve({ items: [{ uuid: 'late', content: 'private', user_uuid: 'peer' }] })
+  await request
+  assert.equal(c.chat.rooms.length, 0)
+  c.svc.handleSessionKicked()
+  assert.equal(c.events.filter((event) => event.type === 'smartcall-session-kicked').length, 1)
+})
+
+test('F04: accepted/progress cũ không thay session, timer hoặc âm thanh của cuộc gọi mới', () => {
+  const c = wazo(); c.svc.attachListeners()
+  const current = { sipCallId: 'new' }
+  c.svc.currentCallSession = current
+  c.state.activeCall = { number: 'same-peer', session: current, status: 'ringing' }
+  c.svc._onCallAcceptedHandler({ sipCallId: 'old', number: 'same-peer' })
+  c.svc._onProgressHandler({ sipCallId: 'old' })
+  assert.equal(c.svc.currentCallSession, current)
+  assert.equal(c.state.activeCall.status, 'ringing'); assert.equal(c.svc._durationInterval, null)
+  c.svc._onCallAcceptedHandler({ sipCallId: 'new' })
+  assert.equal(c.state.activeCall.status, 'connected')
+})
+
+test('F04: accepted hợp lệ đến đồng bộ trước Phone.call trả về vẫn được xử lý', async () => {
+  const c = wazo(); c.svc.attachListeners()
+  c.state.activeCall = { callId: 'attempt', number: 'peer', status: 'ringing' }
+  c.Wazo.Phone.call = async () => { c.svc._onCallAcceptedHandler({ sipCallId: 'actual' }); return { sipCallId: 'actual' } }
+  await c.svc.makeCall('peer')
+  assert.equal(c.state.activeCall.status, 'connected'); assert.equal(c.svc.currentCallSession.sipCallId, 'actual')
+})
+
+test('F05: chỉ conference_deleted đúng ID được ngắt cuộc gọi', () => {
+  const c = groupFixture(); let ended = 0
+  c.svc.isGroupHost = false; c.svc.hangup = () => ended++
+  c.svc.currentCallSession = { sipCallId: 'sip', callId: 'server-current' }
+  c.svc._handleConferenceEvent('adhoc_conference_deleted', { id: 'unknown' })
+  c.svc._handleConferenceEvent('adhoc_conference_participant_joined', { conference_id: 'wrong', call_id: 'server-old' })
+  assert.equal(c.svc.activeAdhocConferenceId, '')
+  c.svc._handleConferenceEvent('adhoc_conference_participant_joined', { conference_id: 'current', call_id: 'server-current' })
+  c.svc._handleConferenceEvent('adhoc_conference_deleted', { id: 'other' })
+  c.svc._handleConferenceEvent('adhoc_conference_deleted', {})
+  assert.equal(ended, 0)
+  c.svc._handleConferenceEvent('adhoc_conference_deleted', { id: 'current' })
+  assert.equal(ended, 1)
+})
+
+test('F06: HTTP500 cập nhật computed sendFailed ngay, không cần đổi phòng', async () => {
+  const c = chat(), pending = deferred()
+  c.svc.rooms = [{ id: 'r', messages: [] }]
+  c.fetch = () => pending.promise
+  const sending = c.svc.sendMessage('r', 'hello')
+  const failed = computed(() => c.svc.rooms[0].messages[0]?.sendFailed)
+  assert.equal(failed.value, false)
+  pending.resolve(response({}, 500)); const message = await sending
+  assert.equal(failed.value, true); assert.equal(message.sendFailed, true)
+})
+
+test('F06: ID/thời gian server được cập nhật qua proxy Vue', async () => {
+  const c = chat(), pending = deferred()
+  c.svc.rooms = [{ id: 'r', messages: [] }]; c.fetch = () => pending.promise
+  const sending = c.svc.sendMessage('r', 'hello')
+  const id = computed(() => c.svc.rooms[0].messages[0]?.id)
+  assert.ok(id.value.startsWith('cmsg-'))
+  pending.resolve(response({ uuid: 'server', created_at: '2026-11-19T01:00:00Z' }))
+  await sending; assert.equal(id.value, 'server')
+})
+
+test('F07: nhóm đóng không sống lại bởi tin thường; service chặn gửi tiếp', async () => {
+  const c = chat()
+  c.svc.rooms = [{ id: 'r', adminVerified: true, adminUuid: 'admin', isDirect: false, messages: [] }]
+  c.svc.handleIncomingMessage({ room_uuid: 'r', uuid: 'close', user_uuid: 'admin', content: '[SYSTEM:ROOM_CLOSED]' })
+  c.svc.handleIncomingMessage({ room_uuid: 'r', uuid: 'after', user_uuid: 'peer', content: 'hello' })
+  assert.equal(c.svc.rooms.length, 0)
+  await assert.rejects(c.svc.sendMessage('r', 'new'), /đã đóng/)
+})
+
+test('F07: cold load tìm tombstone ngoài trang gần nhất và không phục hồi nhóm', async () => {
+  const c = chat()
+  c.fetch = async (url) => {
+    if (url.endsWith('/rooms')) return response({ items: [{ uuid: 'r', name: 'Group', admin_uuid: 'admin', users: ['a', 'peer', 'admin'] }] })
+    if (url.includes('search=')) return response({ items: [{ uuid: 'close', user_uuid: 'admin', content: '[SYSTEM:ROOM_CLOSED]' }] })
+    throw new Error('Không được tải lịch sử phòng đã đóng')
+  }
+  assert.equal((await c.svc.getRooms()).length, 0)
+  assert.equal(c.svc._closedRoomIds.has('r'), true)
+})
+
+test('F07: lịch sử có tin thường sau tombstone vẫn giữ trạng thái đóng', async () => {
+  const c = chat()
+  c.svc.rooms = [{ id: 'r', adminVerified: true, adminUuid: 'admin', isDirect: false, messages: [] }]
+  c.fetch = async () => response({ items: [{ uuid: 'close', user_uuid: 'admin', content: '[SYSTEM:ROOM_CLOSED]', created_at: '2026-11-19T01:00:00Z' }, { uuid: 'after', user_uuid: 'peer', content: 'hello', created_at: '2026-11-19T02:00:00Z' }] })
+  assert.equal((await c.svc.getRoomMessages('r')).length, 0)
+  assert.equal(c.svc.rooms.length, 0)
+})
+
+test('Favorites: HTTP500 giữ nguyên dữ liệu, 404 thử nguồn đã biết, gộp thao tác trùng', async () => {
+  const c = service(fixture(), 'contactService', 'globalThis.svc = contactService')
+  c.svc.currentContacts = [{ id: 'peer', uuid: 'peer', source: 'first', number: '2000', isFavorite: false }]
+  const contact = c.svc.currentContacts[0]
+  c.fetch = async () => response({}, 500)
+  await assert.rejects(c.svc.toggleFavorite(contact), /500/)
+  assert.equal(contact.isFavorite, false); assert.equal(c.svc.favoriteIds.length, 0)
+  const pending = deferred(); let count = 0
+  c.fetch = async () => { count++; return count === 1 ? response({}, 404) : pending.promise }
+  const first = c.svc.toggleFavorite(contact), second = c.svc.toggleFavorite(contact)
+  await drain(); pending.resolve(response({}, 204))
+  assert.equal(await first, true); assert.equal(await second, true); assert.equal(count, 2)
+  assert.equal(contact.isFavorite, true)
+})
+
+test('CDR: refresh cũ trả muộn không ghi đè lần refresh mới hoặc mở khóa nhầm', async () => {
+  const c = service(fixture(), 'historyService', 'globalThis.svc = historyService'), old = deferred(), recent = deferred()
+  let calls = 0; c.fetch = () => (++calls === 1 ? old.promise : recent.promise)
+  const a = c.svc.getHistory({ forceRefresh: true }), b = c.svc.getHistory({ forceRefresh: true })
+  recent.resolve(response({ items: [{ id: 'new', start: '2026-11-19T02:00:00Z', answered: true }] })); await b
+  old.resolve(response({ items: [{ id: 'old', start: '2026-11-19T01:00:00Z', answered: true }] })); await a
+  assert.deepEqual([...c.svc.localHistory].map((item) => item.id), ['new'])
+})
+
+test('Dialer: tra cứu thiết bị chậm không mở khóa sớm hoặc gọi hai lần', async () => {
+  const c = wazo(), pending = deferred(); let calls = 0
+  c.svc.getMyExtension = () => '1000'; c.svc.isPhoneRegistered = () => true
+  c.contactService.currentContacts = [{ number: '2000' }]
+  c.contactService.findContactByExtension = () => ({ number: '2000', status: 'online' })
+  c.navigator.mediaDevices = { enumerateDevices: () => pending.promise }
+  c.Wazo.Phone.call = async () => { calls++; return { sipCallId: 'new' } }
+  const first = c.svc.validateAndMakeCall('2000')
+  assert.equal(c.svc._isDialing, true)
+  assert.equal((await c.svc.validateAndMakeCall('2000')).reason, 'THROTTLED')
+  pending.resolve([{ kind: 'audioinput' }]); assert.equal((await first).success, true)
+  assert.equal(calls, 1); assert.equal(c.svc._isDialing, false)
+})
+
+test('Batch close: trả đúng thành công/thất bại, không nhận vơ toàn bộ đã đóng', async () => {
+  const c = chat()
+  c.svc.deleteRoom = async (id) => { if (id === 'bad') throw new Error('403'); return id === 'ok' }
+  const result = await c.svc.deleteMultipleRooms(['ok', 'bad', 'direct', 'ok'])
+  assert.deepEqual([...result.deletedIds], ['ok']); assert.equal(result.failures.length, 2)
+})
+
+test('Login và đổi mật khẩu giữ nguyên khoảng trắng; reset không dùng displayName', async () => {
+  const c = fixture(); let credentials
+  c.wazoService.login = async (u, p) => { credentials = [u, p]; return { uuid: 'a', token: 'fixture' } }
+  c.wazoService.isPhoneRegistered = () => false; c.fetch = async () => response({})
+  view(c, 'src/views/LoginView.vue', 'globalThis.login = handleLogin; globalThis.form = { username, password }')
+  c.form.username.value = ' account '; c.form.password.value = ' pass '; await c.login()
+  assert.deepEqual(credentials, ['account', ' pass '])
+  const settings = fixture(); let changed, reset = 0
+  settings.wazoService.changePassword = async (old, next) => { changed = [old, next]; return response({}, 204) }
+  settings.wazoService.resetPassword = async () => { reset++; return response({}, 204) }
+  settings.localStorage.setItem('smartcall_username', 'Display Name')
+  view(settings, 'src/components/common/SettingsModal.vue', 'globalThis.passwords = { oldPassword, newPassword, confirmPassword }; globalThis.savePassword = savePassword; globalThis.resetEmail = sendPasswordResetEmail')
+  settings.passwords.oldPassword.value = ' old '; settings.passwords.newPassword.value = ' new pass '; settings.passwords.confirmPassword.value = ' new pass '
+  await settings.savePassword(); assert.deepEqual(changed, [' old ', ' new pass '])
+  await settings.resetEmail(); assert.equal(reset, 0)
+  settings.localStorage.setItem('smartcall_login_username', 'account'); await settings.resetEmail(); assert.equal(reset, 1)
+})
+
+function loadRouter(c, features) {
+  const VueRouter = require('vue-router')
+  Object.assign(c, { createRouter: VueRouter.createRouter, createWebHistory: VueRouter.createMemoryHistory, LoginView: { render: () => null }, getFeatures: () => features, isFeatureEnabled: (key) => features[key] === true })
+  const source = read('src/router/index.js').replace(/^import .*$/gm, '').replace('import.meta.env.BASE_URL', "'/'").replace(/component: \(\) => import\([^)]+\)/g, 'component: { render: () => null }').replace('export default router', 'globalThis.router = router')
+  vm.runInContext(source, c)
+  return c.router
+}
+
+test('F08: cả tám tổ hợp cờ tính năng đều điều hướng hữu hạn, kể cả tắt hết', async () => {
+  for (let bits = 0; bits < 8; bits++) {
+    const c = fixture(); c.wazoService.isLogged = () => true
+    c.localStorage.setItem('smartcall_logged_in', 'true')
+    const features = { calls: Boolean(bits & 1), messages: Boolean(bits & 2), history: Boolean(bits & 4) }
+    const router = loadRouter(c, features)
+    await router.push('/login')
+    const expected = features.calls ? '/calls' : features.messages ? '/messages' : features.history ? '/history' : '/login'
+    assert.equal(router.currentRoute.value.path, expected)
+    await router.push('/calls')
+    assert.equal(router.currentRoute.value.path, expected)
+  }
+})
+
+test('Router: người chưa đăng nhập không truy cập được trang lịch sử', async () => {
+  const c = fixture(); c.wazoService.isLogged = () => false
+  const router = loadRouter(c, { calls: false, messages: false, history: false })
+  await router.push('/history'); assert.equal(router.currentRoute.value.path, '/login')
+})
+
+test('Cờ dữ liệu giả cũ không kích hoạt lại đường đăng nhập offline', () => {
+  const c = fixture()
+  vm.runInContext(read('src/config/features.js').replace(/^export /gm, ''), c)
+  c.localStorage.setItem('smartcall_features_config', JSON.stringify({ calls: false, messages: false, history: false, mockData: true }))
+  const features = c.getFeatures()
+  assert.equal(features.calls, false); assert.equal('mockData' in features, false)
+})
+
+test('SIP: kết nối trùng chỉ gọi SDK một lần và nhận được REGISTERED đồng bộ', async () => {
+  const c = wazo(), connecting = deferred(); const handlers = new Map(); let count = 0
+  c.Wazo.Phone.on = (name, handler) => handlers.set(name, handler)
+  c.Wazo.Phone.connect = async () => { count++; handlers.get(c.Wazo.Phone.ON_REGISTERED)(); await connecting.promise }
+  const first = c.svc.connectPhone(), second = c.svc.connectPhone()
+  await drain(); assert.equal(count, 1); assert.equal(c.state.isRegistered, true)
+  connecting.resolve(); await Promise.all([first, second])
+})
+
+test('SIP: callback giữ lại từ listener trước bị vô hiệu ngay sau logout', async () => {
+  const c = wazo(); c.svc.attachListeners()
+  const old = c.svc._onRegisteredHandler
+  c.svc.logout(); c.localStorage.setItem('smartcall_wazo_token', 'new')
+  old(); assert.equal(c.state.isRegistered, false)
+  await c.svc._phoneCleanup
+})
+
+test('SIP: connect mới chờ connect/disconnect cũ hoàn tất', async () => {
+  const c = wazo(), old = deferred(), cleanup = deferred(); let count = 0
+  c.Wazo.Phone.connect = () => (++count === 1 ? old.promise : Promise.resolve())
+  c.Wazo.Phone.disconnect = () => cleanup.promise
+  const first = c.svc.connectPhone(); await drain()
+  c.svc.logout()
+  c.localStorage.setItem('smartcall_wazo_token', 'new'); c.localStorage.setItem('smartcall_user_uuid', 'new')
+  const second = c.svc.connectPhone()
+  const rejection = assert.rejects(first, { name: 'StaleSessionError' })
+  old.resolve(); await rejection; await drain(); assert.equal(count, 1)
+  cleanup.resolve(); await second; assert.equal(count, 2)
+})
+
+test('Storage: tab cũ dọn phiên nhưng không xóa token của tài khoản tab mới', async () => {
+  const c = wazo()
+  c.svc.session = { token: 'fixture', uuid: 'a' }
+  c.svc.attachListeners()
+  c.localStorage.setItem('smartcall_wazo_token', 'new-account-token')
+  c.localStorage.setItem('smartcall_user_uuid', 'b')
+  c.localStorage.setItem('smartcall_session_uuid', 'b-session')
+  c.svc.handleSharedSessionChange({ key: 'smartcall_wazo_token' })
+  assert.equal(c.svc.getToken(), ''); assert.equal(c.svc.isLogged(), false)
+  assert.equal(c.localStorage.getItem('smartcall_wazo_token'), 'new-account-token')
+  assert.equal(c.localStorage.getItem('smartcall_user_uuid'), 'b')
+  assert.equal(c.localStorage.getItem('smartcall_session_uuid'), 'b-session')
+  await c.svc._authenticationGate.tail
+})
+
+test('Socket: close() lỗi không ngăn xóa token; callback cũ không khởi động lại phiên', async () => {
+  const c = wazo(); let socket
+  c.WebSocket = class { constructor() { socket = this } send() {} close() { throw new Error('close failed') } }
+  c.svc.openWebSocketEvents()
+  const callback = socket.onmessage, onclose = socket.onclose
+  c.svc.handleSessionKicked()
+  callback({ data: JSON.stringify({ op: 'event', data: { name: 'chatd_user_room_message_created', data: { content: 'old' } } }) })
+  await onclose({ code: 4001 })
+  assert.equal(c.svc.eventWs, null); assert.equal(c.svc.getToken(), '')
+  assert.equal(c.svc._wsRetryTimer, null)
+})
+
+test('Logger: che token/password, giữ snapshot và xuất được object SDK có vòng tham chiếu', () => {
+  const c = service(fixture(), 'loggerService', 'globalThis.svc = logger')
+  const sdk = { token: 'private-token', nested: { password: 'private-password', url: 'wss://example.invalid/?token=private-query' } }
+  sdk.self = sdk
+  c.svc.info('AUTH', 'GET /api/auth/0.1/token/private-path', sdk)
+  sdk.token = 'changed'
+  const text = c.svc.exportLogsText()
+  for (const secret of ['private-token', 'private-password', 'private-query', 'private-path', 'changed']) assert.equal(text.includes(secret), false)
+  assert.ok(text.includes('Tham chiếu vòng'))
+})
+
+test('F03: App Vue thật bỏ private view/KeepAlive ngay khi bị thu hồi phiên', async () => {
+  const Vue = require('vue'), VueRouter = require('vue-router'), { parse, compileScript } = require('@vue/compiler-sfc')
+  const c = wazo()
+  c.svc.session = { token: 'fixture', uuid: 'a' }
+  c.localStorage.setItem('smartcall_logged_in', 'true')
+  let mounted = 0, unmounted = 0
+  const PrivateView = { setup() { Vue.onMounted(() => mounted++); Vue.onUnmounted(() => unmounted++); return () => Vue.h('private-view', 'PRIVATE') } }
+  const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [{ path: '/calls', name: 'Calls', component: PrivateView }, { path: '/login', name: 'Login', component: { render: () => Vue.h('login-view', 'LOGIN') } }] })
+  await router.push('/calls')
+  const { descriptor } = parse(read('src/App.vue'))
+  const script = compileScript(descriptor, { id: 'session-test', inlineTemplate: true }).content
+    .replace(/import \{([^}]+)\} from ['"]vue['"]/g, (_, names) => `const {${names.replace(/\bas\b/g, ':')}} = Vue`)
+    .replace(/import \{([^}]+)\} from ['"]vue-router['"]/g, (_, names) => `const {${names}} = VueRouter`)
+    .replace(/^import .*$/gm, '')
+    .replace('export default', 'globalThis.component =')
+  const stub = { render: () => null }
+  Object.assign(c, { Vue, VueRouter, AppHeader: stub, AppSidebar: stub, SettingsModal: stub, IncomingCallModal: stub, DebugLogDrawer: stub })
+  vm.runInContext(script, c)
+  const make = (type, text = '') => ({ type, text, children: [], parent: null, getRootNode() { let node = this; while (node.parent) node = node.parent; return node } })
+  const renderer = Vue.createRenderer({
+    createElement: (type) => make(type), createText: (text) => make('text', text), createComment: (text) => make('comment', text),
+    setText: (node, text) => { node.text = text }, setElementText: (node, text) => { node.text = text; node.children = [] },
+    parentNode: (node) => node.parent, nextSibling: (node) => node.parent?.children[node.parent.children.indexOf(node) + 1] || null,
+    insert(node, parent, anchor = null) { if (node.parent) { const i = node.parent.children.indexOf(node); if (i >= 0) node.parent.children.splice(i, 1) }; const i = anchor ? parent.children.indexOf(anchor) : -1; parent.children.splice(i < 0 ? parent.children.length : i, 0, node); node.parent = parent },
+    remove(node) { const i = node.parent?.children.indexOf(node); if (i >= 0) node.parent.children.splice(i, 1); node.parent = null }, patchProp: noop,
+  })
+  const root = make('root'), app = renderer.createApp(c.component)
+  app.use(router); app.mount(root); await Vue.nextTick(); await drain()
+  const containsPrivate = (node) => node.type === 'private-view' || node.children.some(containsPrivate)
+  assert.equal(mounted, 1); assert.equal(containsPrivate(root), true)
+  c.svc.handleSessionKicked()
+  await Vue.nextTick()
+  assert.equal(containsPrivate(root), false); assert.equal(unmounted, 1)
+  await drain(); assert.equal(router.currentRoute.value.path, '/login')
+  app.unmount()
+})
+
+test('Restore: token bị từ chối bị xóa, không giữ trạng thái đã đăng nhập giả', async () => {
+  const c = wazo()
+  c.Wazo.Auth.validateToken = async () => { throw new Error('401') }
+  assert.equal(await c.svc.restoreSession(), false)
+  assert.equal(c.svc.isLogged(), false); assert.equal(c.localStorage.getItem('smartcall_wazo_token'), null)
+})
+
+test('Restore: timeout validate giữ khóa SDK và xóa token Web trong khi chờ cleanup', async () => {
+  const c = wazo(), pending = deferred()
+  c.Wazo.Auth.validateToken = () => pending.promise
+  const restoring = c.svc.restoreSession(); await drain()
+  const timeout = [...c.timers.values()][0]; timeout()
+  assert.equal(await restoring, false)
+  assert.equal(c.svc.getToken(), '')
+  await assert.rejects(c.svc.login('new', 'secret'), /chưa kết thúc/)
+  pending.resolve({ token: 'late', uuid: 'a' }); await c.svc._authenticationGate.tail
+  assert.equal(c.svc.isLogged(), false)
+})
+
+test('Restore: kết quả cũ không xóa credential vừa đổi ở tab khác', async () => {
+  const c = wazo(), pending = deferred()
+  c.Wazo.Auth.validateToken = () => pending.promise
+  const restoring = c.svc.restoreSession(); await drain()
+  c.localStorage.setItem('smartcall_wazo_token', 'b-token'); c.localStorage.setItem('smartcall_user_uuid', 'b')
+  pending.resolve({ token: 'a-token', uuid: 'a' })
+  assert.equal(await restoring, false)
+  assert.equal(c.localStorage.getItem('smartcall_wazo_token'), 'b-token')
+  assert.equal(c.localStorage.getItem('smartcall_user_uuid'), 'b')
+})
+
+test('Login: SDK Phone treo không giữ form đăng nhập dù xác thực đã thành công', async () => {
+  const c = wazo(), pending = deferred()
+  c.Wazo.Auth.logIn = async () => ({ token: 'new', uuid: 'a' })
+  c.svc.connectPhone = () => pending.promise
+  const session = await c.svc.login('account', 'secret')
+  assert.equal(session.token, 'new'); assert.equal(c.state.isRegistered, false)
+  pending.resolve(true)
+})
+
+test('F04: terminal event cũ không hủy cuộc gọi mới đang chờ session SDK', async () => {
+  const c = wazo(), pending = deferred(); c.svc.attachListeners()
+  c.state.activeCall = { callId: 'new', status: 'ringing', number: 'peer', session: null }
+  c.Wazo.Phone.call = () => pending.promise
+  const dialing = c.svc.makeCall('peer')
+  c.svc._onCallEndedHandler({ sipCallId: 'old' })
+  c.svc._onCallFailedHandler({ sipCallId: 'old' })
+  assert.equal(c.state.activeCall.callId, 'new')
+  pending.resolve({ sipCallId: 'new-sip' }); await dialing
+  assert.equal(c.svc.currentCallSession.sipCallId, 'new-sip')
+})
+
+test('F04: nhánh phụ nghe đồng bộ không bị đặt lại timer timeout 30 giây', async () => {
+  const c = groupFixture(); c.svc.attachListeners()
+  c.contactService.isContactAvailableForCall = () => true
+  c.svc.syncActiveCallsToAdhocConference = noop
+  c.svc.broadcastGroupStateViaPresence = noop; c.svc.broadcastNoticeToGroup = noop
+  c.Wazo.Phone.call = async () => { c.svc._onCallAcceptedHandler({ sipCallId: 'secondary', answered: true }); return { sipCallId: 'secondary', answered: false } }
+  // Dùng implementation thật, không stub lời mời trong groupFixture.
+  vm.runInContext('wazoService.addParticipantsToGroupCall = Object.getPrototypeOf(wazoService).addParticipantsToGroupCall', c)
+  await c.svc.addParticipantsToGroupCall(['4000'])
+  assert.equal(c.svc._secondaryInviteTimers.has('4000'), false)
+  assert.equal(c.svc.secondaryCallSessions.get('4000').answered, true)
+})
+
+test('F07: kiểm tra phân trang vẫn bỏ qua lệnh giả và tìm đúng tombstone quản trị', async () => {
+  const c = chat(), offsets = []
+  const room = { id: 'r', adminVerified: true, adminUuid: 'admin', isDirect: false }
+  c.fetch = async (url) => {
+    const offset = Number(new URL(url).searchParams.get('offset')); offsets.push(offset)
+    return offset === 0 ? response({ items: Array.from({ length: 100 }, (_, i) => ({ uuid: 'fake-' + i, user_uuid: 'ordinary', content: '[SYSTEM:ROOM_CLOSED]' })) }) : response({ items: [{ uuid: 'real', user_uuid: 'admin', content: '[SYSTEM:ROOM_CLOSED]' }] })
+  }
+  await c.svc._verifyRoomClosure(room, c.captureSessionContext())
+  assert.deepEqual(offsets, [0, 100]); assert.equal(room.isClosed, true)
+})
+
+test('F07: lỗi xác minh trạng thái không làm nhóm hiện lại như đang mở', async () => {
+  const c = chat()
+  c.svc.rooms = [{ id: 'r', isDirect: false, messages: [{ id: 'cached', text: 'old' }] }]
+  c.fetch = async (url) => url.endsWith('/rooms') ? response({ items: [{ uuid: 'r', name: 'Group', admin_uuid: 'admin', users: ['a', 'peer', 'admin'] }] }) : response({}, 500)
+  assert.equal((await c.svc.getRooms()).length, 0)
+  assert.equal(c.events.some((event) => event.type === 'app-toast' && event.detail.type === 'warning'), true)
+})
+
+test('Favorites: ACK muộn sau đổi phiên không sửa yêu thích tài khoản mới', async () => {
+  const c = service(fixture(), 'contactService', 'globalThis.svc = contactService'), pending = deferred()
+  c.svc.currentContacts = [{ id: 'peer', uuid: 'peer', number: '2000', isFavorite: false }]
+  c.fetch = () => pending.promise
+  const first = c.svc.toggleFavorite(c.svc.currentContacts[0])
+  c.svc.reset(); c.localStorage.setItem('smartcall_user_uuid', 'b')
+  c.svc.currentContacts = [{ id: 'peer', uuid: 'peer', number: '2000', isFavorite: false }]
+  pending.resolve(response({}, 204))
+  await assert.rejects(first, { name: 'StaleSessionError' })
+  assert.equal(c.svc.currentContacts[0].isFavorite, false); assert.equal(c.svc.favoriteIds.length, 0)
+})
+
+test('Ghi âm dùng đúng host đăng nhập, không lấy host cũ trong localStorage', () => {
+  const c = service(fixture(), 'recordService', 'globalThis.svc = recordService')
+  c.localStorage.setItem('smartcall_wazo_host', 'stale.invalid')
+  c.wazoService.getHostUrl = () => 'https://current.invalid:9443'
+  assert.equal(c.svc.getHost(), 'https://current.invalid:9443')
+})
+
+test('Cleanup thoại bắt cả lỗi Promise và lỗi đồng bộ, không phát unhandled rejection', async () => {
+  const c = wazo()
+  assert.equal(await c.svc._runPhoneCleanup(() => Promise.reject(new Error('SIP unavailable'))), false)
+  assert.equal(await c.svc._runPhoneCleanup(() => { throw new Error('SIP unavailable') }), false)
+  assert.equal(await c.svc._runPhoneCleanup(() => Promise.reject()), false)
+  assert.equal(await c.svc._runPhoneCleanup(async () => {}), true)
+})
+
+test('Chọn mic để thử không lưu thay đổi trước khi bấm Lưu', () => {
+  const c = fixture()
+  c.localStorage.setItem('smartcall_selected_mic', 'saved-mic')
+  view(c, 'src/components/common/SettingsModal.vue', 'globalThis.mic = selectedMic; globalThis.preview = restartMicMeter')
+  c.mic.value = 'preview-mic'; c.preview()
+  assert.equal(c.localStorage.getItem('smartcall_selected_mic'), 'saved-mic')
+})
+
+test('SIP: disconnect thất bại chặn kết nối/quay số mới trên SDK chưa sạch', async () => {
+  const c = wazo(); let dialed = 0, connected = 0
+  c.Wazo.Phone.disconnect = async () => { throw new Error('cleanup failed') }
+  c.Wazo.Phone.connect = async () => connected++
+  c.Wazo.Phone.call = async () => dialed++
+  await c.svc.disconnectPhone()
+  await assert.rejects(c.svc.connectPhone(), /kết nối thoại cũ/)
+  await assert.rejects(c.svc._requestPhoneCall('2000'), /kết nối thoại cũ/)
+  assert.equal(connected, 0); assert.equal(dialed, 0)
+})
+
+test('SDK thật về mặt state: timeout không cho retry trước khi request và logout hoàn tất', async () => {
+  const c = wazo()
+  const pending = deferred(), cleanup = deferred()
+  const sdk = { token: '', logout: async () => { await cleanup.promise; sdk.token = '' } }
+  const gate = c.getSdkAuthenticationGate(sdk)
+  const first = gate.authenticate({ context: c.captureSessionContext(), initialize() {}, request: () => pending.promise.then(() => { sdk.token = 'old'; return { token: 'old' } }), timeoutMs: 5 })
+  await drain()
+  ;[...c.timers.values()][0]()
+  await assert.rejects(first, /thời gian chờ/)
+  assert.throws(() => gate.assertCanAuthenticate(), /chưa kết thúc/)
+  pending.resolve()
+  await drain()
+  assert.equal(sdk.token, 'old')
+  assert.throws(() => gate.assertCanAuthenticate(), /chưa kết thúc/)
+  cleanup.resolve()
+  await gate.tail
+  assert.equal(sdk.token, '')
+  const session = await gate.authenticate({ context: c.captureSessionContext(), initialize() {}, request: async () => { sdk.token = 'new'; return { token: 'new' } } })
+  assert.equal(session.token, 'new')
+  assert.equal(sdk.token, 'new')
+})
+
+test('Logout khi validate còn chờ: kết quả SDK cũ bị dọn trước thao tác tiếp theo', async () => {
+  const c = wazo()
+  const pending = deferred()
+  const sdk = { token: '', logout: async () => { sdk.token = '' } }
+  const gate = c.getSdkAuthenticationGate(sdk)
+  const validating = gate.authenticate({ context: c.captureSessionContext(), initialize() {}, request: () => pending.promise.then(() => { sdk.token = 'old'; return {} }) })
+  await drain()
+  c.invalidateSession()
+  const cleanup = gate.logout()
+  pending.resolve()
+  await assert.rejects(validating, { name: 'StaleSessionError' })
+  await cleanup
+  assert.equal(sdk.token, '')
+  gate.assertCanAuthenticate()
+})
+
+test('Cleanup SDK thất bại: khóa đăng nhập an toàn và yêu cầu tải lại', async () => {
+  const c = wazo()
+  const sdk = { logout: async () => { throw new Error('cleanup failed') } }
+  const gate = c.getSdkAuthenticationGate(sdk)
+  await assert.rejects(gate.logout(), /cleanup failed/)
+  assert.throws(() => gate.assertCanAuthenticate(), /tải lại trang/)
+  assert.equal(c.getSdkAuthenticationGate(sdk), gate)
 })

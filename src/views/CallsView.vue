@@ -962,11 +962,7 @@ const keys = [
   { num: '#', sub: '' },
 ]
 
-const isSipOnline = computed(
-  () =>
-    callStore.isRegistered ||
-    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true'),
-)
+const isSipOnline = computed(() => callStore.isRegistered)
 
 const matchedDialContact = computed(() => {
   const ext = extension.value.trim()
@@ -1629,18 +1625,25 @@ const handleMessage = (contact) => {
 
 // Bật/tắt trạng thái Yêu thích (gọi API danh bạ máy chủ tổng đài)
 const toggleFavorite = async (contact) => {
-  const newFav = await contactService.toggleFavorite(contact)
-  contact.isFavorite = newFav
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: {
-        message: newFav
-          ? `Đã thêm [${contact.name}] vào mục Yêu thích ⭐`
-          : `Đã bỏ [${contact.name}] khỏi mục Yêu thích`,
-        type: 'info',
-      },
-    }),
-  )
+  try {
+    const newFav = await contactService.toggleFavorite(contact)
+    contact.isFavorite = newFav
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: {
+          message: newFav
+            ? `Đã thêm [${contact.name}] vào mục Yêu thích ⭐`
+            : `Đã bỏ [${contact.name}] khỏi mục Yêu thích`,
+          type: 'info',
+        },
+      }),
+    )
+  } catch (error) {
+    if (error.name === 'StaleSessionError') return
+    window.dispatchEvent(new CustomEvent('app-toast', {
+      detail: { message: error.message || 'Không thể cập nhật yêu thích.', type: 'error' },
+    }))
+  }
 }
 
 // Nạp danh bạ từ máy chủ tổng đài

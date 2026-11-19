@@ -86,8 +86,8 @@
         </div>
 
         <div class="st-field-group">
-          <label class="st-label">Âm lượng chuông gọi đến (Ringtone Volume): {{ ringtoneVol }}%</label>
-          <input v-model="ringtoneVol" type="range" min="0" max="100" class="vol-slider" />
+          <label class="st-label">Âm lượng chuông gọi đến — chưa hỗ trợ tùy chỉnh</label>
+          <input v-model="ringtoneVol" type="range" min="0" max="100" class="vol-slider" disabled />
         </div>
       </div>
 
@@ -165,30 +165,30 @@
       <div v-show="activeTab === 'pref'" class="st-panel">
         <div class="st-field-group">
           <label class="st-label">Ngôn ngữ giao diện (Language / 언어):</label>
-          <select v-model="selectedLang" class="st-select">
+          <select v-model="selectedLang" class="st-select" disabled>
             <option value="vi">Tiếng Việt (Vietnamese)</option>
             <option value="ko">한국어 (Korean - Dành cho chuyên gia Hàn Quốc)</option>
             <option value="en">English (Tiếng Anh)</option>
           </select>
           <small class="hint-text">
-            Hỗ trợ chuyển đổi nhanh cho nhân viên Việt Nam và chuyên gia Hàn Quốc tại SDV.
+            Hiện giao diện hỗ trợ tiếng Việt. Chuyển đổi ngôn ngữ chưa được triển khai.
           </small>
         </div>
 
         <div class="st-toggle-row">
           <div class="st-toggle-info">
             <strong>Thông báo nổi trên màn hình (Desktop Notifications)</strong>
-            <small>Hiện thông báo popup góc màn hình khi có cuộc gọi đến hoặc tin nhắn mới.</small>
+            <small>Chưa hỗ trợ trong phiên bản hiện tại.</small>
           </div>
-          <input v-model="notifyDesktop" type="checkbox" class="toggle-cb" />
+          <input v-model="notifyDesktop" type="checkbox" class="toggle-cb" disabled />
         </div>
 
         <div class="st-toggle-row">
           <div class="st-toggle-info">
             <strong>Âm thanh thông báo tin nhắn (Chat Sound)</strong>
-            <small>Phát tiếng chuông nhẹ khi nhận được tin nhắn mới trong phòng chat.</small>
+            <small>Chưa hỗ trợ trong phiên bản hiện tại.</small>
           </div>
-          <input v-model="notifySound" type="checkbox" class="toggle-cb" />
+          <input v-model="notifySound" type="checkbox" class="toggle-cb" disabled />
         </div>
       </div>
 
@@ -406,7 +406,7 @@ const stopMicMeter = () => {
 }
 
 const restartMicMeter = () => {
-  localStorage.setItem('smartcall_selected_mic', selectedMic.value)
+  // Chọn mic chỉ để nghe thử; handleSave mới lưu lựa chọn.
   startMicMeter()
 }
 
@@ -414,6 +414,8 @@ watch(
   () => props.isOpen,
   (val) => {
     if (val) {
+      selectedMic.value = localStorage.getItem('smartcall_selected_mic') || 'default'
+      selectedSpeaker.value = localStorage.getItem('smartcall_selected_speaker') || 'default'
       featureConfig.value = getFeatures()
       if (activeTab.value === 'audio') {
         loadAudioDevices().then(() => startMicMeter())
@@ -573,9 +575,10 @@ const testSound = () => {
 }
 
 const savePassword = async () => {
-  const oldP = oldPassword.value.trim()
-  const newP = newPassword.value.trim()
-  const confP = confirmPassword.value.trim()
+  // Khoảng trắng có thể là một phần mật khẩu, không tự thay đổi thông tin xác thực.
+  const oldP = oldPassword.value
+  const newP = newPassword.value
+  const confP = confirmPassword.value
 
   if (!oldP || !newP || !confP) {
     window.dispatchEvent(
@@ -639,7 +642,7 @@ const savePassword = async () => {
 }
 
 const sendPasswordResetEmail = async () => {
-  const username = currentUsername.value || localStorage.getItem('smartcall_username') || ''
+  const username = localStorage.getItem('smartcall_login_username') || wazoService.session?.username || ''
   if (!username) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {

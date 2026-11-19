@@ -62,10 +62,10 @@
             <div class="summary-icon">{{ isSipOnline ? '🟢' : '⚪' }}</div>
             <div class="summary-text">
               <div class="summary-title">
-                {{ isSipOnline ? `Trực tuyến — Máy lẻ ${userExtension}` : 'Chế độ ngoại tuyến (Offline / Thử nghiệm)' }}
+                {{ isSipOnline ? `Trực tuyến — Máy lẻ ${userExtension}` : 'Chưa kết nối thoại' }}
               </div>
               <div class="summary-desc">
-                {{ isSipOnline ? 'Đã kết nối an toàn với máy chủ tổng đài qua cổng bảo mật WSS.' : 'Các tính năng danh bạ, tin nhắn nội bộ và mô phỏng đàm thoại vẫn hoạt động trơn tru.' }}
+                {{ isSipOnline ? 'Đã kết nối an toàn với máy chủ tổng đài qua cổng bảo mật WSS.' : 'Kết nối thoại chưa sẵn sàng. Vui lòng kiểm tra mạng và trạng thái đăng ký SIP.' }}
               </div>
             </div>
           </div>
@@ -114,11 +114,7 @@ const userDisplayName = computed(() => {
   }
   return userName.value
 })
-const isSipOnline = computed(
-  () =>
-    callStore.isRegistered ||
-    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true'),
-)
+const isSipOnline = computed(() => callStore.isRegistered)
 const showSipInfoModal = ref(false)
 
 const showSipHelp = () => {

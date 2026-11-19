@@ -24,11 +24,11 @@
 
     <!-- Màn hình Login hiển thị toàn màn hình nếu chưa đăng nhập hoặc đang ở trang Login -->
     <div v-else class="login-fullscreen">
-      <router-view />
+      <router-view v-if="isLoginPage" />
     </div>
 
     <!-- 3. Modal Cài đặt hệ thống (Settings Modal) -->
-    <SettingsModal :is-open="showSettings" @close="showSettings = false" />
+    <SettingsModal v-if="isLoggedIn" :is-open="showSettings" @close="showSettings = false" />
 
     <!-- 4. Modal Cuộc gọi đến WebRTC (Single Source of Truth) -->
     <IncomingCallModal
@@ -82,7 +82,10 @@ const showSettings = ref(false)
 const showKickedModal = ref(false)
 
 const handleSessionKicked = () => {
+  isLoggedIn.value = false
+  showSettings.value = false
   showKickedModal.value = true
+  router.replace('/login')
 }
 
 const handleRelogin = () => {
@@ -103,15 +106,20 @@ let toastTimer = null
 
 // --- Lifecycle ---
 onMounted(async () => {
+  // Đăng ký trước khi restore để không bỏ lỡ sự kiện thu hồi trong lúc đang chờ SDK.
+  window.addEventListener('app-action', handleAppAction)
+  window.addEventListener('app-toast', handleToastEvent)
+  window.addEventListener('app-login-success', handleLoginSuccess)
+  window.addEventListener('smartcall-session-kicked', handleSessionKicked)
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  window.addEventListener('storage', handleStorageChange)
   // 1. Kiểm tra trạng thái đăng nhập
   const storedLogin = localStorage.getItem('smartcall_logged_in')
   if (storedLogin !== 'false' && (storedLogin === 'true' || wazoService.isLogged())) {
-    isLoggedIn.value = true
     // Tự động khôi phục phiên Wazo từ Token lưu trữ khi có kết nối
-    if (!wazoService.session) {
-      await wazoService.restoreSession()
-    }
-    tryConnectPhone()
+    const restored = wazoService.session ? wazoService.isLogged() : await wazoService.restoreSession().catch(() => false)
+    isLoggedIn.value = restored && wazoService.isLogged()
+    if (!isLoggedIn.value) router.replace('/login')
   } else {
     isLoggedIn.value = false
     if (route.path !== '/login') {
@@ -119,20 +127,16 @@ onMounted(async () => {
     }
   }
 
-  // 2. Lắng nghe các sự kiện ứng dụng
-  window.addEventListener('app-action', handleAppAction)
-  window.addEventListener('app-toast', handleToastEvent)
-  window.addEventListener('app-login-success', handleLoginSuccess)
-  window.addEventListener('smartcall-session-kicked', handleSessionKicked)
-  window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
 onUnmounted(() => {
+  clearTimeout(toastTimer)
   window.removeEventListener('app-action', handleAppAction)
   window.removeEventListener('app-toast', handleToastEvent)
   window.removeEventListener('app-login-success', handleLoginSuccess)
   window.removeEventListener('smartcall-session-kicked', handleSessionKicked)
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.removeEventListener('storage', handleStorageChange)
   wazoService.disconnectPhone()
 })
 
@@ -142,19 +146,11 @@ const handleBeforeUnload = () => {
   }
 }
 
+const handleStorageChange = (event) => wazoService.handleSharedSessionChange(event)
+
 // --- Logic kết nối & Đăng nhập ---
 const handleLoginSuccess = () => {
-  isLoggedIn.value = true
-  tryConnectPhone()
-}
-
-const tryConnectPhone = async () => {
-  try {
-    await wazoService.connectPhone()
-    showToast('Tổng đài: Kết nối thoại sẵn sàng!', 'success')
-  } catch (err) {
-    console.info('Hệ thống khởi chạy ở chế độ ngoại tuyến dự phòng:', err.message)
-  }
+  isLoggedIn.value = wazoService.isLogged()
 }
 
 // --- Xử lý sự kiện Modal cuộc gọi đến (Điều hướng qua wazoService) ---
@@ -205,6 +201,7 @@ const handleLogout = () => {
   wazoService.logout()
   localStorage.setItem('smartcall_logged_in', 'false')
   isLoggedIn.value = false
+  showSettings.value = false
   router.push('/login')
 }
 

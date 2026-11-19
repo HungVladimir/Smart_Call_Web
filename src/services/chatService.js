@@ -3,6 +3,9 @@ import { wazoService } from './wazo'
 import { contactService } from './contactService'
 import { websocketService } from './websocketService'
 import { logger } from './loggerService'
+import { reactive } from 'vue'
+
+const chatState = reactive({ rooms: [] })
 
 /**
  * Định dạng thời gian tin nhắn chuẩn xác theo giờ Việt Nam / Trình duyệt cục bộ (HH:mm DD/MM/YYYY)
@@ -43,9 +46,12 @@ export const formatMessageDateTime = (isoOrTimestamp) => {
 }
 
 class ChatService {
+  get rooms() { return chatState.rooms }
+  set rooms(value) { chatState.rooms = value }
   constructor() {
     this.rooms = []
     this._fetchingRoomsPromise = null
+    this._closedRoomIds = new Set()
     if (typeof window !== 'undefined') {
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
       websocketService.on('chatd_user_room_message_created', (data) => this.handleIncomingMessage(data))
@@ -92,6 +98,41 @@ class ChatService {
     }
   }
 
+  /** Đóng phòng trên giao thức SmartCall; không thay thế quyền membership của Wazo. */
+  _markRoomClosed(roomId, room = this.rooms.find((item) => item.id === roomId)) {
+    this._closedRoomIds.add(roomId)
+    if (room) room.isClosed = true
+    this.rooms = this.rooms.filter((item) => item.id !== roomId)
+  }
+
+  /** Tìm tombstone trên server, kể cả khi nó đã nằm ngoài trang lịch sử gần nhất. */
+  async _verifyRoomClosure(room, context) {
+    if (room.isDirect) return
+    if (this._closedRoomIds.has(room.id)) { room.isClosed = true; return }
+    if (!room.adminVerified) return // Không suy quyền quản trị từ tên hoặc thứ tự thành viên.
+    const fetch = createSessionFetch(context)
+    const pageSize = 100
+    const seen = new Set()
+    for (let page = 0; page < 100; page += 1) {
+      const url = `${wazoService.getHostUrl()}/api/chatd/1.0/users/me/rooms/${encodeURIComponent(room.id)}/messages?search=${encodeURIComponent('[SYSTEM:ROOM_CLOSED')}&limit=${pageSize}&offset=${page * pageSize}`
+      const res = await fetch(url, { headers: { 'X-Auth-Token': wazoService.getToken(), Accept: 'application/json' }, signal: AbortSignal.timeout(6000) })
+      if (!res.ok) throw new Error(`Không xác minh được trạng thái đóng nhóm (${res.status}).`)
+      const data = await res.json()
+      if (!Array.isArray(data.items)) throw new Error('Dữ liệu trạng thái nhóm không hợp lệ.')
+      for (const message of data.items) {
+        if (this._trustedCommand(room, message) && message.content.includes('[SYSTEM:ROOM_CLOSED')) {
+          this._markRoomClosed(room.id, room)
+          return
+        }
+      }
+      if (data.items.length < pageSize) return
+      const signature = JSON.stringify(data.items.map((item) => item.uuid || item.id || item))
+      if (seen.has(signature)) throw new Error('Máy chủ chưa hỗ trợ phân trang trạng thái nhóm.')
+      seen.add(signature)
+    }
+    throw new Error('Chưa xác minh hết trạng thái nhóm. Vui lòng thử lại.')
+  }
+
   // Xử lý tin nhắn đến thời gian thực qua WebSocket (Tập trung toàn hệ thống - SSOT)
   handleIncomingMessage(data) {
     if (!data) return
@@ -103,6 +144,15 @@ class ChatService {
     const timeStr = formatMessageDateTime(data.created_at || msgTimestamp)
 
     if (!roomUuid || !content) return
+    if (this._closedRoomIds.has(roomUuid)) return
+    if (!this.rooms.some((room) => room.id === roomUuid)) {
+      // Nạp metadata/quyền và kiểm tra tombstone trước khi hiển thị một phòng chưa biết.
+      const context = captureSessionContext()
+      this.getRooms().then(() => {
+        if (isSessionContextCurrent(context) && this.rooms.some((room) => room.id === roomUuid) && !this._closedRoomIds.has(roomUuid)) this.handleIncomingMessage(data)
+      }).catch(() => {})
+      return
+    }
     const trustedCommand = this._trustedCommand(this.rooms.find((room) => room.id === roomUuid), data)
 
     // 0. Xử lý Tombstone giải tán / đóng phòng thời gian thực
@@ -112,7 +162,7 @@ class ChatService {
       if (targetRoom) {
         targetRoom.isClosed = true
       }
-      this.rooms = (this.rooms || []).filter((r) => r.id !== roomUuid)
+      this._markRoomClosed(roomUuid, targetRoom)
       this.saveRooms()
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId: roomUuid } }))
@@ -437,9 +487,26 @@ class ChatService {
               }
             })
 
+            // Kiểm tra đóng phòng độc lập với cache tin nhắn, không cho tin thường mở lại nhóm.
+            await Promise.all(serverRooms.map(async (room) => {
+              try { await this._verifyRoomClosure(room, sessionContext) }
+              catch (error) {
+                assertSessionContext(sessionContext)
+                room.closureUnverified = true
+                logger.warn('CHAT', 'Tạm ẩn nhóm chưa xác minh được trạng thái:', error.message)
+              }
+            }))
+            assertSessionContext(sessionContext)
+
+            if (serverRooms.some((room) => room.closureUnverified)) {
+              window.dispatchEvent(new CustomEvent('app-toast', {
+                detail: { message: 'Một số nhóm tạm chưa hiển thị vì chưa xác minh được trạng thái đóng. Vui lòng thử tải lại.', type: 'warning' },
+              }))
+            }
+
             // Tải trước song song tin nhắn gần nhất cho các phòng chưa nạp tin nhắn
             const roomsNeedFetch = serverRooms.filter(
-              (r) => !r.messages || r.messages.length === 0,
+              (r) => !r.isClosed && !r.closureUnverified && (!r.messages || r.messages.length === 0),
             )
             if (roomsNeedFetch.length > 0) {
               await Promise.allSettled(
@@ -464,7 +531,7 @@ class ChatService {
             serverRooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
             // Lọc bỏ hoàn toàn các phòng nhóm đã bị giải tán (Tombstone SYSTEM:ROOM_CLOSED)
-            const activeServerRooms = serverRooms.filter((room) => !room.isClosed)
+            const activeServerRooms = serverRooms.filter((room) => !room.isClosed && !room.closureUnverified && !this._closedRoomIds.has(room.id))
 
 
             // Giữ lại các phòng chat 1-1 local nếu CHƯA có phòng server nào tương ứng
@@ -507,6 +574,7 @@ class ChatService {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (!roomId) return []
+    if (this._closedRoomIds.has(roomId)) return []
     const localRoom = roomContext || this.rooms.find((r) => r.id === roomId)
 
     try {
@@ -544,24 +612,11 @@ class ChatService {
               }
             }
 
-            // Nếu mốc [SYSTEM:ROOM_CLOSED] là tin nhắn cuối cùng -> Phòng hiện đang bị giải tán
-            if (lastClosedIdx >= 0 && lastClosedIdx === sortedItems.length - 1) {
-              if (localRoom) {
-                if (!localRoom.isDirect) {
-                  localRoom.isClosed = true
-                  localRoom.preview = 'Nhóm này đã được giải tán.'
-                } else {
-                  localRoom.isClosed = false
-                  localRoom.preview = 'Cuộc trò chuyện mới'
-                }
-              }
-            } else if (lastClosedIdx > -1) {
-              // Phòng đã từng bị giải tán nhưng sau đó có tin nhắn mới (nhóm được tạo lại cùng người)
-              // -> Đánh dấu phòng mở lại bình thường
-              if (localRoom) {
-                localRoom.isClosed = false
-              }
+            if (lastClosedIdx >= 0) {
+              this._markRoomClosed(roomId, localRoom)
+              return []
             }
+            if (this._closedRoomIds.has(roomId)) return []
 
             // Các tin nhắn thuộc phiên hoạt động hiện tại:
             // Nếu nhóm từng bị giải tán và được tạo lại, chỉ lấy các tin nhắn từ sau mốc giải tán gần nhất!
@@ -895,6 +950,7 @@ class ChatService {
    * Cập nhật tức thì vào mảng phòng (Optimistic 0ms) và đồng bộ với Wazo Chatd
    */
   async sendMessage(roomId, text, userAlias = null) {
+    if (this._closedRoomIds.has(roomId)) throw new Error('Nhóm này đã đóng trong SmartCall. Không thể gửi thêm tin nhắn.')
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     const myRealName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Người dùng'
@@ -921,6 +977,7 @@ class ChatService {
     }
 
     assertSessionContext(sessionContext)
+    if (this._closedRoomIds.has(targetRoomId) || room?.isClosed) throw new Error('Nhóm này đã đóng trong SmartCall.')
     const isSystemCommand = this._trustedCommand(room, { content: text, user_uuid: wazoService.getMyUserUuid() })
     const isSystemDeleter = isSystemCommand && text.includes('[SYSTEM:MSG_DELETED:ids=')
     let displayText = text
@@ -928,7 +985,7 @@ class ChatService {
       displayText = text.replace(/\[SYSTEM:ROOM_RENAME:title="[^"]+"\]\s*/, '')
     }
 
-    const newMsg = {
+    const newMsg = reactive({
       id: tempId,
       sender: 'mine',
       senderName: 'Tôi',
@@ -936,7 +993,8 @@ class ChatService {
       text: displayText,
       time: timeStr,
       timestamp: msgTimestamp,
-    }
+      sendFailed: false,
+    })
 
     if (room && !isSystemDeleter) {
       if (!room.messages) room.messages = []
@@ -1182,7 +1240,7 @@ async deleteRoom(roomId) {
     }
 
     // Ẩn phòng nhóm ngay lập tức khỏi RAM
-    this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
+    this._markRoomClosed(roomId, room)
     this.saveRooms()
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
@@ -1197,18 +1255,21 @@ async deleteRoom(roomId) {
    */
 async deleteMultipleRooms(roomIds) {
     const sessionContext = captureSessionContext()
-    if (!Array.isArray(roomIds) || roomIds.length === 0) return 0
-    let count = 0
-    for (const rId of roomIds) {
+    const result = { deletedIds: [], failures: [] }
+    if (!Array.isArray(roomIds)) return result
+    for (const rId of new Set(roomIds)) {
       assertSessionContext(sessionContext)
       try {
         const ok = await this.deleteRoom(rId)
-        if (ok) count++
+        if (ok) result.deletedIds.push(rId)
+        else result.failures.push({ roomId: rId, message: 'Phòng không còn tồn tại hoặc không phải nhóm.' })
       } catch (e) {
+        assertSessionContext(sessionContext)
+        result.failures.push({ roomId: rId, message: e.message })
         logger.warn('CHAT', `Lỗi xóa phòng nhóm [${rId}]:`, e.message)
       }
     }
-    return count
+    return result
   }
 
   /**
@@ -1226,6 +1287,7 @@ async deleteGroupRoom(roomId) {
     invalidateSession()
     this.rooms = []
     this._fetchingRoomsPromise = null
+    this._closedRoomIds.clear()
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
     }

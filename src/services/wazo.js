@@ -1,4 +1,4 @@
-import { captureSessionContext, assertSessionContext, isSessionContextCurrent, createSessionFetch, invalidateSession } from './sessionScope'
+import { captureSessionContext, assertSessionContext, isSessionContextCurrent, createSessionFetch, invalidateSession, StaleSessionError } from './sessionScope'
 import { reactive, shallowReactive } from 'vue'
 import Wazo from '@wazo/sdk'
 import { logger } from './loggerService'
@@ -8,6 +8,228 @@ import { contactService } from './contactService'
 import { chatService } from './chatService'
 import { websocketService } from './websocketService'
 import { recordService } from './recordService'
+
+// ===== Khóa xác thực SDK: giữ tác vụ cũ và cleanup tuần tự khi timeout =====
+const sdkAuthenticationGates = new WeakMap()
+
+/** Một SDK Auth singleton chỉ được có một tác vụ xác thực/cleanup đang sửa state nội bộ. */
+function getSdkAuthenticationGate(auth) {
+  if (!sdkAuthenticationGates.has(auth)) sdkAuthenticationGates.set(auth, new SdkAuthenticationGate(auth))
+  return sdkAuthenticationGates.get(auth)
+}
+
+class SdkAuthenticationGate {
+  constructor(auth) {
+    this.auth = auth
+    this.tail = Promise.resolve()
+    this.isAuthenticationPending = false
+    this.cleanupFailed = false
+  }
+
+  assertCanAuthenticate() {
+    if (this.cleanupFailed)
+      throw new Error('Chưa dọn được phiên SDK cũ. Vui lòng tải lại trang để đăng nhập an toàn.')
+    if (this.isAuthenticationPending)
+      throw new Error('Tác vụ xác thực trước chưa kết thúc. Vui lòng chờ hoặc tải lại trang.')
+  }
+
+  /** Timeout chỉ giải phóng form; khóa SDK được giữ đến khi request và cleanup thật sự kết thúc. */
+  authenticate({ context, initialize, request, timeoutMs = 15000 }) {
+    this.assertCanAuthenticate()
+    this.isAuthenticationPending = true
+    let canceled = false
+    let timer
+    const operation = this.tail
+      .then(async () => {
+        if (canceled) throw new StaleSessionError()
+        if (this.cleanupFailed)
+          throw new Error(
+            'Chưa dọn được phiên SDK cũ. Vui lòng tải lại trang để đăng nhập an toàn.',
+          )
+        assertSessionContext(context)
+        let session
+        try {
+          initialize()
+          session = await request()
+        } catch (error) {
+          // Request SDK có thể đã sửa token trước khi reject.
+          await this.clearSdkSession()
+          throw error
+        }
+        if (canceled || !isSessionContextCurrent(context)) {
+          await this.clearSdkSession()
+          throw new StaleSessionError()
+        }
+        return session
+      })
+      .finally(() => {
+        this.isAuthenticationPending = false
+      })
+    this.tail = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          canceled = true
+          reject(
+            new Error(
+              'Đăng nhập quá thời gian chờ. Tác vụ SDK đang được thu hồi; vui lòng chờ hoặc tải lại trang.',
+            ),
+          )
+        }, timeoutMs)
+      }),
+    ]).finally(() => clearTimeout(timer))
+  }
+
+  async clearSdkSession() {
+    try {
+      await this.auth.logout()
+    } catch (error) {
+      this.cleanupFailed = true
+      throw error
+    }
+  }
+
+  /** Không logout song song với logIn/validateToken còn sống trong SDK. */
+  logout(required = true) {
+    if (!required) return this.tail
+    const cleanup = this.tail.then(() => this.clearSdkSession())
+    this.tail = cleanup.then(
+      () => undefined,
+      () => undefined,
+    )
+    return cleanup
+  }
+}
+
+// ===== Tín hiệu gọi nhóm: xác thực UUID, host và thành viên trước khi thực hiện =====
+const normalizeExtension = (value) => String(value || '').split('@')[0].trim()
+
+/** Chỉ dùng UUID do envelope server cung cấp, không suy người phát từ alias hoặc tag text. */
+function resolveGroupSignalSender(context, data) {
+  const uuid = data.user_uuid || data.uuid
+  if (!uuid || (data.user_uuid && data.uuid && data.user_uuid !== data.uuid)) return null
+  if (uuid === context.wazoService.getMyUserUuid()) return null // Echo của chính Web không cấp lại vai trò.
+  const contact = context.contactService.findContactByUuid(uuid)
+  if (!contact || contact.uuid !== uuid) return null
+  const extension = normalizeExtension(contact.number)
+  if (!extension) return null
+  const owners = new Set(
+    context.contactService.currentContacts
+      .filter((item) => normalizeExtension(item.number) === extension)
+      .map((item) => item.uuid),
+  )
+  if (owners.size !== 1 || !owners.has(uuid)) return null
+  return { uuid, extension }
+}
+
+function parseGroupSignalExtensions(value) {
+  const list = value.split(',').map(normalizeExtension)
+  if (list.some((item) => !item || item.includes(':') || item.includes(']') || /\s/.test(item)))
+    return null
+  return [...new Set(list)]
+}
+
+/** Ràng buộc group signal với người phát và peer/nhóm đang hoạt động; không tự nhận chuyển quyền host. */
+function handleGroupPresenceSignal(context, data) {
+  if (!context.wazoService.isLogged()) return
+  const currentCall = context.callStore.activeCall || context.callStore.incomingCall
+  if (!currentCall || !context.wazoService.hasActiveCall() || typeof data.status !== 'string')
+    return
+  const matches = [...data.status.matchAll(/\[(GROUP|ADD_REQ|NOTICE|LEFT):([^\]]+)\]/g)]
+  if (matches.length !== 1) return
+  const sender = resolveGroupSignalSender(context, data)
+  if (!sender) return
+  const [, kind, payload] = matches[0]
+  const group = context.wazoService
+  const state = group
+  const me = context.wazoService.getMyExtension()
+  const peer = normalizeExtension(currentCall.number || currentCall.extension)
+  const host = state.groupHostExtension
+  const established = state.isGroupCall && Boolean(host)
+  const member = established && state.groupParticipantExtensions.includes(sender.extension)
+
+  if (kind === 'GROUP') {
+    const [declaredHost, csv, ...extra] = payload.split(':')
+    const participants = csv && parseGroupSignalExtensions(csv)
+    if (
+      extra.length ||
+      declaredHost !== sender.extension ||
+      declaredHost === me ||
+      !participants ||
+      !participants.includes(me) ||
+      !participants.includes(declaredHost)
+    )
+      return
+    if (established ? host !== sender.extension || state.isGroupHost : peer !== sender.extension)
+      return
+    state.isGroupCall = true
+    state.isGroupHost = false
+    state.groupHostExtension = sender.extension
+    state.groupParticipantExtensions = participants
+    Object.assign(currentCall, {
+      isGroupCall: true,
+      isGroupHost: false,
+      groupHostExtension: sender.extension,
+      groupParticipantExtensions: [...participants],
+      groupTitle: 'Cuộc gọi nhóm (' + participants.length + ' người)',
+    })
+    return
+  }
+  if (!member) return
+  if (kind === 'LEFT') {
+    if (payload !== sender.extension || payload === me) return
+    group.handleParticipantLeftGroupCall(sender.extension)
+    return
+  }
+  if (kind === 'ADD_REQ') {
+    if (!state.isGroupHost || host !== me) return
+    const connectedMember =
+      (peer === sender.extension && currentCall.status === 'connected') ||
+      state.extensionToWazoCallIdMap.has(sender.extension) ||
+      state.secondaryCallSessions.get(sender.extension)?.answered === true
+    if (!connectedMember) return
+    const parts = payload.split(':')
+    if (parts.length !== 2 && parts.length !== 3) return
+    const [requestId, targetHost, csv] = parts.length === 3 ? parts : ['', ...parts]
+    const requested = parseGroupSignalExtensions(csv)
+    if (targetHost !== me || !requested) return
+    const targets = requested.filter(
+      (extension) => !state.groupParticipantExtensions.includes(extension),
+    )
+    if (!targets.length) return
+    // Android cũ không có request ID: giới hạn một nội dung yêu cầu/người phát trong cuộc gọi hiện tại.
+    const key = sender.uuid + ':' + (requestId || csv)
+    if (group._processedAddReqIds.has(key)) return
+    group._processedAddReqIds.add(key)
+    Promise.resolve(group.addParticipantsToGroupCall(targets)).catch((error) =>
+      logger.warn('CALL', 'Không thể thực hiện yêu cầu mời từ thành viên:', error.message),
+    )
+    return
+  }
+  if (kind === 'NOTICE') {
+    const [noticeId, declaredHost, ...message] = payload.split(':')
+    if (
+      state.isGroupHost ||
+      sender.extension !== host ||
+      declaredHost !== host ||
+      !noticeId ||
+      !message.length
+    )
+      return
+    const key = sender.uuid + ':' + noticeId
+    if (group._processedNoticeIds.has(key)) return
+    group._processedNoticeIds.add(key)
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: '🔔 ' + message.join(':'), type: 'warning' },
+      }),
+    )
+  }
+}
 
 /**
  * Single Source of Truth (SSOT) Reactive Call Store
@@ -53,6 +275,16 @@ class WazoService {
     this._tokenCheckTimer = null
     this._isRefreshingToken = false
     this._refreshPromise = null
+    this._authenticationGate = getSdkAuthenticationGate(Wazo.Auth)
+    this._phoneCleanup = Promise.resolve()
+    this._phoneCleanupFailed = false
+    this._phoneConnectPromise = null
+    this._listenerGeneration = 0
+    this._wsRetryTimer = null
+    this._sipReconnectTimer = null
+    this._pendingSdkCalls = 0
+    this._pendingCallEvents = new Map()
+    this._answeredSipIds = new Set()
 
     // Trạng thái Gọi nhóm Ad-hoc (Ad-hoc Group Conference) - Parity với Android WazoSipCallManager
     this.activeAdhocConferenceId = ''
@@ -186,14 +418,21 @@ class WazoService {
   }
 
   async login(username, password) {
+    // Không để lần đăng nhập mới sửa SDK khi request cũ đã timeout nhưng còn chạy.
+    this._authenticationGate.assertCanAuthenticate()
     this.logout()
-    this.init()
     const loginContext = captureSessionContext()
     logger.info('AUTH', `Đang gửi yêu cầu đăng nhập tài khoản "${username}" tới máy chủ...`)
     try {
-      const authenticatedSession = await Wazo.Auth.logIn(username, password)
+      const authenticatedSession = await this._authenticationGate.authenticate({
+        context: loginContext,
+        initialize: () => this.init(),
+        request: () => Wazo.Auth.logIn(username, password),
+      })
       assertSessionContext(loginContext)
+      if (!authenticatedSession?.token || !authenticatedSession?.uuid) throw new Error('Máy chủ chưa trả về phiên đăng nhập hợp lệ.')
       this.session = authenticatedSession
+      localStorage.setItem('smartcall_login_username', username)
       if (this.session && this.session.token) {
         localStorage.setItem('smartcall_wazo_token', this.session.token)
         localStorage.setItem('smartcall_wazo_refreshToken', this.session.refreshToken || '')
@@ -243,12 +482,10 @@ class WazoService {
       const authenticatedContext = captureSessionContext()
       this.openWebSocketEvents()
 
-      // Tự động kết nối WebRTC Phone sau khi login thành công
-      try {
-        await this.connectPhone()
-      } catch (phoneErr) {
-        logger.warn('SIP', 'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)', phoneErr.message)
-      }
+      // Đăng nhập không phụ thuộc thời gian SDK đăng ký SIP; Header chỉ online khi REGISTERED.
+      this.connectPhone().catch((phoneErr) => {
+        if (isSessionContextCurrent(authenticatedContext)) logger.warn('SIP', 'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)', phoneErr.message)
+      })
       assertSessionContext(authenticatedContext)
 
       // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên máy chủ Chatd
@@ -267,6 +504,7 @@ class WazoService {
 
       return this.session
     } catch (error) {
+      if (captureSessionContext().epoch === loginContext.epoch && (isSessionContextCurrent(loginContext) || this._ownsStoredSession())) this.logout()
       logger.error('AUTH', `Đăng nhập thất bại: ${error.message || error}`, error)
       throw error
     }
@@ -274,14 +512,22 @@ class WazoService {
 
   // Khôi phục session xác thực Wazo từ Token khi người dùng F5 hoặc mở lại tab
   async restoreSession() {
+    this._authenticationGate.assertCanAuthenticate()
     const restoreContext = captureSessionContext()
-    this.init()
     const token = localStorage.getItem('smartcall_wazo_token')
     const refreshToken = localStorage.getItem('smartcall_wazo_refreshToken')
     if (token) {
       try {
         logger.info('AUTH', 'Đang khôi phục phiên làm việc Wazo từ Token lưu trữ...')
-        const restoredSession = await Wazo.Auth.validateToken(token, refreshToken).catch(() => null)
+        const validate = (value, refresh) => this._authenticationGate.authenticate({
+          context: restoreContext,
+          initialize: () => this.init(),
+          request: () => Wazo.Auth.validateToken(value, refresh),
+        }).catch((error) => {
+          if (this._authenticationGate.isAuthenticationPending || this._authenticationGate.cleanupFailed || error.name === 'StaleSessionError') throw error
+          return null
+        })
+        const restoredSession = await validate(token, refreshToken)
         assertSessionContext(restoreContext)
         this.session = restoredSession
 
@@ -292,21 +538,13 @@ class WazoService {
           assertSessionContext(restoreContext)
           if (refreshed) {
             const newToken = this.getToken()
-            const refreshedSession = await Wazo.Auth.validateToken(newToken, refreshToken).catch(() => null)
+            const refreshedSession = await validate(newToken, localStorage.getItem('smartcall_wazo_refreshToken') || refreshToken)
             assertSessionContext(restoreContext)
             this.session = refreshedSession
-            if (!this.session) {
-              this.session = {
-                token: newToken,
-                refreshToken: localStorage.getItem('smartcall_wazo_refreshToken') || refreshToken,
-                sessionUuid: localStorage.getItem('smartcall_session_uuid') || '',
-                uuid: localStorage.getItem('smartcall_user_uuid') || '',
-              }
-            }
           }
         }
 
-        if (this.session) {
+        if (this.session?.token && this.session?.uuid) {
           this.currentSessionUuid = this.session.sessionUuid || localStorage.getItem('smartcall_session_uuid') || ''
           if (this.currentSessionUuid) {
             localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
@@ -334,11 +572,10 @@ class WazoService {
           historyService.reload()
           logger.success('AUTH', 'Đã khôi phục phiên đăng nhập Wazo từ Token thành công!')
           this.openWebSocketEvents()
-          try {
-            await this.connectPhone()
-          } catch (phoneErr) {
-            logger.warn('SIP', 'Khôi phục WebRTC phone cảnh báo', phoneErr.message)
-          }
+          const phoneContext = captureSessionContext()
+          this.connectPhone().catch((phoneErr) => {
+            if (isSessionContextCurrent(phoneContext)) logger.warn('SIP', 'Khôi phục WebRTC phone cảnh báo', phoneErr.message)
+          })
           const connectedContext = captureSessionContext()
           if (connectedContext.epoch !== restoreContext.epoch) throw new Error('Phiên khôi phục đã kết thúc.')
           this.mySessionId = sessionStorage.getItem('smartcall_session_id') || ('sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7))
@@ -359,31 +596,25 @@ class WazoService {
         logger.warn('AUTH', 'Không thể khôi phục phiên Wazo từ Token cũ', e.message)
       }
     }
+    if (captureSessionContext().epoch === restoreContext.epoch && (isSessionContextCurrent(restoreContext) || this._ownsStoredSession())) this.logout()
     return false
   }
 
-  logout() {
+  logout({ revoked = false, preserveStoredSession = false } = {}) {
+    const hadSession = Boolean(this.session || this.getToken())
+    this._isKicked = revoked
     invalidateSession()
     this._isRefreshingToken = false
     this._refreshPromise = null
     logger.clearLogs()
     recordService.clearSessionCache()
     logger.info('AUTH', 'Thực hiện đăng xuất khỏi hệ thống Wazo...')
-    try {
-      this.setPresence('unavailable', 'Ngoại tuyến')
-    } catch (e) {
-      /* ignore */
-    }
+    if (!preserveStoredSession) this.setPresence('unavailable', 'Ngoại tuyến').catch(() => {})
     this._finalizeCallTermination('ended')
     this.closeWebSocketEvents()
-    if (this.session) {
-      try {
-        Wazo.Auth.logout(this.session)
-      } catch (e) {
-        /* ignore */
-      }
-      this.session = null
-    }
+    this._authenticationGate.logout(hadSession || this._authenticationGate.isAuthenticationPending)
+      .catch((error) => logger.warn('AUTH', 'Chưa dọn được phiên SDK. Cần tải lại trang:', error.message))
+    this.session = null
     // Xóa sạch toàn bộ session storage keys theo Issue 2 & plan
     const sessionKeys = [
       'smartcall_wazo_token',
@@ -400,8 +631,10 @@ class WazoService {
       'smartcall_active_room_id',
       'smartcall_offline_mode',
       'smartcall_session_uuid',
+      'smartcall_login_username',
+      'smartcall_sip_user',
     ]
-    sessionKeys.forEach((key) => localStorage.removeItem(key))
+    if (!preserveStoredSession) sessionKeys.forEach((key) => localStorage.removeItem(key))
     try {
       sessionStorage.removeItem('smartcall_client_id')
       sessionStorage.removeItem('smartcall_tab_client_id')
@@ -424,7 +657,8 @@ class WazoService {
     } catch (e) {}
     this.mySessionId = ''
     this.currentSessionUuid = ''
-    this._isKicked = false
+    this.myClientId = ''
+    this._lastRefreshRevoked = revoked
 
     // BUG-06 & BUG-07: Dọn dẹp phòng vệ Wazo.Phone event listeners và ngắt kết nối SIP Phone
     try {
@@ -443,6 +677,8 @@ class WazoService {
     callStore.myDepartment = ''
     callStore.activeCall = null
     callStore.incomingCall = null
+    callStore.callNotice = null
+    this._isDialing = false
     contactService.reset()
     chatService.reset()
     historyService.reset()
@@ -450,11 +686,11 @@ class WazoService {
   }
 
   isLogged() {
-    return Boolean(this.session?.token || localStorage.getItem('smartcall_wazo_token'))
+    return !this._isKicked && Boolean(this.session?.token || localStorage.getItem('smartcall_wazo_token'))
   }
 
   getToken() {
-    return this.session?.token || localStorage.getItem('smartcall_wazo_token') || ''
+    return this._isKicked ? '' : this.session?.token || localStorage.getItem('smartcall_wazo_token') || ''
   }
 
   getMyExtension() {
@@ -474,19 +710,23 @@ class WazoService {
     return this.session?.uuid || localStorage.getItem('smartcall_user_uuid') || ''
   }
 
+  _ownsStoredSession() {
+    return Boolean(this.session?.token && this.session.token === localStorage.getItem('smartcall_wazo_token') && this.session.uuid === localStorage.getItem('smartcall_user_uuid'))
+  }
+
+  /** Các tab dùng chung storage nhưng có SDK riêng: dọn tab cũ, không xóa credential tab mới. */
+  handleSharedSessionChange(event) {
+    if (event.key !== null && !['smartcall_wazo_token', 'smartcall_user_uuid', 'smartcall_session_uuid'].includes(event.key)) return
+    if (this._isKicked || (!this.session && !this._authenticationGate.isAuthenticationPending)) return
+    if (this._ownsStoredSession() && (!this.currentSessionUuid || this.currentSessionUuid === localStorage.getItem('smartcall_session_uuid'))) return
+    this.logout({ revoked: true, preserveStoredSession: true })
+    window.dispatchEvent(new CustomEvent('smartcall-session-kicked'))
+  }
+
   handleSessionKicked() {
     if (!this.isLogged() || this._isKicked) return
-    this._isKicked = true
+    this.logout({ revoked: true })
     logger.warn('AUTH', 'Phiên làm việc bị hủy hoặc tài khoản đăng nhập nơi khác.')
-    this.stopTokenHeartbeat()
-    this._finalizeCallTermination('ended')
-    this.disconnectPhone()
-    if (this.eventWs) {
-      try {
-        this.eventWs.close()
-      } catch (e) {}
-      this.eventWs = null
-    }
     window.dispatchEvent(new CustomEvent('smartcall-session-kicked'))
   }
 
@@ -614,6 +854,7 @@ class WazoService {
    * Đảm bảo phiên làm việc được duy trì liên tục, chỉ logout khi chính refresh_token bị thu hồi
    */
   async refreshSessionToken() {
+    if (this._isKicked || this._authenticationGate.isAuthenticationPending) return false
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (this._isRefreshingToken) return this._refreshPromise
@@ -818,11 +1059,17 @@ class WazoService {
     const token = this.getToken()
     if (!token || this.eventWs) return
 
+    const context = captureSessionContext()
+    clearTimeout(this._wsRetryTimer)
+    this._wsRetryTimer = null
     const cleanHost = (this.host || '107.126.11.126:9443').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
     try {
       this.eventWs = new WebSocket(`wss://${cleanHost}/api/websocketd/?token=${token}&version=2`)
+      const socket = this.eventWs
+      const isCurrent = () => this.eventWs === socket && isSessionContextCurrent(context) && this.isLogged()
 
       this.eventWs.onopen = () => {
+        if (!isCurrent()) return
         this._wsConnectTime = Date.now()
         logger.info('API', 'Kết nối wazo-websocketd đã mở thành công.')
         try {
@@ -853,6 +1100,7 @@ class WazoService {
       }
 
       this.eventWs.onmessage = (m) => {
+        if (!isCurrent()) return
         try {
           const msg = JSON.parse(m.data)
           const ev = msg.op === 'event' ? msg.data : msg
@@ -863,109 +1111,7 @@ class WazoService {
           if (name.includes('presence')) {
             window.dispatchEvent(new CustomEvent('wazo-presence-updated', { detail: data }))
 
-            // Đồng bộ giao diện Gọi Nhóm cho tất cả thành viên khi nhận tag [GROUP:hostExt:1001,1002,1003]
-            const statusText = data?.status || data?.state || ''
-            if (this.hasActiveCall() && typeof statusText === 'string' && statusText.includes('[GROUP:')) {
-              const start = statusText.indexOf('[GROUP:') + 7
-              const end = statusText.indexOf(']', start)
-              if (end > start) {
-                const content = statusText.substring(start, end).trim()
-                let hostExt = ''
-                let csv = content
-                if (content.includes(':')) {
-                  const segs = content.split(':')
-                  hostExt = segs[0].trim()
-                  csv = segs.slice(1).join(':').trim()
-                }
-                const parsedExts = csv.split(',').map((s) => s.trim()).filter(Boolean)
-                const myExt = this.getMyExtension()
-                if (parsedExts.includes(myExt)) {
-                  this.isGroupCall = true
-                  this.groupHostExtension = hostExt
-                  this.isGroupHost = hostExt === myExt
-                  this.groupParticipantExtensions = parsedExts
-                  if (callStore.activeCall) {
-                    callStore.activeCall.isGroupCall = true
-                    callStore.activeCall.isGroupHost = this.isGroupHost
-                    callStore.activeCall.groupHostExtension = hostExt
-                    callStore.activeCall.groupParticipantExtensions = parsedExts
-                    callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${parsedExts.length} người)`
-                  }
-                }
-              }
-            }
-
-            // 2. Chủ phòng nhận ủy quyền thêm người [ADD_REQ:reqId:hostExt:ext1,ext2] từ máy thành viên
-            if (this.hasActiveCall() && this.isGroupHost && typeof statusText === 'string' && statusText.includes('[ADD_REQ:')) {
-              const start = statusText.indexOf('[ADD_REQ:') + 9
-              const end = statusText.indexOf(']', start)
-              if (end > start) {
-                const content = statusText.substring(start, end).trim()
-                const parts = content.split(':')
-                let reqId = ''
-                let targetHostExt = ''
-                let csvExts = ''
-                if (parts.length >= 3) {
-                  reqId = parts[0].trim()
-                  targetHostExt = parts[1].trim()
-                  csvExts = parts.slice(2).join(':').trim()
-                } else if (parts.length === 2) {
-                  targetHostExt = parts[0].trim()
-                  csvExts = parts[1].trim()
-                }
-
-                const myExt = this.getMyExtension()
-                if (targetHostExt === myExt) {
-                  if (!reqId || !this._processedAddReqIds.has(reqId)) {
-                    if (reqId) this._processedAddReqIds.add(reqId)
-                    const toInvite = csvExts.split(',').map((s) => s.trim()).filter(Boolean)
-                    if (toInvite.length > 0) {
-                      logger.info('CALL', `Chủ phòng (${myExt}) nhận ủy quyền từ thành viên -> Quay số mời: ${toInvite.join(', ')}`)
-                      window.dispatchEvent(
-                        new CustomEvent('app-toast', {
-                          detail: { message: `📥 Nhận yêu cầu thêm ${toInvite.join(', ')} vào nhóm từ thành viên`, type: 'info' },
-                        }),
-                      )
-                      this.addParticipantsToGroupCall(toInvite)
-                    }
-                  }
-                }
-              }
-            }
-
-            // 3. Đồng bộ thông báo nhóm khi nhận tag [NOTICE:noticeId:hostExt:message]
-            if (this.hasActiveCall() && typeof statusText === 'string' && statusText.includes('[NOTICE:')) {
-              const start = statusText.indexOf('[NOTICE:') + 8
-              const end = statusText.indexOf(']', start)
-              if (end > start) {
-                const content = statusText.substring(start, end).trim()
-                const parts = content.split(':')
-                const noticeId = parts[0]?.trim()
-                const noticeMsg = parts.length >= 3 ? parts.slice(2).join(':').trim() : parts.slice(1).join(':').trim()
-                if (noticeId && !this._processedNoticeIds.has(noticeId) && noticeMsg) {
-                  this._processedNoticeIds.add(noticeId)
-                  window.dispatchEvent(
-                    new CustomEvent('app-toast', {
-                      detail: { message: `🔔 ${noticeMsg}`, type: 'warning' },
-                    }),
-                  )
-                }
-              }
-            }
-
-            // 4. Báo rời nhóm tức thì khi nhận tag [LEFT:ext]
-            if (this.hasActiveCall() && typeof statusText === 'string' && statusText.includes('[LEFT:')) {
-              const start = statusText.indexOf('[LEFT:') + 6
-              const end = statusText.indexOf(']', start)
-              if (end > start) {
-                const leftExt = statusText.substring(start, end).trim()
-                const myExt = this.getMyExtension()
-                if (leftExt && leftExt !== myExt && this.groupParticipantExtensions.includes(leftExt)) {
-                  logger.info('CALL', `Nhận thẻ [LEFT:${leftExt}] từ thành viên rời phòng.`)
-                  this.handleParticipantLeftGroupCall(leftExt)
-                }
-              }
-            }
+            handleGroupPresenceSignal({ wazoService: this, callStore, contactService }, data)
 
             // Single Device Login: Nếu presence của chính user chứa Session ID / Client ID mới từ thiết bị khác hoặc thiết bị Android
             const myUuid = this.getMyUserUuid()
@@ -1004,19 +1150,7 @@ class WazoService {
             this.syncActiveCallsToAdhocConference()
           }
 
-          // Xử lý sự kiện giải tán phòng Ad-hoc Conference từ Chủ phòng
-          if (name === 'adhoc_conference_deleted') {
-            const confId = data?.conference_id || data?.id
-            if (this.isGroupCall && this.hasActiveCall() && !this.isGroupHost) {
-              logger.info('CALL', `Phòng họp Ad-hoc [${confId}] đã kết thúc bởi Chủ phòng.`)
-              window.dispatchEvent(
-                new CustomEvent('app-toast', {
-                  detail: { message: '👥 Chủ phòng đã kết thúc cuộc gọi nhóm.', type: 'info' },
-                }),
-              )
-              this.hangup()
-            }
-          }
+          this._handleConferenceEvent(name, data)
 
           // Xử lý sự kiện thành viên rời phòng Ad-hoc Conference hoặc gác máy
           if (name === 'adhoc_conference_participant_left' || name === 'conference_user_participant_left' || name === 'call_ended') {
@@ -1034,6 +1168,7 @@ class WazoService {
       }
 
       this.eventWs.onclose = async (ev) => {
+        if (!isCurrent()) return
         const wasKicked =
           ev?.code === 4001 ||
           ev?.code === 4003 ||
@@ -1050,6 +1185,7 @@ class WazoService {
         if (wasKicked && this.isLogged() && !this._isKicked) {
           logger.info('API', `WebSocket đóng (${ev?.code || 'N/A'}: ${ev?.reason || ''}). Đang kiểm chứng phiên với Wazo Auth...`)
           const isValid = await this.verifyTokenHealth(true)
+          if (!isSessionContextCurrent(context) || !this.isLogged()) return
           if (!isValid && this._lastRefreshRevoked) {
             logger.warn('AUTH', 'Phiên làm việc đã bị thu hồi thực sự trên máy chủ (HTTP 401 trên refresh token).')
             this.handleSessionKicked()
@@ -1061,8 +1197,9 @@ class WazoService {
         }
 
         if (this.isLogged() && !this._isKicked) {
-          setTimeout(() => {
-            if (this.isLogged() && !this.eventWs && !this._isKicked) {
+          this._wsRetryTimer = setTimeout(() => {
+            this._wsRetryTimer = null
+            if (isSessionContextCurrent(context) && this.isLogged() && !this.eventWs && !this._isKicked) {
               this.openWebSocketEvents()
             }
           }, 5000)
@@ -1074,6 +1211,8 @@ class WazoService {
   }
 
   closeWebSocketEvents() {
+    clearTimeout(this._wsRetryTimer)
+    this._wsRetryTimer = null
     if (this.eventWs) {
       try {
         this.eventWs.onclose = null
@@ -1085,30 +1224,64 @@ class WazoService {
     }
   }
 
-async connectPhone() {
+  /** Chỉ nhận kết thúc hội nghị có ID đã được gắn với nhánh cuộc gọi hiện tại. */
+  _handleConferenceEvent(name, data) {
+    if (!this.isGroupCall || !this.hasActiveCall()) return
+    const conferenceId = data?.conference_id || data?.conference_uuid || (name === 'adhoc_conference_deleted' ? data?.id : '')
+    if (!conferenceId) return
+    if (name === 'adhoc_conference_participant_joined' || name === 'conference_user_participant_joined') {
+      const serverCallId = this.currentCallSession?.callId || callStore.activeCall?.session?.callId
+      if (serverCallId && data.call_id && String(data.call_id) === String(serverCallId) && (!this.activeAdhocConferenceId || String(this.activeAdhocConferenceId) === String(conferenceId))) {
+        this.activeAdhocConferenceId = String(conferenceId)
+        if (callStore.activeCall) callStore.activeCall.activeAdhocConferenceId = String(conferenceId)
+      }
+    }
+    if (name !== 'adhoc_conference_deleted' || this.isGroupHost || !this.activeAdhocConferenceId || String(conferenceId) !== String(this.activeAdhocConferenceId)) return
+    window.dispatchEvent(new CustomEvent('app-toast', {
+      detail: { message: '👥 Chủ phòng đã kết thúc cuộc gọi nhóm.', type: 'info' },
+    }))
+    this.hangup()
+  }
+
+  async connectPhone() {
+    if (this._phoneConnectPromise) return this._phoneConnectPromise
     const sessionContext = captureSessionContext()
     if (!this.isLogged()) throw new Error('User must be logged in')
-
-    logger.info('SIP', 'Đang kết nối WebSocket WebRTC SIP tới máy chủ Wazo...')
-    try {
-      await Wazo.Phone.connect({
-        media: { audio: localStorage.getItem('smartcall_selected_mic') && localStorage.getItem('smartcall_selected_mic') !== 'default' ? { deviceId: { exact: localStorage.getItem('smartcall_selected_mic') } } : true, video: false },
-        audioDeviceOutput: localStorage.getItem('smartcall_selected_speaker') || 'default',
-      })
+    const connecting = (async () => {
+      await this._phoneCleanup
       assertSessionContext(sessionContext)
-      await this.applyAudioDevices()
-      assertSessionContext(sessionContext)
-      this._neutralizeSdkAutoHold()
+      if (this._phoneCleanupFailed) throw new Error('Chưa dọn được kết nối thoại cũ. Vui lòng tải lại trang.')
+      if (this.isPhoneRegistered()) return true
       this.attachListeners()
-      logger.success('SIP', 'Lệnh Wazo.Phone.connect({ audio: true }) gửi thành công.')
-      return true
-    } catch (error) {
-      logger.error('SIP', `Lỗi kết nối WebRTC SIP: ${error.message || error}`, error)
-      throw error
+      logger.info('SIP', 'Đang kết nối WebSocket WebRTC SIP tới máy chủ Wazo...')
+      try {
+        await Wazo.Phone.connect({
+          media: { audio: localStorage.getItem('smartcall_selected_mic') && localStorage.getItem('smartcall_selected_mic') !== 'default' ? { deviceId: { exact: localStorage.getItem('smartcall_selected_mic') } } : true, video: false },
+          audioDeviceOutput: localStorage.getItem('smartcall_selected_speaker') || 'default',
+        })
+        assertSessionContext(sessionContext)
+        await this.applyAudioDevices()
+        assertSessionContext(sessionContext)
+        this._neutralizeSdkAutoHold()
+        this.attachListeners()
+        logger.success('SIP', 'Lệnh Wazo.Phone.connect({ audio: true }) gửi thành công.')
+        return true
+      } catch (error) {
+        logger.error('SIP', `Lỗi kết nối WebRTC SIP: ${error.message || error}`, error)
+        throw error
+      }
+    })()
+    this._phoneConnectPromise = connecting
+    try {
+      return await connecting
+    } finally {
+      if (this._phoneConnectPromise === connecting) this._phoneConnectPromise = null
     }
   }
 
   disconnectPhone() {
+    const connecting = this._phoneConnectPromise
+    this._phoneConnectPromise = null
     try {
       this.isRegistered = false
       callStore.isRegistered = false
@@ -1118,15 +1291,22 @@ async connectPhone() {
       // BUG-06: Gỡ bỏ phòng vệ toàn bộ listener của Wazo.Phone trước khi disconnect
       this.detachListeners()
 
-      if (Wazo && Wazo.Phone && typeof Wazo.Phone.disconnect === 'function') {
-        Wazo.Phone.disconnect()
-      }
+      // Đợi connect cũ kết thúc rồi mới disconnect; connect mới sẽ chờ cleanup này.
+      this._phoneCleanup = this._phoneCleanup.then(async () => {
+        if (connecting) await connecting.catch(() => {})
+        await Wazo.Phone?.disconnect?.()
+        this._phoneCleanupFailed = false
+      }).catch((error) => {
+        this._phoneCleanupFailed = true
+        logger.warn('SIP', 'Không thể dọn kết nối thoại cũ:', error?.message || 'Lỗi chưa xác định')
+      })
       logger.info('SIP', 'Đã ngắt kết nối Wazo WebRTC Phone')
     } catch (e) {
       logger.warn('SIP', 'Lỗi khi ngắt kết nối Wazo WebRTC Phone:', e)
     } finally {
       this.listenersAttached = false
     }
+    return this._phoneCleanup
   }
 
   isPhoneRegistered() {
@@ -1384,7 +1564,7 @@ async connectPhone() {
       }
       for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
         try {
-          Wazo.Phone.hangup(secSession)
+          this._runPhoneCleanup(() => Wazo.Phone.hangup(secSession))
         } catch (e) {
           /* ignore */
         }
@@ -1411,6 +1591,9 @@ async connectPhone() {
 
   // BUG-06 & BUG-07: Gỡ bỏ phòng vệ toàn bộ Wazo.Phone event listeners
   detachListeners() {
+    this._listenerGeneration += 1
+    clearTimeout(this._sipReconnectTimer)
+    this._sipReconnectTimer = null
     try {
       if (Wazo && Wazo.Phone) {
         const events = [
@@ -1453,6 +1636,9 @@ async connectPhone() {
   attachListeners() {
     if (this.listenersAttached) return
     this.listenersAttached = true
+    const listenerContext = captureSessionContext()
+    const generation = this._listenerGeneration
+    const isCurrentListener = () => generation === this._listenerGeneration && isSessionContextCurrent(listenerContext) && this.isLogged()
 
     this._onRegisteredHandler = () => {
       this.isRegistered = true
@@ -1472,13 +1658,16 @@ async connectPhone() {
 
       if (this.isLogged() && !this._isKicked && localStorage.getItem('smartcall_offline_mode') !== 'true') {
         this.verifyTokenHealth().then((isValid) => {
+          if (!isCurrentListener()) return
           if (!isValid && this._lastRefreshRevoked) {
             logger.warn('SIP', 'Phiên SIP bị ngắt do token không còn hợp lệ hoặc phiên đã chuyển sang thiết bị khác!')
             this.handleSessionKicked()
             return
           }
-          setTimeout(async () => {
-            if (this.isLogged() && !this.isRegistered && !this._isKicked) {
+          clearTimeout(this._sipReconnectTimer)
+          this._sipReconnectTimer = setTimeout(async () => {
+            this._sipReconnectTimer = null
+            if (isCurrentListener() && !this.isRegistered && !this._isKicked) {
               try {
                 logger.info('SIP', 'Đang tự động kết nối lại WebRTC Phone sau khi mất đăng ký...')
                 await this.connectPhone()
@@ -1492,6 +1681,7 @@ async connectPhone() {
     }
 
     this._onProgressHandler = (callSession) => {
+      if (!this._acceptManagedCallEvent('progress', callSession)) return
       logger.info('CALL', '🔔 Sự kiện Wazo: Đường dây đang đổ chuông (ON_PROGRESS / 180 Ringing)')
       if (callStore.activeCall && callStore.activeCall.status !== 'connected') {
         callStore.activeCall.status = 'ringing'
@@ -1509,7 +1699,7 @@ async connectPhone() {
         logger.warn('CALL', `Đang bận đàm thoại. Tự động từ chối cuộc gọi đến từ máy lẻ ${ext}`)
         try {
           if (callSession && typeof callSession.reject === 'function') {
-            callSession.reject()
+            this._runPhoneCleanup(() => callSession.reject())
           } else {
             this.reject(callSession)
           }
@@ -1562,6 +1752,8 @@ async connectPhone() {
 
     this._onCallAcceptedHandler = (callSession) => {
       if (!callStore.activeCall && !callStore.incomingCall) return
+      if (!this._acceptManagedCallEvent('accepted', callSession)) return
+      this._answeredSipIds.add(this._sipSessionId(callSession))
       const acceptedEpoch = this._callEpoch
       const acceptedContext = captureSessionContext()
       // 1. Kiểm tra xem session này có phải là nhánh phụ (Secondary Leg) trong cuộc gọi nhóm hay không
@@ -1579,6 +1771,7 @@ async connectPhone() {
 
       // Xử lý riêng cho nhánh phụ (Secondary Leg) trong cuộc gọi nhóm do Host điều phối
       if (this.isGroupCall && this.isGroupHost && isSecondaryLeg) {
+        this.secondaryCallSessions.set(matchedSecExt, callSession)
         logger.success('CALL', `🟢 Nhánh phụ [${matchedSecExt || 'N/A'}] đã nghe máy trong cuộc gọi nhóm.`)
         audioService.stopRingbackTone()
         if (matchedSecExt) {
@@ -1742,22 +1935,26 @@ async connectPhone() {
     }
 
     this._onCallEndedHandler = (callSession) => {
+      if (!this._acceptManagedCallEvent('ended', callSession)) return
       logger.info('CALL', '⏹️ Sự kiện Wazo: Cuộc gọi đã kết thúc (ON_CALL_ENDED)')
       this._finalizeCallTermination('ended', callSession)
     }
 
     this._onCallFailedHandler = (callSession) => {
+      if (!this._acceptManagedCallEvent('failed', callSession)) return
       logger.error('CALL', '❌ Sự kiện Wazo: Cuộc gọi thất bại (ON_CALL_FAILED - Máy bận, offline hoặc từ chối)')
       this._finalizeCallTermination('failed', callSession)
       window.dispatchEvent(new CustomEvent('wazo-failed', { detail: callSession }))
     }
 
     this._onCallRejectedHandler = (callSession) => {
+      if (!this._acceptManagedCallEvent('rejected', callSession)) return
       logger.warn('CALL', '🚫 Sự kiện Wazo: Cuộc gọi bị từ chối (ON_CALL_REJECTED)')
       this._finalizeCallTermination('rejected', callSession)
     }
 
     this._onCallCanceledHandler = (callSession, elsewhere) => {
+      if (!this._acceptManagedCallEvent('canceled', callSession)) return
       logger.warn('CALL', '⚠️ Sự kiện Wazo: Cuộc gọi bị hủy (ON_CALL_CANCELED)', { elsewhere })
       // Nếu thiết bị đã nhấc máy và có cờ elsewhere (cause=26 completed elsewhere do chuyển kênh / ConfBridge)
       // -> Bỏ qua không ngắt cuộc gọi (Đối chiếu WazoSipCallManager.py line 1168)
@@ -1766,6 +1963,12 @@ async connectPhone() {
         return
       }
       this._finalizeCallTermination('canceled', callSession)
+    }
+
+    // Callback đã xếp hàng của phiên/listener cũ không được tác động phiên hiện tại.
+    for (const key of ['_onRegisteredHandler', '_onUnregisteredHandler', '_onProgressHandler', '_onCallIncomingHandler', '_onCallAcceptedHandler', '_onCallEndedHandler', '_onCallFailedHandler', '_onCallRejectedHandler', '_onCallCanceledHandler']) {
+      const handler = this[key]
+      this[key] = (...args) => { if (isCurrentListener()) return handler(...args) }
     }
 
     // Đăng ký các event listeners với Wazo.Phone
@@ -1805,6 +2008,69 @@ async connectPhone() {
     }
   }
 
+  _sipSessionId(session) {
+    try { return String(session?.sipCallId || session?.getId?.() || session?.id || '') } catch { return '' }
+  }
+
+  /** Lệnh dọn nhánh có thể reject bất đồng bộ; try/catch bên ngoài không bắt được Promise. */
+  _runPhoneCleanup(command) {
+    const context = captureSessionContext()
+    const failed = (error) => {
+      logger.warn('SIP', 'Chưa xác nhận được thao tác kết thúc nhánh thoại:', error?.message || 'Lỗi chưa xác định')
+      if (isSessionContextCurrent(context) && this.isLogged()) {
+        window.dispatchEvent(new CustomEvent('app-toast', {
+          detail: { type: 'warning', message: 'Chưa xác nhận được thao tác kết thúc cuộc gọi với tổng đài. Vui lòng kiểm tra kết nối.' },
+        }))
+      }
+      return false
+    }
+    try { return Promise.resolve(command()).then(() => true, failed) }
+    catch (error) { return Promise.resolve(failed(error)) }
+  }
+
+  /** SDK có thể trả object khác cho cùng nhánh: đối chiếu SIP ID, không đối chiếu số điện thoại. */
+  _isManagedCallSession(session) {
+    if (!session) return false
+    const id = this._sipSessionId(session)
+    const managed = [this.currentCallSession, callStore.activeCall?.session, callStore.incomingCall?.session, callStore.incomingCall?.rawSession, ...this.secondaryCallSessions.values()]
+    return managed.some((item) => item && (item === session || (id && this._sipSessionId(item) === id)))
+  }
+
+  _acceptManagedCallEvent(kind, session) {
+    if (this._isManagedCallSession(session)) return true
+    // Sự kiện đồng bộ có thể tới trước Promise Phone.call; giữ tạm, chỉ phát lại nếu ID khớp kết quả.
+    const id = this._sipSessionId(session)
+    if (this._pendingSdkCalls > 0 && id) {
+      if (this._pendingCallEvents.size >= 20) this._pendingCallEvents.delete(this._pendingCallEvents.keys().next().value)
+      this._pendingCallEvents.set(kind + ':' + id, { kind, session })
+    }
+    return false
+  }
+
+  async _requestPhoneCall(extension) {
+    const context = captureSessionContext()
+    const epoch = this._callEpoch
+    await this._phoneCleanup
+    assertSessionContext(context)
+    if (epoch !== this._callEpoch) throw new Error('Cuộc gọi đã được hủy.')
+    if (this._phoneCleanupFailed) throw new Error('Chưa dọn được kết nối thoại cũ. Vui lòng tải lại trang.')
+    this._pendingSdkCalls += 1
+    try { return await Wazo.Phone.call(extension, false) }
+    finally { this._pendingSdkCalls -= 1 }
+  }
+
+  _replayPendingCallEvents(session) {
+    const id = this._sipSessionId(session)
+    const handlers = { progress: '_onProgressHandler', accepted: '_onCallAcceptedHandler', failed: '_onCallFailedHandler', rejected: '_onCallRejectedHandler', canceled: '_onCallCanceledHandler', ended: '_onCallEndedHandler' }
+    for (const kind of Object.keys(handlers)) {
+      const key = kind + ':' + id
+      const event = this._pendingCallEvents.get(key)
+      this._pendingCallEvents.delete(key)
+      if (event) this[handlers[kind]]?.(event.session)
+    }
+    if (!this._pendingSdkCalls) this._pendingCallEvents.clear()
+  }
+
   // --- Điều khiển cuộc gọi cấp thấp qua WebRTC SDK ---
 async makeCall(extension) {
     const sessionContext = captureSessionContext()
@@ -1812,13 +2078,15 @@ async makeCall(extension) {
     try {
       const callId = callStore.activeCall?.callId
       const callEpoch = this._callEpoch
-      const session = await Wazo.Phone.call(extension, false)
+      const session = await this._requestPhoneCall(extension)
       if (!isSessionContextCurrent(sessionContext) || callEpoch !== this._callEpoch || callStore.activeCall?.callId !== callId) {
         if (session) await Wazo.Phone.hangup(session).catch(() => {})
         throw new Error('Cuộc gọi đã được hủy.')
       }
       if (!session) throw new Error('Kết nối thoại chưa sẵn sàng.')
       this.currentCallSession = session
+      this._replayPendingCallEvents(session)
+      if (callEpoch !== this._callEpoch || callStore.activeCall?.callId !== callId) throw new Error('Cuộc gọi đã kết thúc.')
       logger.success('CALL', `Tín hiệu cuộc gọi tới ${extension} đã được phát đi. Session ID: ${this.currentCallSession?.sipCallId || 'N/A'}`)
       return this.currentCallSession
     } catch (err) {
@@ -1848,7 +2116,7 @@ async makeCall(extension) {
       }
       for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
         try {
-          Wazo.Phone.hangup(secSession)
+          this._runPhoneCleanup(() => Wazo.Phone.hangup(secSession))
         } catch (e) {
           /* ignore */
         }
@@ -1865,13 +2133,13 @@ async makeCall(extension) {
     const session = callSession || this.currentCallSession || callStore.activeCall?.session
     if (session) {
       try {
-        Wazo.Phone.hangup(session)
+        this._runPhoneCleanup(() => Wazo.Phone.hangup(session))
       } catch (e) {
         /* ignore */
       }
     } else {
       try {
-        Wazo.Phone.hangup()
+        this._runPhoneCleanup(() => Wazo.Phone.hangup())
       } catch (e) {
         /* ignore */
       }
@@ -1894,7 +2162,7 @@ async makeCall(extension) {
     const session = callSession || this.currentCallSession || callStore.incomingCall?.session
     if (session) {
       try {
-        Wazo.Phone.reject(session)
+        this._runPhoneCleanup(() => Wazo.Phone.reject(session))
       } catch (e) {
         /* ignore */
       }
@@ -1949,7 +2217,7 @@ async makeCall(extension) {
     const session = incoming.rawSession || incoming.session || this.currentCallSession
     if (session) {
       try {
-        Wazo.Phone.reject(session)
+        this._runPhoneCleanup(() => Wazo.Phone.reject(session))
       } catch (e) {}
     }
 
@@ -1970,15 +2238,26 @@ async makeCall(extension) {
     callStore.incomingCall = null
   }
 
-  // --- Kiểm tra toàn diện & Thực hiện cuộc gọi (Single Entry Point) ---
-async validateAndMakeCall(rawExt, meta = {}) {
-    const sessionContext = captureSessionContext()
-    // 1. Chống bấm liên tục (Throttle 1200ms)
-    if (this._isDialing) {
-      logger.warn('UI', 'Thao tác quay số quá nhanh, vui lòng chờ trong giây lát!')
-      return { success: false, reason: 'THROTTLED' }
+  /** Giữ khóa cho cả tra cứu thiết bị và lời mời SDK, chỉ thao tác sở hữu khóa mới được mở. */
+  async validateAndMakeCall(rawExt, meta = {}) {
+    if (this._isDialing) return { success: false, reason: 'THROTTLED' }
+    if (!this.isLogged()) return { success: false, reason: 'NOT_AUTHENTICATED' }
+    const attempt = {}
+    this._dialAttempt = attempt
+    this._isDialing = true
+    try {
+      return await this._validateAndMakeCall(rawExt, meta)
+    } finally {
+      if (this._dialAttempt === attempt) {
+        this._dialAttempt = null
+        this._isDialing = false
+      }
     }
+  }
 
+  // --- Kiểm tra toàn diện & Thực hiện cuộc gọi (Single Entry Point) ---
+async _validateAndMakeCall(rawExt, meta = {}) {
+    const sessionContext = captureSessionContext()
     // 2. Chặn nếu đang trong một cuộc gọi khác
     if (callStore.activeCall || this.hasActiveCall()) {
       logger.warn('CALL', 'Chặn quay số: Người dùng đang trong một cuộc gọi khác.')
@@ -1998,10 +2277,6 @@ async validateAndMakeCall(rawExt, meta = {}) {
       return { success: false, reason: 'EMPTY_EXTENSION' }
     }
 
-    this._isDialing = true
-    setTimeout(() => {
-      this._isDialing = false
-    }, 1200)
 
     const cleanExt = ext.split('@')[0].trim()
     const myExt = this.getMyExtension()
@@ -2009,9 +2284,7 @@ async validateAndMakeCall(rawExt, meta = {}) {
 
     // 3. Chặn người dùng tự gọi cho chính mình
     if (cleanMyExt && cleanExt === cleanMyExt) {
-      logger.warn('CALL', `Chặn thao tác: Người dùng cố gắng gọi tới chính máy lẻ của mình (${cleanExt})`)
-      this._isDialing = false
-      window.dispatchEvent(
+      logger.warn('CALL', `Chặn thao tác: Người dùng cố gắng gọi tới chính máy lẻ của mình (${cleanExt})`)      window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
             message: `⚠️ Không thể thực hiện cuộc gọi tới chính máy lẻ của bạn (${cleanExt})!`,
@@ -2026,9 +2299,7 @@ async validateAndMakeCall(rawExt, meta = {}) {
     const targetContact = contactService.findContactByExtension(cleanExt)
     if (!targetContact && !meta.allowUnknown) {
       if (contactService.currentContacts && contactService.currentContacts.length > 0) {
-        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} không tồn tại trong danh bạ hệ thống.`)
-        this._isDialing = false
-        window.dispatchEvent(
+        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} không tồn tại trong danh bạ hệ thống.`)        window.dispatchEvent(
           new CustomEvent('app-toast', {
             detail: {
               message: `⚠️ Số máy lẻ [${cleanExt}] không tồn tại trong danh bạ hệ thống!`,
@@ -2042,9 +2313,7 @@ async validateAndMakeCall(rawExt, meta = {}) {
 
     if (targetContact) {
       if (targetContact.status === 'busy') {
-        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} đang bận trong cuộc gọi khác.`)
-        this._isDialing = false
-        window.dispatchEvent(
+        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} đang bận trong cuộc gọi khác.`)        window.dispatchEvent(
           new CustomEvent('app-toast', {
             detail: {
               message: `🚫 Máy lẻ [${targetContact.name || cleanExt}] hiện đang trong cuộc gọi khác (Máy bận). Vui lòng gọi lại sau!`,
@@ -2056,9 +2325,7 @@ async validateAndMakeCall(rawExt, meta = {}) {
       }
 
       if (targetContact.status === 'dnd') {
-        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} đang bật chế độ Không làm phiền (DND).`)
-        this._isDialing = false
-        window.dispatchEvent(
+        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} đang bật chế độ Không làm phiền (DND).`)        window.dispatchEvent(
           new CustomEvent('app-toast', {
             detail: {
               message: `🔕 [${targetContact.name || cleanExt}] đang bật chế độ Không làm phiền (DND). Vui lòng liên hệ sau!`,
@@ -2070,9 +2337,7 @@ async validateAndMakeCall(rawExt, meta = {}) {
       }
 
       if (targetContact.status === 'ringing') {
-        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} đang đổ chuông nhận cuộc gọi khác.`)
-        this._isDialing = false
-        window.dispatchEvent(
+        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} đang đổ chuông nhận cuộc gọi khác.`)        window.dispatchEvent(
           new CustomEvent('app-toast', {
             detail: {
               message: `🔔 [${targetContact.name || cleanExt}] hiện đang nhận một cuộc gọi khác. Vui lòng gọi lại sau!`,
@@ -2084,9 +2349,7 @@ async validateAndMakeCall(rawExt, meta = {}) {
       }
 
       if (targetContact.status === 'offline' || targetContact.status === 'unavailable') {
-        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} hiện đang ngoại tuyến.`)
-        this._isDialing = false
-        window.dispatchEvent(
+        logger.warn('CALL', `Chặn cuộc gọi: Máy lẻ ${cleanExt} hiện đang ngoại tuyến.`)        window.dispatchEvent(
           new CustomEvent('app-toast', {
             detail: {
               message: '📴 Người này hiện đang ngoại tuyến, xin vui lòng gọi lại lúc khác!',
@@ -2104,9 +2367,7 @@ async validateAndMakeCall(rawExt, meta = {}) {
         const devices = await navigator.mediaDevices.enumerateDevices()
         const hasMic = devices.some((d) => d.kind === 'audioinput')
         if (devices.length > 0 && !hasMic) {
-          logger.error('CALL', 'Không tìm thấy thiết bị Microphone trên máy tính để thực hiện cuộc gọi WebRTC!')
-          this._isDialing = false
-          window.dispatchEvent(
+          logger.error('CALL', 'Không tìm thấy thiết bị Microphone trên máy tính để thực hiện cuộc gọi WebRTC!')          window.dispatchEvent(
             new CustomEvent('app-toast', {
               detail: {
                 message: '❌ Không tìm thấy thiết bị Microphone! Vui lòng cắm Mic/Tai nghe vào máy tính để gọi.',
@@ -2608,7 +2869,7 @@ async startGroupCall(targetExtensions = [], meta = {}) {
           phoneInstance.currentSipSession = null
         }
 
-        const session = await Wazo.Phone.call(ext, false)
+        const session = await this._requestPhoneCall(ext)
         if (!current()) {
           if (session) await Wazo.Phone.hangup(session).catch(() => {})
           return
@@ -2617,6 +2878,7 @@ async startGroupCall(targetExtensions = [], meta = {}) {
         if (session) {
           this.secondaryCallSessions.set(ext, session)
           this._startSecondaryLegTimeout(ext, session)
+          this._replayPendingCallEvents(session)
         }
       } catch (err) {
         if (!current()) return
@@ -2636,6 +2898,7 @@ async startGroupCall(targetExtensions = [], meta = {}) {
    */
   _startPrimaryLegTimeout(targetExt) {
     this._clearPrimaryLegTimeout()
+    if (this._answeredSipIds.has(this._sipSessionId(this.currentCallSession))) return
     this._primaryInviteTimer = setTimeout(() => {
       this._cancelPrimaryLegOnTimeout(targetExt)
     }, 30000)
@@ -2656,7 +2919,7 @@ async startGroupCall(targetExtensions = [], meta = {}) {
       const session = this.currentCallSession
       if (session) {
         try {
-          Wazo.Phone.hangup(session)
+          this._runPhoneCleanup(() => Wazo.Phone.hangup(session))
         } catch (e) {
           /* ignore */
         }
@@ -2730,6 +2993,7 @@ async startGroupCall(targetExtensions = [], meta = {}) {
    * Bắt đầu bộ đếm Timeout 30 giây cho nhánh phụ mời thêm (Chuẩn Android WazoSipCallManager.java)
    */
   _startSecondaryLegTimeout(ext, session) {
+    if (this._answeredSipIds.has(this._sipSessionId(session))) return
     this._clearSecondaryLegTimeout(ext)
     const timer = setTimeout(() => {
       this._cancelSecondaryLegOnTimeout(ext)
@@ -2762,7 +3026,7 @@ async startGroupCall(targetExtensions = [], meta = {}) {
       }
       logger.warn('CALL', `Nhánh phụ [${targetExt}] quá 30 giây không nhấc máy. Tiến hành ngắt kết nối nhánh phụ.`)
       try {
-        Wazo.Phone.hangup(session)
+        this._runPhoneCleanup(() => Wazo.Phone.hangup(session))
       } catch (e) {
         /* ignore */
       }
@@ -3123,7 +3387,7 @@ async _doSyncActiveCallsToAdhocConference() {
    * Thẻ: [GROUP:hostExt:ext1,ext2,ext3]
    */
   broadcastGroupStateViaPresence() {
-    if (!this.isGroupCall) return
+    if (!this.isGroupCall || !this.isGroupHost) return
     const myExt = this.getMyExtension()
     const hostExt = this.groupHostExtension || myExt
     const exts = this.groupParticipantExtensions.length > 0 ? this.groupParticipantExtensions : [myExt]
@@ -3133,6 +3397,8 @@ async _doSyncActiveCallsToAdhocConference() {
 
   _resetGroupCallState() {
     this._callEpoch += 1
+    this._pendingCallEvents.clear()
+    this._answeredSipIds.clear()
     clearTimeout(this._syncAdhocRetryTimer)
     this._syncAdhocRetryTimer = null
     this._adhocRetryCount = 0

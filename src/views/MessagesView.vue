@@ -199,7 +199,7 @@
         <!-- Banner thông báo khi phòng đã bị giải tán -->
         <div v-if="isRoomClosed" class="kicked-banner closed-banner">
           <span class="kicked-icon">🚫</span>
-          <span class="kicked-text">Nhóm này đã được giải tán. Toàn bộ cuộc trò chuyện đã kết thúc và không thể gửi thêm tin nhắn.</span>
+          <span class="kicked-text">Nhóm đã đóng trong SmartCall. Web chặn gửi tiếp; dữ liệu và quyền thành viên trên Wazo vẫn còn.</span>
         </div>
 
         <!-- Banner thông báo khi thành viên bị mời ra khỏi nhóm -->
@@ -219,7 +219,7 @@
             class="chat-textarea"
             :placeholder="isRoomClosed ? 'Nhóm này đã được giải tán' : (isKickedFromCurrentRoom ? 'Bạn đã rời khỏi nhóm này' : 'Nhập tin nhắn (Shift+Enter để xuống dòng, Enter để gửi)...')"
             :disabled="isKickedFromCurrentRoom || isRoomClosed"
-            @keydown.enter.exact.prevent="sendMessage"
+            @keydown.enter.exact="handleComposerEnter"
             @input="autoResizeTextarea"
           ></textarea>
           <button class="btn-send" :disabled="isKickedFromCurrentRoom || isRoomClosed" @click="sendMessage">Gửi ➤</button>
@@ -535,7 +535,7 @@ const handleDeleteSingleRoom = async (room) => {
     return
   }
   const title = room.title || 'nhóm này'
-  if (!confirm(`Bạn có chắc chắn muốn xóa nhóm "${title}" không? Nhóm này sẽ bị đóng và xóa vĩnh viễn đối với tất cả thành viên.`)) {
+  if (!confirm(`Đóng nhóm "${title}" trong SmartCall? Web sẽ ẩn nhóm và chặn gửi tiếp theo giao thức SmartCall. Thao tác này không xóa dữ liệu hoặc thu hồi quyền thành viên trên Wazo.`)) {
     return
   }
 
@@ -547,7 +547,7 @@ const handleDeleteSingleRoom = async (room) => {
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🗑️ Đã xóa nhóm "${title}" thành công!`, type: 'success' },
+        detail: { message: `🗑️ Đã đóng nhóm "${title}" thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
@@ -558,23 +558,23 @@ const handleDeleteSingleRoom = async (room) => {
 const handleDeleteSelectedRooms = async () => {
   if (selectedRoomIds.value.length === 0) return
   const count = selectedRoomIds.value.length
-  if (!confirm(`Bạn có chắc chắn muốn xóa ${count} nhóm đã chọn không? Các nhóm này sẽ bị đóng và xóa vĩnh viễn trên toàn hệ thống.`)) {
+  if (!confirm(`Đóng ${count} nhóm đã chọn trong SmartCall? Thao tác này không xóa dữ liệu hoặc thu hồi quyền thành viên trên Wazo.`)) {
     return
   }
 
   isDeletingRooms.value = true
   try {
     const idsToDelete = [...selectedRoomIds.value]
-    await chatService.deleteMultipleRooms(idsToDelete)
-    if (currentRoom.value && idsToDelete.includes(currentRoom.value.id)) {
+    const result = await chatService.deleteMultipleRooms(idsToDelete)
+    if (currentRoom.value && result.deletedIds.includes(currentRoom.value.id)) {
       currentRoom.value = null
     }
-    selectedRoomIds.value = []
-    isRoomSelectMode.value = false
+    selectedRoomIds.value = result.failures.map((item) => item.roomId)
+    isRoomSelectMode.value = result.failures.length > 0
     rooms.value = [...chatService.rooms]
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🗑️ Đã xóa ${count} nhóm thành công!`, type: 'success' },
+        detail: { message: `Đã đóng ${result.deletedIds.length}/${count} nhóm trong SmartCall.${result.failures.length ? ` ${result.failures.length} nhóm chưa đóng được.` : ''}`, type: result.failures.length ? 'warning' : 'success' },
       }),
     )
   } catch (err) {
@@ -590,7 +590,7 @@ const handleDeleteGroupRoom = async () => {
     return
   }
   const groupName = currentRoom.value.title || 'Nhóm này'
-  if (!confirm(`Bạn có chắc chắn muốn xóa nhóm "${groupName}"? Nhóm sẽ bị đóng và ẩn hoàn toàn trên toàn bộ hệ thống.`)) {
+  if (!confirm(`Đóng nhóm "${groupName}" trong SmartCall? Thao tác này không xóa dữ liệu hoặc thu hồi quyền thành viên trên Wazo.`)) {
     return
   }
 
@@ -602,7 +602,7 @@ const handleDeleteGroupRoom = async () => {
     await loadRooms()
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `🚫 Đã xóa nhóm "${groupName}" thành công!`, type: 'success' },
+        detail: { message: `🚫 Đã đóng nhóm "${groupName}" thành công!`, type: 'success' },
       }),
     )
   } catch (err) {
@@ -778,6 +778,12 @@ const selectRoom = async (room) => {
   scrollToBottom()
 }
 
+const handleComposerEnter = (event) => {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  return sendMessage()
+}
+
 const sendMessage = async () => {
   const text = inputText.value.trim()
   if (!text || !currentRoom.value || isKickedFromCurrentRoom.value || isRoomClosed.value) return
@@ -799,19 +805,25 @@ const sendMessage = async () => {
   }
   rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
-  // Lưu bền vững vào cơ sở dữ liệu chatService và đồng bộ Wazo Chatd
-  const sentMsg = await chatService.sendMessage(targetId, text, currentUserName.value)
-  if (!isSessionContextCurrent(context)) return
-  const freshRooms = await chatService.getRooms()
-  if (!isSessionContextCurrent(context)) return
-  rooms.value = [...freshRooms]
-  const updated = rooms.value.find(
-    (r) =>
-      r.id === targetId ||
-      (sentMsg && r.messages?.some((m) => m.id === sentMsg.id)),
-  )
-  if (updated && viewActive && currentRoom.value?.id === targetId && selectionVersion === roomSelectionVersion) currentRoom.value = updated
-  scrollToBottom()
+  try {
+    // Lưu bền vững vào cơ sở dữ liệu chatService và đồng bộ Wazo Chatd
+    const sentMsg = await chatService.sendMessage(targetId, text, currentUserName.value)
+    if (!isSessionContextCurrent(context)) return
+    const freshRooms = await chatService.getRooms()
+    if (!isSessionContextCurrent(context)) return
+    rooms.value = [...freshRooms]
+    const updated = rooms.value.find(
+      (r) =>
+        r.id === targetId ||
+        (sentMsg && r.messages?.some((m) => m.id === sentMsg.id)),
+    )
+    if (updated && viewActive && currentRoom.value?.id === targetId && selectionVersion === roomSelectionVersion) currentRoom.value = updated
+    scrollToBottom()
+  } catch (error) {
+    if (!isSessionContextCurrent(context)) return
+    if (currentRoom.value?.id === targetId && !inputText.value) inputText.value = text
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: error.message || 'Không thể gửi tin nhắn.', type: 'error' } }))
+  }
 }
 
 const scrollToBottom = () => {
@@ -1203,7 +1215,7 @@ const startVoiceCall = () => {
         currentRoom.value.id,
         `📞 [${currentUserName.value}] đã bắt đầu cuộc gọi nhóm tức thời tới các thành viên trong nhóm.`,
         'Hệ thống Tổng đài'
-      )
+      ).catch(() => {})
       const target = rooms.value.find((r) => r.id === currentRoom.value.id)
       if (target) {
         target.updatedAt = Date.now()

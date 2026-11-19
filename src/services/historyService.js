@@ -6,6 +6,7 @@ class HistoryService {
   constructor() {
     this.localHistory = []
     this._fetchingHistoryPromise = null
+    this._requestGeneration = 0
   }
 
   /**
@@ -106,6 +107,8 @@ async reload() {
       return this._filterList(merged, tab)
     }
 
+    const generation = ++this._requestGeneration
+    const isCurrent = () => isSessionContextCurrent(sessionContext) && generation === this._requestGeneration
     this._fetchingHistoryPromise = (async () => {
       try {
         const token = wazoService.getToken()
@@ -193,6 +196,7 @@ async reload() {
           }
         })
 
+        if (!isCurrent()) return isSessionContextCurrent(sessionContext) ? this.localHistory : []
         // Hợp nhất dữ liệu: bổ sung các cuộc gọi vừa kết thúc còn lưu trong RAM chưa kịp lên CDR server
         const merged = [...mapped]
         if (Array.isArray(this.localHistory)) {
@@ -213,12 +217,12 @@ async reload() {
         return merged
       } catch (err) {
         logger.warn('API', 'Không thể nạp CDR từ Wazo call-logd:', err.message)
-        if (forceRefresh && isSessionContextCurrent(sessionContext)) {
+        if (forceRefresh && isCurrent()) {
           this.localHistory = []
         }
         return this.localHistory || []
       } finally {
-        if (isSessionContextCurrent(sessionContext)) this._fetchingHistoryPromise = null
+        if (isCurrent()) this._fetchingHistoryPromise = null
       }
     })()
 
@@ -276,6 +280,7 @@ async deleteItem(id) {
    */
   reset() {
     invalidateSession()
+    this._requestGeneration += 1
     this.localHistory = []
     this._fetchingHistoryPromise = null
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))

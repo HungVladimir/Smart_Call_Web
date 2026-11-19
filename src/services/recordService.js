@@ -9,6 +9,7 @@ import { captureSessionContext, assertSessionContext, isSessionContextCurrent, c
 
 import { reactive } from 'vue'
 import { logger } from './loggerService'
+import { wazoService } from './wazo'
 
 export const recordStore = reactive({
   isRecording: false,
@@ -39,15 +40,12 @@ class RecordService {
   // Lấy Token xác thực Wazo từ phiên làm việc
   getToken() {
     if (typeof window === 'undefined') return ''
-    return localStorage.getItem('smartcall_wazo_token') || ''
+    return wazoService.getToken()
   }
 
   // Lấy địa chỉ máy chủ Wazo chuẩn hóa
   getHost(customHost = '') {
-    const raw =
-      customHost ||
-      (typeof window !== 'undefined' ? localStorage.getItem('smartcall_wazo_host') : '') ||
-      '107.126.11.126:9443'
+    const raw = customHost || wazoService.getHostUrl()
     const clean = String(raw).trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
     return `https://${clean}`
   }

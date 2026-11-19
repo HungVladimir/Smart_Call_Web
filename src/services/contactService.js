@@ -15,6 +15,7 @@ class ContactService {
   constructor() {
     this.currentContacts = []
     this.presences = {}
+    this._pendingFavorites = new Map()
     this.presencePollTimer = null
     this.favoriteIds = []
     this.defaultSourceName = 'wazo_user'
@@ -115,109 +116,41 @@ class ContactService {
    * PUT /api/dird/0.1/directories/favorites/{directory}/{contact}
    * DELETE /api/dird/0.1/directories/favorites/{directory}/{contact}
    */
+  /** Chỉ cập nhật yêu thích sau ACK server; một liên hệ chỉ có một request đang chờ. */
   async toggleFavorite(contactOrId) {
-    const sessionContext = captureSessionContext()
-    const fetch = createSessionFetch(sessionContext)
-    let contact = null
-    let contactId = ''
-    if (contactOrId && typeof contactOrId === 'object') {
-      contact = contactOrId
-      contactId = contact.rawId || contact.id || contact.uuid || ''
-    } else {
-      contactId = String(contactOrId || '')
-      contact = this.currentContacts.find(
-        (c) => c.id === contactId || c.uuid === contactId || c.rawId === contactId,
-      )
-    }
-
-    if (!contactId) return false
-    const willBeFavorite = contact
-      ? !contact.isFavorite
-      : !this.isFavorite(contactId, contact?.uuid, contact?.number)
-
-    // Cập nhật trạng thái tức thời trên đối tượng contact
-    if (contact) {
-      contact.isFavorite = willBeFavorite
-    }
-    const idList = [contactId]
-    if (contact?.uuid) idList.push(String(contact.uuid))
-    if (contact?.id) idList.push(String(contact.id))
-    if (contact?.rawId) idList.push(String(contact.rawId))
-    if (contact?.number) idList.push(String(contact.number))
-
-    if (willBeFavorite) {
-      idList.forEach((id) => {
-        if (!this.favoriteIds.includes(id)) this.favoriteIds.push(id)
-      })
-    } else {
-      this.favoriteIds = this.favoriteIds.filter((id) => !idList.includes(id))
-    }
-
-    // Gọi API Wazo Dird bất đồng bộ dưới nền theo tên nguồn chuẩn
-    try {
+    const context = captureSessionContext()
+    const contact = typeof contactOrId === 'object' ? contactOrId : this.currentContacts.find((item) => [item.id, item.uuid, item.rawId].includes(String(contactOrId)))
+    const id = String(contact?.rawId || contact?.id || contact?.uuid || contactOrId || '')
+    if (!id) throw new Error('Không xác định được liên hệ.')
+    const key = (contact?.source || this.defaultSourceName) + ':' + id
+    if (this._pendingFavorites.has(key)) return this._pendingFavorites.get(key)
+    const update = (async () => {
+      const fetch = createSessionFetch(context)
       const token = wazoService.getToken()
-      if (token) {
-        const host = wazoService.host.startsWith('http')
-          ? wazoService.host
-          : `https://${wazoService.host}`
-        const primaryDirectory = contact?.source || this.defaultSourceName || 'wazo_user'
-        const method = willBeFavorite ? 'PUT' : 'DELETE'
-        const targetId = contact?.rawId || contact?.id || contact?.uuid || contactId
-
-        // Danh sách các ứng viên Directory/Source theo thứ tự ưu tiên Wazo
-        const candidateDirectories = Array.from(
-          new Set(
-            [
-              primaryDirectory,
-              this.defaultSourceName,
-              'wazo_user',
-              'wazo',
-              this.wazoSourceUuid,
-              'personal',
-            ].filter(Boolean),
-          ),
-        )
-
-        let success = false
-        for (const dir of candidateDirectories) {
-          try {
-            logger.info('API', `Gửi yêu cầu ${method} favorite tới Wazo Dird: /directories/favorites/${dir}/${targetId}`)
-            const res = await fetch(
-              `${host}/api/dird/0.1/directories/favorites/${encodeURIComponent(dir)}/${encodeURIComponent(targetId)}`,
-              {
-                method,
-                headers: {
-                  'X-Auth-Token': token,
-                  Accept: 'application/json',
-                },
-                signal: AbortSignal.timeout(3500),
-              },
-            )
-
-            if (res.ok) {
-              logger.success('API', `Đã đồng bộ trạng thái favorite lên Wazo Dird qua nguồn "${dir}" (${willBeFavorite ? 'ADD' : 'REMOVE'})`)
-              this.defaultSourceName = dir
-              if (contact) contact.source = dir
-              success = true
-              break
-            } else if (res.status !== 404) {
-              logger.warn('API', `Wazo Dird nguồn "${dir}" trả về mã ${res.status}`)
-              break
-            }
-          } catch (fetchErr) {
-            logger.warn('API', `Thử nguồn "${dir}" gặp lỗi:`, fetchErr.message)
-          }
-        }
-
-        if (!success) {
-          logger.warn('API', `Không thể đồng bộ favorite lên server qua các nguồn Wazo Dird (đã bảo toàn cục bộ 0ms)`)
-        }
+      if (!token) throw new Error('Phiên đăng nhập không còn hợp lệ.')
+      const favorite = contact ? !contact.isFavorite : !this.isFavorite(id)
+      const directories = [...new Set([contact?.source, this.defaultSourceName, this.wazoSourceUuid].filter(Boolean))]
+      let acknowledged = false
+      for (const directory of directories) {
+        const res = await fetch(wazoService.getHostUrl() + '/api/dird/0.1/directories/favorites/' + encodeURIComponent(directory) + '/' + encodeURIComponent(id), {
+          method: favorite ? 'PUT' : 'DELETE', headers: { 'X-Auth-Token': token }, signal: AbortSignal.timeout(5000),
+        })
+        if (res.ok) { acknowledged = true; break }
+        if (res.status !== 404) throw new Error('Không cập nhật được yêu thích (' + res.status + ').')
       }
-    } catch (e) {
-      logger.warn('API', 'Lỗi gọi API favorites Wazo Dird (đã bảo toàn cục bộ):', e.message)
-    }
-
-    return willBeFavorite
+      if (!acknowledged) throw new Error('Máy chủ không tìm thấy nguồn danh bạ của liên hệ.')
+      assertSessionContext(context)
+      const ids = [...new Set([id, contact?.id, contact?.uuid, contact?.rawId, contact?.number].filter(Boolean).map(String))]
+      this.favoriteIds = favorite ? [...new Set([...this.favoriteIds, ...ids])] : this.favoriteIds.filter((item) => !ids.includes(item))
+      if (contact) contact.isFavorite = favorite
+      for (const item of this.currentContacts) {
+        if ((contact?.uuid && item.uuid === contact.uuid) || item === contact) item.isFavorite = favorite
+      }
+      return favorite
+    })()
+    this._pendingFavorites.set(key, update)
+    try { return await update }
+    finally { if (this._pendingFavorites.get(key) === update) this._pendingFavorites.delete(key) }
   }
 
   isFavorite(id, uuid = null, number = null) {
@@ -442,9 +375,8 @@ class ContactService {
         // Đồng bộ phòng ban của chính người dùng đăng nhập từ danh bạ Wazo
         const myUuid = callStore.myUserUuid || localStorage.getItem('smartcall_user_uuid')
         const myExt = callStore.myExtension || localStorage.getItem('smartcall_extension')
-        const myName = callStore.myUserName || localStorage.getItem('smartcall_username')
         const meContact = mappedList.find(
-          (c) => (myUuid && c.uuid === myUuid) || (myExt && c.number === myExt) || (myName && c.name === myName),
+          (c) => (myUuid && c.uuid === myUuid) || (myExt && c.number === myExt),
         )
         if (meContact?.dept && (!callStore.myDepartment || callStore.myDepartment !== meContact.dept)) {
           callStore.myDepartment = meContact.dept
@@ -510,9 +442,8 @@ class ContactService {
         // Đồng bộ phòng ban của chính người dùng đăng nhập từ danh bạ Wazo
         const myUuid = callStore.myUserUuid || localStorage.getItem('smartcall_user_uuid')
         const myExt = callStore.myExtension || localStorage.getItem('smartcall_extension')
-        const myName = callStore.myUserName || localStorage.getItem('smartcall_username')
         const meContact = mappedList.find(
-          (c) => (myUuid && c.uuid === myUuid) || (myExt && c.number === myExt) || (myName && c.name === myName),
+          (c) => (myUuid && c.uuid === myUuid) || (myExt && c.number === myExt),
         )
         if (meContact?.dept && (!callStore.myDepartment || callStore.myDepartment !== meContact.dept)) {
           callStore.myDepartment = meContact.dept
@@ -697,6 +628,9 @@ class ContactService {
   reset() {
     invalidateSession()
     this.stopPresencePolling()
+    this._pendingFavorites.clear()
+    this.defaultSourceName = 'wazo_user'
+    this.wazoSourceUuid = ''
     this.currentContacts = []
     this.presences = {}
     this.favoriteIds = []
@@ -788,7 +722,7 @@ async getOrLookupContact(ext) {
         )
         if (res.ok) {
           const data = await res.json()
-          const items = Array.isArray(data.items) ? data.items : []
+          const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.results) && Array.isArray(data.column_types) ? data.results.map((row) => ({ ...Object.fromEntries(data.column_types.map((key, index) => [key, row.column_values?.[index]])), relations: row.relations })) : [])
           for (const item of items) {
             const num = item.exten || item.number || item.phone_number || ''
             if (String(num).trim() === cleanExt) {

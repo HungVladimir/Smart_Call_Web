@@ -7,6 +7,32 @@ import { reactive } from 'vue'
 
 const MAX_LOGS = 250
 
+// Chỉ giữ bản chụp đã che thông tin xác thực; không giữ object SDK có tham chiếu vòng.
+function redactText(value) {
+  return String(value)
+    .replace(/((?:[?&]|\b)(?:[\w-]*token|password|secret)=)[^\s&#]+/gi, '$1[ĐÃ CHE]')
+    .replace(/(Bearer\s+)[\w.~-]+/gi, '$1[ĐÃ CHE]')
+    .replace(/(\/api\/auth\/0\.1\/token\/)[^/?\s]+/gi, '$1[ĐÃ CHE]')
+}
+
+function snapshotDetails(value, seen = new WeakSet(), depth = 0) {
+  if (typeof value === 'string') return redactText(value)
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value
+  if (typeof value === 'bigint') return String(value)
+  if (typeof value !== 'object') return '[Không tuần tự hóa]'
+  if (seen.has(value)) return '[Tham chiếu vòng]'
+  if (depth >= 5) return '[Giới hạn độ sâu]'
+  seen.add(value)
+  const result = Array.isArray(value) ? [] : {}
+  const keys = value instanceof Error ? ['name', 'message', 'stack', ...Object.keys(value)] : Object.keys(value)
+  for (const key of keys.slice(0, 100)) {
+    if (/token|password|authorization|cookie|secret|credential|sdp/i.test(key)) { result[key] = '[ĐÃ CHE]'; continue }
+    try { result[key] = snapshotDetails(value[key], seen, depth + 1) }
+    catch { result[key] = '[Không đọc được]' }
+  }
+  return result
+}
+
 class LoggerService {
   constructor() {
     this.logs = reactive([])
@@ -32,8 +58,8 @@ class LoggerService {
       time: timeStr,
       timestamp: now.getTime(),
       category: category.toUpperCase(),
-      message,
-      details,
+      message: redactText(message),
+      details: snapshotDetails(details),
       level,
     }
 
