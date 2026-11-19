@@ -1,54 +1,24 @@
 import { wazoService } from './wazo'
-import { isFeatureEnabled } from '@/config/features'
 import { logger } from './loggerService'
 
 class HistoryService {
   constructor() {
-    this.localHistory = this.loadSavedHistory()
+    this.localHistory = []
     this._fetchingHistoryPromise = null
   }
 
-  // Khóa lưu trữ cục bộ phân tách riêng biệt theo từng User UUID đăng nhập
-  getStorageKey() {
-    const userUuid = wazoService?.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'default'
-    return `smartcall_call_history_${userUuid}`
-  }
-
-  // Tải dữ liệu lịch sử cuộc gọi từ localStorage
-  loadSavedHistory() {
-    try {
-      const key = this.getStorageKey()
-      const raw = localStorage.getItem(key)
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.filter((r) => !String(r.id).startsWith('cdr-00'))
-        }
-      }
-    } catch (e) {
-      console.warn('Lỗi đọc cache lịch sử cuộc gọi:', e)
-    }
-    return []
-  }
-
-  // Tải lại lịch sử tương ứng với User UUID hiện tại (gọi khi đăng nhập thành công)
-  reload() {
-    this.localHistory = this.loadSavedHistory()
-    return this.localHistory
-  }
-
-  // Lưu bền vững vào localStorage
-  saveHistory() {
-    try {
-      const key = this.getStorageKey()
-      localStorage.setItem(key, JSON.stringify(this.localHistory))
-    } catch (e) {
-      console.warn('Lỗi lưu cache lịch sử cuộc gọi:', e)
-    }
+  /**
+   * Tải lại lịch sử từ máy chủ Wazo (gọi khi đăng nhập thành công hoặc làm mới)
+   * Đặt lại bộ nhớ RAM và fetch trực tiếp từ Call-Logd API
+   */
+  async reload() {
+    this.localHistory = []
+    this._fetchingHistoryPromise = null
+    return await this.getHistory({ forceRefresh: true })
   }
 
   /**
-   * Thêm một bản ghi cuộc gọi mới vào đầu lịch sử (Top 1)
+   * Thêm một bản ghi cuộc gọi mới vào đầu lịch sử trong bộ nhớ RAM (Top 1)
    */
   addRecord({
     name = 'Ẩn danh',
@@ -61,8 +31,8 @@ class HistoryService {
     recordingId = null,
     hasRecording = false,
   } = {}) {
-    if (!this.localHistory || this.localHistory.length === 0) {
-      this.localHistory = this.loadSavedHistory()
+    if (!this.localHistory) {
+      this.localHistory = []
     }
     const now = new Date()
     const pad = (n) => String(n).padStart(2, '0')
@@ -93,7 +63,6 @@ class HistoryService {
     }
 
     this.localHistory.unshift(newCdr)
-    this.saveHistory()
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated', { detail: newCdr }))
     return newCdr
   }
@@ -109,31 +78,24 @@ class HistoryService {
   }
 
   /**
-   * Nạp nhanh lịch sử cuộc gọi cục bộ (0ms instant, không chờ mạng)
+   * Nạp lịch sử cuộc gọi hiện tại trong bộ nhớ RAM (0ms instant)
    */
   getLocalHistory({ tab = 'all' } = {}) {
-    if (!this.localHistory || this.localHistory.length === 0) {
-      this.localHistory = this.loadSavedHistory()
+    if (!this.localHistory) {
+      this.localHistory = []
     }
     return this._filterList(this.localHistory, tab)
   }
 
   /**
-   * Lấy lịch sử cuộc gọi:
-   * 1. Thử gọi Wazo Call-Logd API:
-   *    GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
-   * 2. Nếu không có kết nối hoặc timeout -> Sử dụng dữ liệu cục bộ bảo toàn.
-   * Hỗ trợ In-flight Promise Sharing và Force Refresh khi bấm nút Làm mới.
+   * Lấy lịch sử cuộc gọi trực tiếp từ Wazo Call-Logd API:
+   * GET /api/call-logd/1.0/users/me/cdr?limit=50&order=start&direction=desc
+   * Tuân thủ nguyên tắc Zero Local Business Data: dữ liệu thuần RAM, không lưu localStorage.
    */
   async getHistory({ tab = 'all', limit = 50, forceRefresh = false } = {}) {
-    if (!this.localHistory || this.localHistory.length === 0) {
-      this.localHistory = this.loadSavedHistory()
-    }
-
-    // Nếu người dùng chủ động bấm "Làm mới": Hủy Promise đang treo và nạp lại từ localStorage
     if (forceRefresh) {
       this._fetchingHistoryPromise = null
-      this.localHistory = this.loadSavedHistory()
+      this.localHistory = []
     }
 
     if (this._fetchingHistoryPromise) {
@@ -163,7 +125,7 @@ class HistoryService {
         if (!res.ok) throw new Error(`HTTP error ${res.status}`)
 
         const data = await res.json()
-        if (!data.items) return this.localHistory
+        if (!data.items) return this.localHistory || []
 
         const myExtension =
           wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
@@ -228,24 +190,30 @@ class HistoryService {
           }
         })
 
-        // Hợp nhất dữ liệu: chỉ bổ sung các cuộc gọi cục bộ tạm thời (vừa thực hiện chưa kịp lên CDR)
+        // Hợp nhất dữ liệu: bổ sung các cuộc gọi vừa kết thúc còn lưu trong RAM chưa kịp lên CDR server
         const merged = [...mapped]
-        this.localHistory.forEach((loc) => {
-          const existing = merged.find(
-            (m) =>
-              m.id === loc.id ||
-              (m.extension === loc.extension &&
-                Math.abs(new Date(m.date || 0) - new Date(loc.date || 0)) < 120000),
-          )
-          if (!existing) {
-            merged.push(loc)
-          }
-        })
+        if (Array.isArray(this.localHistory)) {
+          this.localHistory.forEach((loc) => {
+            const existing = merged.find(
+              (m) =>
+                m.id === loc.id ||
+                (m.extension === loc.extension &&
+                  Math.abs(new Date(m.date || 0) - new Date(loc.date || 0)) < 120000),
+            )
+            if (!existing) {
+              merged.push(loc)
+            }
+          })
+        }
         merged.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+        this.localHistory = merged
         return merged
       } catch (err) {
-        logger.warn('API', 'Không thể nạp CDR từ Wazo call-logd (fallback sang lịch sử cục bộ):', err.message)
-        return this.localHistory.filter((r) => !String(r.id).startsWith('cdr-00'))
+        logger.warn('API', 'Không thể nạp CDR từ Wazo call-logd:', err.message)
+        if (forceRefresh) {
+          this.localHistory = []
+        }
+        return this.localHistory || []
       } finally {
         this._fetchingHistoryPromise = null
       }
@@ -263,6 +231,7 @@ class HistoryService {
   }
 
   _filterList(list, tab) {
+    if (!Array.isArray(list)) return []
     if (tab === 'inbound' || tab === 'incomings') {
       return list.filter((item) => item.direction === 'inbound')
     }
@@ -278,23 +247,21 @@ class HistoryService {
   }
 
   /**
-   * Xóa toàn bộ lịch sử cuộc gọi lưu trên client
+   * Xóa toàn bộ lịch sử cuộc gọi trong RAM
    */
   async clearAllHistory() {
     this.localHistory = []
-    this.saveHistory()
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
     return true
   }
 
   /**
-   * Xóa 1 bản ghi lịch sử cụ thể
+   * Xóa 1 bản ghi lịch sử cụ thể trong RAM
    */
   async deleteItem(id) {
     const idx = this.localHistory.findIndex((item) => item.id === id)
     if (idx !== -1) {
       this.localHistory.splice(idx, 1)
-      this.saveHistory()
       window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
       return true
     }
@@ -303,13 +270,12 @@ class HistoryService {
 
   /**
    * Dọn dẹp bộ nhớ in-memory khi đăng xuất (SSOT)
-   * Lưu ý: Không xóa localStorage của tài khoản để bảo toàn lịch sử cho lần đăng nhập sau.
    */
   reset() {
     this.localHistory = []
+    this._fetchingHistoryPromise = null
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
   }
 }
 
 export const historyService = new HistoryService()
-

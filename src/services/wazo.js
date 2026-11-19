@@ -65,6 +65,17 @@ class WazoService {
     this._primaryInviteTimer = null
     this._processedAddReqIds = new Set()
     this._processedNoticeIds = new Set()
+
+    // Named handlers cho Wazo.Phone event listeners (BUG-06 & BUG-07)
+    this._onRegisteredHandler = null
+    this._onUnregisteredHandler = null
+    this._onProgressHandler = null
+    this._onCallIncomingHandler = null
+    this._onCallAcceptedHandler = null
+    this._onCallEndedHandler = null
+    this._onCallFailedHandler = null
+    this._onCallRejectedHandler = null
+    this._onCallCanceledHandler = null
   }
 
   getHostUrl() {
@@ -365,7 +376,17 @@ class WazoService {
     this.mySessionId = ''
     this.currentSessionUuid = ''
     this._isKicked = false
-    this.disconnectPhone()
+
+    // BUG-06 & BUG-07: Dọn dẹp phòng vệ Wazo.Phone event listeners và ngắt kết nối SIP Phone
+    try {
+      this.detachListeners()
+      this.disconnectPhone()
+    } catch (e) {
+      logger.warn('SIP', 'Lỗi khi dọn dẹp Phone trong logout:', e)
+    } finally {
+      this.listenersAttached = false
+    }
+
     callStore.isRegistered = false
     callStore.myExtension = ''
     callStore.myUserUuid = ''
@@ -1023,11 +1044,18 @@ class WazoService {
       callStore.isRegistered = false
       this.stopRemoteAudio()
       audioService.stopAllTones()
-      Wazo.Phone.disconnect()
-      this.listenersAttached = false
+
+      // BUG-06: Gỡ bỏ phòng vệ toàn bộ listener của Wazo.Phone trước khi disconnect
+      this.detachListeners()
+
+      if (Wazo && Wazo.Phone && typeof Wazo.Phone.disconnect === 'function') {
+        Wazo.Phone.disconnect()
+      }
       logger.info('SIP', 'Đã ngắt kết nối Wazo WebRTC Phone')
     } catch (e) {
-      /* Ignore */
+      logger.warn('SIP', 'Lỗi khi ngắt kết nối Wazo WebRTC Phone:', e)
+    } finally {
+      this.listenersAttached = false
     }
   }
 
@@ -1164,6 +1192,39 @@ class WazoService {
       }
     }
 
+    // BUG-05: Session guard: Ngăn chặn kết thúc nhầm activeCall khi sự kiện kết thúc thuộc về phiên gọi khác
+    if (!forceEnd && session && callStore.activeCall?.session) {
+      const activeSession = callStore.activeCall.session
+      const activeSipId = activeSession.sipCallId || (typeof activeSession.getId === 'function' && activeSession.getId()) || activeSession.id
+      const endedSipId = session.sipCallId || (typeof session.getId === 'function' && session.getId()) || session.id
+
+      if (activeSipId && endedSipId && String(activeSipId) !== String(endedSipId)) {
+        logger.warn('CALL', `🛡️ Bỏ qua _finalizeCallTermination: Session kết thúc (${endedSipId}) không khớp với activeCall (${activeSipId}).`)
+        // Dọn dẹp incomingCall nếu phiên kết thúc thuộc về incomingCall
+        if (callStore.incomingCall) {
+          const incSession = callStore.incomingCall.session || callStore.incomingCall.rawSession
+          const incSipId = incSession ? (incSession.sipCallId || (typeof incSession.getId === 'function' && incSession.getId()) || incSession.id) : null
+          if (!incSipId || String(incSipId) === String(endedSipId)) {
+            const inc = callStore.incomingCall
+            try {
+              historyService.addRecord({
+                name: inc.name || (inc.extension || inc.number ? `Máy lẻ ${inc.extension || inc.number}` : 'Đồng nghiệp'),
+                extension: inc.extension || inc.number || '',
+                dept: inc.dept || '',
+                duration: 0,
+                direction: 'inbound',
+                status: 'missed',
+                answered: false,
+              })
+            } catch (e) {}
+            callStore.incomingCall = null
+            audioService.stopIncomingRingtone()
+          }
+        }
+        return
+      }
+    }
+
     const active = callStore.activeCall
     const incoming = callStore.incomingCall
 
@@ -1266,11 +1327,52 @@ class WazoService {
     window.dispatchEvent(new CustomEvent('smartcall-call-ended', { detail: { reason, session } }))
   }
 
+  // BUG-06 & BUG-07: Gỡ bỏ phòng vệ toàn bộ Wazo.Phone event listeners
+  detachListeners() {
+    try {
+      if (Wazo && Wazo.Phone) {
+        const events = [
+          [Wazo.Phone.ON_CALL_ENDED, this._onCallEndedHandler],
+          [Wazo.Phone.ON_CALL_FAILED, this._onCallFailedHandler],
+          [Wazo.Phone.ON_CALL_REJECTED, this._onCallRejectedHandler],
+          [Wazo.Phone.ON_CALL_CANCELED, this._onCallCanceledHandler],
+          [Wazo.Phone.ON_CALL_ACCEPTED, this._onCallAcceptedHandler],
+          [Wazo.Phone.ON_PROGRESS, this._onProgressHandler],
+          [Wazo.Phone.ON_CALL_INCOMING, this._onCallIncomingHandler],
+          [Wazo.Phone.ON_REGISTERED, this._onRegisteredHandler],
+          [Wazo.Phone.ON_UNREGISTERED, this._onUnregisteredHandler],
+        ]
+
+        for (const [evt, handler] of events) {
+          if (!evt) continue
+          try {
+            if (handler && typeof Wazo.Phone.off === 'function') {
+              Wazo.Phone.off(evt, handler)
+            }
+          } catch (e) {
+            /* ignore */
+          }
+          try {
+            if (Wazo.Phone.eventEmitter && typeof Wazo.Phone.eventEmitter.removeAllListeners === 'function') {
+              Wazo.Phone.eventEmitter.removeAllListeners(evt)
+            }
+          } catch (e) {
+            /* ignore */
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn('SIP', 'Lỗi khi gỡ bỏ listeners Wazo.Phone:', err)
+    } finally {
+      this.listenersAttached = false
+    }
+  }
+
   attachListeners() {
     if (this.listenersAttached) return
     this.listenersAttached = true
 
-    Wazo.Phone.on(Wazo.Phone.ON_REGISTERED, () => {
+    this._onRegisteredHandler = () => {
       this.isRegistered = true
       callStore.isRegistered = true
       callStore.myExtension = this.getMyExtension()
@@ -1278,9 +1380,9 @@ class WazoService {
       callStore.myUserName = this.getMyUserName()
       logger.success('SIP', '🟢 Wazo WebRTC SIP Phone: Registered thành công!')
       window.dispatchEvent(new CustomEvent('wazo-registered'))
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_UNREGISTERED, () => {
+    this._onUnregisteredHandler = () => {
       this.isRegistered = false
       callStore.isRegistered = false
       logger.warn('SIP', '🔴 Wazo WebRTC SIP Phone: Unregistered!')
@@ -1305,18 +1407,18 @@ class WazoService {
           }, 5000)
         })
       }
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_PROGRESS, (callSession) => {
+    this._onProgressHandler = (callSession) => {
       logger.info('CALL', '🔔 Sự kiện Wazo: Đường dây đang đổ chuông (ON_PROGRESS / 180 Ringing)')
       if (callStore.activeCall) {
         callStore.activeCall.status = 'ringing'
       }
       audioService.startRingbackTone()
       window.dispatchEvent(new CustomEvent('wazo-progress', { detail: callSession }))
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_CALL_INCOMING, (callSession) => {
+    this._onCallIncomingHandler = (callSession) => {
       const ext = callSession?.number || callSession?.callerNumber || callSession?.extension || ''
       logger.info('CALL', `🔔 Cuộc gọi đến từ máy lẻ: ${ext || 'N/A'}`, callSession)
 
@@ -1374,9 +1476,9 @@ class WazoService {
       }
 
       window.dispatchEvent(new CustomEvent('wazo-incoming', { detail: callSession }))
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_CALL_ACCEPTED, (callSession) => {
+    this._onCallAcceptedHandler = (callSession) => {
       this.currentCallSession = callSession
       logger.success('CALL', '🟢 Sự kiện Wazo: Cuộc gọi đã được kết nối! Đang đàm thoại 2 chiều (Full-Duplex).')
       audioService.stopRingbackTone()
@@ -1479,25 +1581,25 @@ class WazoService {
       }, 600)
 
       window.dispatchEvent(new CustomEvent('wazo-accepted', { detail: callSession }))
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_CALL_ENDED, (callSession) => {
+    this._onCallEndedHandler = (callSession) => {
       logger.info('CALL', '⏹️ Sự kiện Wazo: Cuộc gọi đã kết thúc (ON_CALL_ENDED)')
       this._finalizeCallTermination('ended', callSession)
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_CALL_FAILED, (callSession) => {
+    this._onCallFailedHandler = (callSession) => {
       logger.error('CALL', '❌ Sự kiện Wazo: Cuộc gọi thất bại (ON_CALL_FAILED - Máy bận, offline hoặc từ chối)')
       this._finalizeCallTermination('failed', callSession)
       window.dispatchEvent(new CustomEvent('wazo-failed', { detail: callSession }))
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_CALL_REJECTED, (callSession) => {
+    this._onCallRejectedHandler = (callSession) => {
       logger.warn('CALL', '🚫 Sự kiện Wazo: Cuộc gọi bị từ chối (ON_CALL_REJECTED)')
       this._finalizeCallTermination('rejected', callSession)
-    })
+    }
 
-    Wazo.Phone.on(Wazo.Phone.ON_CALL_CANCELED, (callSession, elsewhere) => {
+    this._onCallCanceledHandler = (callSession, elsewhere) => {
       logger.warn('CALL', '⚠️ Sự kiện Wazo: Cuộc gọi bị hủy (ON_CALL_CANCELED)', { elsewhere })
       // Nếu thiết bị đã nhấc máy và có cờ elsewhere (cause=26 completed elsewhere do chuyển kênh / ConfBridge)
       // -> Bỏ qua không ngắt cuộc gọi (Đối chiếu WazoSipCallManager.py line 1168)
@@ -1506,7 +1608,18 @@ class WazoService {
         return
       }
       this._finalizeCallTermination('canceled', callSession)
-    })
+    }
+
+    // Đăng ký các event listeners với Wazo.Phone
+    Wazo.Phone.on(Wazo.Phone.ON_REGISTERED, this._onRegisteredHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_UNREGISTERED, this._onUnregisteredHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_PROGRESS, this._onProgressHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_INCOMING, this._onCallIncomingHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_ACCEPTED, this._onCallAcceptedHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_ENDED, this._onCallEndedHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_FAILED, this._onCallFailedHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_REJECTED, this._onCallRejectedHandler)
+    Wazo.Phone.on(Wazo.Phone.ON_CALL_CANCELED, this._onCallCanceledHandler)
   }
 
   // Phát luồng âm thanh 2 chiều của người gọi từ xa qua thẻ <audio>
@@ -2130,6 +2243,12 @@ class WazoService {
    * @param {object} meta - Thông tin bổ sung (groupTitle, roomId...)
    */
   async startGroupCall(targetExtensions = [], meta = {}) {
+    // BUG-08: Anti-collision check ngăn chặn xung đột khi đang trong cuộc gọi hoặc bấm nhanh liên tục
+    if (this.isGroupCall || this.hasActiveCall() || callStore.activeCall || this._isDialing) {
+      logger.warn('CALL', 'Chặn bắt đầu gọi nhóm: Đã có cuộc gọi đang hoạt động hoặc cuộc gọi nhóm đang diễn ra (already_in_call).')
+      return { success: false, reason: 'already_in_call' }
+    }
+
     if (!targetExtensions || targetExtensions.length === 0) return { success: false, reason: 'EMPTY' }
 
     const myExt = this.getMyExtension()

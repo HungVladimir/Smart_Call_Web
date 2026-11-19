@@ -275,7 +275,7 @@ class ChatService {
     targetRoom.updatedAt = msgTimestamp
 
 
-    const activeRoomId = this.activeRoomId || (typeof localStorage !== 'undefined' ? localStorage.getItem('smartcall_active_room_id') : null)
+    const activeRoomId = this.activeRoomId
     if (activeRoomId !== roomUuid && !isMine) {
       targetRoom.unread = (targetRoom.unread || 0) + 1
     }
@@ -424,10 +424,12 @@ class ChatService {
                 ? '👥'
                 : (displayTitle || 'CH').slice(0, 2).toUpperCase()
 
-              const defaultAdminUuid =
-                existing?.adminUuid ||
-                existing?.messages?.[0]?.user_uuid ||
+              const serverAdminUuid =
+                room.admin_uuid ||
+                room.creator_uuid ||
+                room.user_uuid ||
                 (serverUsers[0] ? (typeof serverUsers[0] === 'string' ? serverUsers[0] : serverUsers[0].uuid) : '')
+              const defaultAdminUuid = existing?.adminUuid || serverAdminUuid
 
               // Ánh xạ thành viên 100% từ danh sách serverUsers của máy chủ Wazo
               const mappedMembers = serverUsers.map((u) => {
@@ -482,19 +484,6 @@ class ChatService {
                       room.preview = last.text
                       room.time = last.time
                       room.updatedAt = last.timestamp
-
-                      // Xác định Quản trị viên (Admin) duy nhất của phòng nhóm từ tin nhắn khởi tạo đầu tiên
-                      if (!room.isDirect) {
-                        const firstMsg = msgs[0]
-                        if (firstMsg?.user_uuid) {
-                          room.adminUuid = firstMsg.user_uuid
-                          if (room.members) {
-                            room.members.forEach((m) => {
-                              m.isAdmin = Boolean(m.id === room.adminUuid || m.uuid === room.adminUuid)
-                            })
-                          }
-                        }
-                      }
                     }
                   } catch (fetchErr) {
                     /* ignore */
@@ -750,18 +739,7 @@ class ChatService {
                 localRoom.time = last.time
                 localRoom.updatedAt = last.timestamp
 
-                // Nhận diện Quản trị viên (Admin) duy nhất từ tin nhắn khởi tạo đầu tiên của nhóm
                 if (!localRoom.isDirect) {
-                  const first = mapped[0]
-                  if (first?.user_uuid) {
-                    localRoom.adminUuid = first.user_uuid
-                    if (localRoom.members) {
-                      localRoom.members.forEach((m) => {
-                        m.isAdmin = Boolean(m.id === localRoom.adminUuid || m.uuid === localRoom.adminUuid)
-                      })
-                    }
-                  }
-
                   // Phân giải tên nhóm mới nhất từ tin nhắn đổi tên chuẩn Tag hệ thống
                   if (latestRenamedTitle) {
                     localRoom.title = latestRenamedTitle
@@ -1119,12 +1097,24 @@ class ChatService {
             }
           }
           this.saveRooms()
+        } else {
+          throw new Error(`Máy chủ tổng đài báo lỗi khi gửi tin nhắn (${res.status})`)
         }
+      } else {
+        throw new Error('Không thể gửi tin nhắn do chưa kết nối máy chủ hoặc phòng chưa sẵn sàng')
       }
     } catch (e) {
-      newMsg.readStatus = 'Đã gửi'
-      // Giữ ID tạm khi chạy ngoại tuyến hoặc timeout mạng
-      logger.warn('CHAT', `Gửi tin nhắn ngoại tuyến hoặc timeout: ${e.message}`)
+      newMsg.readStatus = 'Lỗi gửi'
+      newMsg.sendFailed = true
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: { type: 'error', message: 'Không thể gửi tin nhắn. Vui lòng kiểm tra kết nối mạng.' },
+          }),
+        )
+      }
+      this.saveRooms()
+      logger.warn('CHAT', `Gửi tin nhắn thất bại: ${e.message}`)
     }
 
     return newMsg
@@ -1504,16 +1494,6 @@ class ChatService {
     this.rooms = []
     this.activeRoomId = null
     this._fetchingRoomsPromise = null
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('smartcall_active_room_id')
-      try {
-        Object.keys(localStorage).forEach((k) => {
-          if (k.startsWith('smartcall_chat_rooms_')) {
-            localStorage.removeItem(k)
-          }
-        })
-      } catch (e) {}
-    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
     }

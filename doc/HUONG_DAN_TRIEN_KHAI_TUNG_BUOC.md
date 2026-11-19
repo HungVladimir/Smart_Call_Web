@@ -3848,6 +3848,84 @@ Sau quá trình vận hành thử nghiệm thực tế, hệ thống SmartCall W
 - `npm run build` $\rightarrow$ Biên dịch thành công 100% trong `859ms` (323 modules transformed).
 - Kiểm tra Git: Mã nguồn sạch sẽ, sẵn sàng commit và push.
 
+---
+
+## BƯỚC 75: KHẮC PHỤC TRIỆT ĐỂ 8 LỖI HỆ THỐNG VỀ STORAGE, CHAT ROOMS & PHIÊN ĐÀM THOẠI WAZO WEBRTC (BUG-01 ĐẾN BUG-08) THEO QUY CHUẨN ZERO LOCAL BUSINESS DATA
+
+### 1. Bối cảnh & Các Vấn đề Cần Khắc phục (Root-Cause Analysis):
+Trong quá trình rà soát toàn diện vòng đời trạng thái hệ thống theo quy chuẩn kiểm soát chất lượng, hệ thống đã phát hiện và phân loại 8 vấn đề cốt lõi cần tối ưu hóa dứt điểm:
+1. **BUG-01 (History CDR Storage)**: `historyService.js` vẫn lưu trữ lịch sử cuộc gọi CDR vào `localStorage`, vi phạm nguyên tắc "Zero Local Business Data" của hệ thống sản xuất. Khi nhiều thiết bị đăng nhập cùng tài khoản hoặc khi chuyển tài khoản, cache cục bộ gây sai lệch lịch sử.
+2. **BUG-02 (Chat Rooms & Active Room Storage)**: `chatService.js` duy trì hàm lưu `localStorage` cho danh sách phòng chat và `active_room_id`. Cần loại bỏ hoàn toàn để phòng chat và trạng thái phòng kích hoạt được quản lý thuần trong bộ nhớ RAM, đồng bộ thời gian thực từ API/WebSocket máy chủ Wazo.
+3. **BUG-03 (Group Admin UUID Override)**: Trong `getRooms()` và `getRoomMessages()`, logic gán `adminUuid` của phòng nhóm tự ý đọc từ người gửi tin nhắn đầu tiên (`messages[0].user_uuid` hoặc `first.user_uuid`). Khi một thành viên bất kỳ gửi tin nhắn trước thì người đó bị nhận nhầm thành Quản trị viên nhóm.
+4. **BUG-04 (False Success on Failed Chat Message)**: Trong `sendMessage()`, khi API gửi tin nhắn tới máy chủ Wazo bị lỗi mạng hoặc timeout, khối `catch` lại tự động đặt `readStatus = 'Đã gửi'`, gây hiểu nhầm cho người dùng là tin nhắn đã gửi thành công trong khi thực tế máy chủ chưa nhận được.
+5. **BUG-05 (Collision on Premature Call Termination Guard)**: Trong `wazo.js`, hàm `_finalizeCallTermination(reason, session, forceEnd)` khi nhận sự kiện kết thúc cuộc gọi không so sánh ID phiên đàm thoại (`activeSipId` vs `endedSipId`). Nếu có một phiên gọi phụ kết thúc (hoặc cuộc gọi đến song song bị hủy), hàm này có nguy cơ ngắt luôn cuộc gọi chính đang đàm thoại.
+6. **BUG-06 & BUG-07 (Wazo.Phone Event Listener Leaks in Disconnect & Logout)**: Trong `disconnectPhone()` và `logout()`, các sự kiện `Wazo.Phone.on` (`ON_CALL_ENDED`, `ON_CALL_FAILED`, `ON_CALL_ACCEPTED`, v.v.) chưa được gỡ bỏ phòng vệ bằng `Wazo.Phone.off`, dẫn đến việc tích tụ các callback trùng lặp sau mỗi lần đăng xuất - đăng nhập hoặc kết nối lại SIP.
+7. **BUG-08 (Anti-Collision Race Condition in Group Calls)**: Trong `startGroupCall()`, hệ thống chưa có lớp chặn xung đột khi người dùng bấm nút gọi nhóm liên tục nhiều lần (rapid click) hoặc khi đang có cuộc gọi hoạt động, gây ra hiện tượng gửi nhiều lệnh `SIP INVITE` và tạo nhiều hội nghị song song.
+
+---
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+
+#### 2.1. Khắc phục BUG-01: Triệt tiêu LocalStorage cho CDR Lịch sử (`src/services/historyService.js`)
+- Loại bỏ hoàn toàn các hàm `getStorageKey()`, `loadSavedHistory()`, `saveHistory()` và mọi lệnh ghi `localStorage.setItem` liên quan đến lịch sử cuộc gọi.
+- Chuyển `this.localHistory = []` thành bộ nhớ đệm thuần RAM (In-Memory Only).
+- Phương thức `getHistory()` nạp dữ liệu trực tiếp 100% từ Wazo Call-Logd API (`GET /api/call-logd/1.0/users/me/cdr`).
+- Trong `reload()` và khi `forceRefresh = true`: Xóa sạch bộ nhớ RAM (`this.localHistory = []`, `this._fetchingHistoryPromise = null`) và fetch lại dữ liệu mới từ máy chủ. Nếu có sự cố mạng, trả về mảng rỗng `[]` an toàn thay vì fallback sang dữ liệu cũ.
+- Trong `reset()`: Dọn sạch hoàn toàn `this.localHistory = []` và giải phóng `this._fetchingHistoryPromise = null`.
+
+#### 2.2. Khắc phục BUG-02: Triệt tiêu LocalStorage cho Phòng Chat (`src/services/chatService.js`)
+- Quản lý `this.rooms = []` và `this.activeRoomId = null` thuần túy trong RAM (Single Source of Truth).
+- Trong `saveRooms()`: Loại bỏ toàn bộ lệnh ghi `localStorage`, chỉ thực hiện sắp xếp danh sách phòng theo thời gian cập nhật và phát sự kiện đồng bộ `smartcall-rooms-updated`.
+- Trong `loadSavedRooms()`: Luôn trả về mảng rỗng `[]`.
+- Trong `reset()`: Loại bỏ các thao tác quét xóa `smartcall_chat_rooms_*` và `smartcall_active_room_id` trên `localStorage`, đặt lại RAM `this.rooms = []`, `this.activeRoomId = null`, `this._fetchingRoomsPromise = null`.
+
+#### 2.3. Khắc phục BUG-03: Bảo vệ Quyền Quản trị viên Nhóm Chuẩn Metadata Máy Chủ (`src/services/chatService.js`)
+- Loại bỏ triệt để đoạn mã gán `room.adminUuid = messages[0]?.user_uuid` trong `getRooms()` và `getRoomMessages()`.
+- Xác định Quản trị viên nhóm (`serverAdminUuid`) duy nhất từ metadata do máy chủ Wazo trả về:
+  `serverAdminUuid = room.admin_uuid || room.creator_uuid || room.user_uuid || (serverUsers[0] ? ... : '')`.
+- Giữ nguyên `existing?.adminUuid` hoặc `serverAdminUuid`, đảm bảo quyền Quản trị viên không bao giờ bị ghi đè sai lệch bởi người gửi tin nhắn đầu tiên.
+
+#### 2.4. Khắc phục BUG-04: Báo lỗi Chuẩn Xác khi Gửi Tin Nhắn Thất Bại (`src/services/chatService.js`)
+- Trong `sendMessage()`, khi `fetch` thất bại hoặc server trả mã lỗi khác 2xx:
+  + Chuyển trạng thái tin nhắn thành `newMsg.readStatus = 'Lỗi gửi'`.
+  + Gắn cờ cảnh báo `newMsg.sendFailed = true`.
+  + Phát sự kiện thông báo `app-toast` với nội dung lỗi: *"Không thể gửi tin nhắn. Vui lòng kiểm tra kết nối mạng."*.
+  + Cập nhật lại danh sách phòng và ghi log cảnh báo chi tiết.
+
+#### 2.5. Khắc phục BUG-05: Thiết lập Session Guard cho Cuộc Gọi Đang Hoạt Động (`src/services/wazo.js`)
+- Trong `_finalizeCallTermination(reason, session, forceEnd)`:
+  + Bổ sung cơ chế bảo vệ: Khi `!forceEnd && session && callStore.activeCall?.session`, lấy định danh SIP Call ID của cả phiên đang hoạt động (`activeSipId`) và phiên vừa nhận sự kiện kết thúc (`endedSipId`).
+  + Nếu cả hai ID đều tồn tại và không khớp nhau (`activeSipId !== endedSipId`):
+    * Ghi log cảnh báo: `🛡️ Bỏ qua _finalizeCallTermination: Session kết thúc không khớp với activeCall`.
+    * Kiểm tra nếu phiên kết thúc thuộc về `callStore.incomingCall`, dọn dẹp an toàn cuộc gọi đến (ghi nhận cuộc gọi nhỡ và tắt chuông đến).
+    * Giữ nguyên 100% cuộc gọi đàm thoại chính (`callStore.activeCall`), không ngắt nhầm cuộc gọi đang đàm thoại.
+
+#### 2.6. Khắc phục BUG-06 & BUG-07: Phòng Vệ Toàn Diện Wazo.Phone Event Listeners (`src/services/wazo.js`)
+- Khai báo các biến lưu trữ named handler: `_onRegisteredHandler`, `_onUnregisteredHandler`, `_onProgressHandler`, `_onCallIncomingHandler`, `_onCallAcceptedHandler`, `_onCallEndedHandler`, `_onCallFailedHandler`, `_onCallRejectedHandler`, `_onCallCanceledHandler`.
+- Xây dựng phương thức tập trung `detachListeners()`: Sử dụng `Wazo.Phone.off(event, handler)` để gỡ bỏ triệt để mọi listener đã đăng ký.
+- Gọi `detachListeners()` phòng vệ trong cả `disconnectPhone()` và `logout()`.
+- Đặt `this.listenersAttached = false` trong khối `finally` để đảm bảo cờ luôn được trả về trạng thái sạch trong mọi tình huống.
+
+#### 2.7. Khắc phục BUG-08: Cơ Chế Chống Xung Đột (Anti-Collision Guard) Cuộc Gọi Nhóm (`src/services/wazo.js`)
+- Trong `startGroupCall(targetExtensions = [], meta = {})`:
+  + Kiểm tra điều kiện chặn: `if (this.isGroupCall || this.hasActiveCall() || callStore.activeCall || this._isDialing)`.
+  + Nếu đã có cuộc gọi đang diễn ra hoặc đang trong quá trình quay số, lập tức ghi log cảnh báo và trả về `{ success: false, reason: 'already_in_call' }`.
+  + Triệt tiêu hoàn toàn hiện tượng tạo nhiều cuộc gọi nhóm song song do thao tác bấm nhanh liên tiếp.
+
+---
+
+### 3. Danh Sách File Đã Chỉnh Sửa:
+1. `src/services/historyService.js`: Triệt tiêu `localStorage`, chuyển CDR sang thuần RAM, chuẩn hóa `reload()` và `reset()`.
+2. `src/services/chatService.js`: Loại bỏ `localStorage` lưu phòng chat, bảo vệ `adminUuid` theo server metadata, báo lỗi `Lỗi gửi` và toast khi gửi tin nhắn thất bại.
+3. `src/services/wazo.js`: Thêm Session Guard bảo vệ `activeCall`, bổ sung `detachListeners()` cho Wazo.Phone trong `disconnectPhone()` và `logout()`, thêm anti-collision check cho `startGroupCall()`.
+
+---
+
+### 4. Kết Quả Kiểm Tra Biên Dịch & Xác Nhận Hệ Thống (Verification):
+- **Kiểm tra biên dịch sản xuất**: `npm run build` thành công 100% với mã thoát `0` (323 modules transformed, 601ms).
+- **Rà soát Zero Local Business Data**: Quét toàn bộ `historyService.js`, `chatService.js`, `wazo.js` đảm bảo không còn bất kỳ khóa `localStorage` nghiệp vụ nào (chỉ giữ các khóa xác thực phiên máy khách theo đúng danh mục được phê duyệt tại GEMINI.md).
+- **Kiểm tra Git**: Không có file rác untracked ngoài ý muốn, mã nguồn sẵn sàng commit và push lên nhánh chính.
+
 
 
 
