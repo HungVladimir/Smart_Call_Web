@@ -57,3 +57,8 @@ FileQuest/wazo_api_reference.md
 .specify/
 specs/
 .tours/
+
+# Cache riêng của bản refactor
+.refactor-tmp/
+**/coverage/
+**/.vite/

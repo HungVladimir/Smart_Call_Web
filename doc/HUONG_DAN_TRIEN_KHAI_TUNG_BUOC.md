@@ -4019,3 +4019,13 @@ Xác minh: bộ hồi quy **27/27 đạt**, `npm run build` thành công; còn c
 
 
 
+
+---
+
+## BƯỚC 79: REFACTOR KIẾN TRÚC WEB TRONG BẢN CLONE (19/11/2026)
+
+Mã Web được chuyển vào frontend/, backend/ chuẩn bị cho API/IdP. Tách điểm lắp ghép dịch vụ, state phiên/cuộc gọi, controller gọi/hội nghị, adapter Wazo, mapper và composable/component. Không sửa bản gốc, không đưa mã Android vào runtime.
+
+Thay bộ hồi quy phụ thuộc vị trí source bằng Vitest chạy module/Vue thật; thêm lint và kiểm tra ranh giới import. Đồng thời sửa các lỗi ACK, response/callback muộn, kết nối trùng, token khôi phục và host ghi âm. Kiểm thử tự động hiện 76/76 đạt, build thành công; vẫn cần kiểm chứng SIP/media trên tổng đài thật.
+
+Kiến trúc hiện hành: [ARCHITECTURE](refactor/ARCHITECTURE.md). Toàn bộ thay đổi, bằng chứng và giới hạn: [PROGRESS](refactor/PROGRESS.md), [VERIFICATION](refactor/VERIFICATION.md). Các bước trước giữ nguyên làm lịch sử.
