@@ -12,9 +12,6 @@
         <router-link to="/messages" class="nav-btn" active-class="active" @click="onMessagesNavClick">
           <span class="icon">💬</span>
           <span>Tin nhắn</span>
-          <span v-if="unreadMessagesCount > 0" class="badge-count badge-danger" title="Tin nhắn chưa đọc">
-            {{ unreadMessagesCount }}
-          </span>
         </router-link>
       </li>
 
@@ -35,19 +32,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { chatService } from '@/services/chatService'
-import { wazoService, callStore } from '@/services/wazo'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { getFeatures } from '@/config/features'
 
 const features = ref(getFeatures())
-const userExt = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '1001')
-const isWebRtcReady = computed(
-  () =>
-    callStore.isRegistered ||
-    (Boolean(localStorage.getItem('smartcall_wazo_token')) && localStorage.getItem('smartcall_offline_mode') !== 'true'),
-)
-
 const onFeaturesChanged = (e) => {
   features.value = e.detail || getFeatures()
 }
@@ -60,56 +48,11 @@ const onMessagesNavClick = () => {
   window.dispatchEvent(new CustomEvent('smartcall-refresh-rooms'))
 }
 
-const unreadMessagesCount = ref(0)
-
-let isUpdatingSidebar = false
-let sidebarDebounceTimer = null
-
-const updateSidebarCounts = async () => {
-  if (isUpdatingSidebar) return
-  isUpdatingSidebar = true
-
-  try {
-    // Thống kê tin nhắn chưa đọc (chỉ duy nhất tin nhắn hiển thị badge trên Sidebar theo Rule 3.4 GEMINI.md)
-    try {
-      const rooms =
-        chatService.rooms && chatService.rooms.length > 0
-          ? chatService.rooms
-          : await chatService.getRooms()
-      if (Array.isArray(rooms)) {
-        unreadMessagesCount.value = rooms.reduce((acc, r) => acc + (r.unread || 0), 0)
-      }
-    } catch (e) {
-      /* ignore */
-    }
-  } finally {
-    isUpdatingSidebar = false
-  }
-}
-
-const debouncedUpdateSidebarCounts = () => {
-  if (sidebarDebounceTimer) clearTimeout(sidebarDebounceTimer)
-  sidebarDebounceTimer = setTimeout(() => {
-    updateSidebarCounts()
-  }, 100)
-}
-
 onMounted(() => {
-  debouncedUpdateSidebarCounts()
-  window.addEventListener('app-login-success', debouncedUpdateSidebarCounts)
-  window.addEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
-  window.addEventListener('smartcall-message-received', debouncedUpdateSidebarCounts)
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 
 onUnmounted(() => {
-  if (sidebarDebounceTimer) {
-    clearTimeout(sidebarDebounceTimer)
-    sidebarDebounceTimer = null
-  }
-  window.removeEventListener('app-login-success', debouncedUpdateSidebarCounts)
-  window.removeEventListener('smartcall-rooms-updated', debouncedUpdateSidebarCounts)
-  window.removeEventListener('smartcall-message-received', debouncedUpdateSidebarCounts)
   window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 </script>
@@ -166,43 +109,6 @@ onUnmounted(() => {
   font-size: 1.15rem;
   width: 22px;
   text-align: center;
-}
-
-.badge-count {
-  margin-left: auto;
-  font-size: 0.72rem;
-  padding: 2px 7px;
-  border-radius: 10px;
-  font-weight: 700;
-  line-height: 1.2;
-  transition: all 0.2s ease;
-}
-
-/* Badge Đỏ cho thông báo cần chú ý (Tin nhắn chưa đọc / Cuộc gọi nhỡ) */
-.badge-count.badge-danger {
-  background: #ef4444;
-  color: #ffffff;
-  box-shadow: 0 1px 4px rgba(239, 68, 68, 0.4);
-  animation: pulse-badge 2s infinite;
-}
-
-/* Badge Trung tính cho tổng số liên hệ danh bạ */
-.badge-count.badge-neutral {
-  background: #334155;
-  color: #94a3b8;
-  border: 1px solid #475569;
-}
-
-@keyframes pulse-badge {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.05);
-  }
-  100% {
-    transform: scale(1);
-  }
 }
 
 .sidebar-footer {
@@ -302,12 +208,6 @@ onUnmounted(() => {
   .nav-btn .icon {
     font-size: 1rem;
     width: auto;
-  }
-
-  .badge-count {
-    padding: 1px 5px;
-    font-size: 0.65rem;
-    margin-left: 2px;
   }
 
   .sidebar-footer {

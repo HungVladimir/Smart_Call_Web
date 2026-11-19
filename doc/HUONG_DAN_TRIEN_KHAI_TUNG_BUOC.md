@@ -3977,6 +3977,42 @@ Sau khi đưa vào vận hành thực tế giao diện Bố cục Cửa trượt
 - **Kiểm tra biên dịch sản xuất**: `npm run build` hoàn thành thành công 100% với mã thoát `0` (323 modules transformed, 609ms).
 - **Kiểm tra Git**: Các chỉnh sửa chuẩn xác, không làm phát sinh file rác untracked, đảm bảo đúng quy chuẩn kiến trúc hệ thống và quy tắc phát triển trong GEMINI.md.
 
+---
+
+## BƯỚC 77: SỬA LỖI SAU AUDIT VÀ BỔ SUNG KIỂM THỬ HỒI QUY (19/11/2026)
+
+Thực hiện sau khi người dùng cho phép chỉnh sửa mã nguồn. Báo cáo đối chiếu đầy đủ 21 phát hiện, giới hạn và danh sách kiểm tra tích hợp nằm tại [kết quả sửa lỗi sau audit](audit/10-remediation-status.md). Các kết luận audit trước đó được giữ nguyên để truy vết.
+
+### Nội dung thay đổi
+
+- Tách quản lý thế hệ phiên vào `src/services/sessionScope.js`, bảo vệ fetch/response body và các bước cập nhật state sau `await`. Đổi tài khoản không được nhận lại room, danh bạ/presence, CDR hoặc bản ghi từ tác vụ cũ. Logout xóa log trong ứng dụng và thu hồi URL ghi âm.
+- Cấu hình thoại chỉ ghi nhóm dịch vụ đã tải thành công và thực sự thay đổi; kiểm tra HTTP trước khi báo lưu thành công. Áp dụng mic/loa đã chọn vào SDK và đầu ra âm thanh khi trình duyệt hỗ trợ. Hủy stream kiểm tra mic trả muộn sau khi đóng modal.
+- Nghe máy đi qua `answering`, trạng thái đàm thoại phụ thuộc sự kiện SDK. Bảo vệ conference, nhánh mời và tác vụ ghi âm bằng thế hệ cuộc gọi; merge lỗi không bị đánh dấu thành công; đồng hồ nhóm không bị progress của nhánh khác đưa lùi trạng thái.
+- Start/stop ghi âm không báo thành công khi HTTP lỗi; chống thao tác trùng và kết quả start trả muộn sau khi hủy. Phát bản ghi tuân theo lựa chọn mới nhất, dừng khi chuyển màn hình. Bộ lọc cuộc gọi nhỡ thống nhất với bộ đếm.
+- Chat chỉ chấp nhận command quản trị từ UUID khớp metadata quản trị do API phòng cung cấp. Không suy quyền từ nội dung, alias, thành viên đầu tiên hoặc localStorage; không suy người đọc từ danh sách thành viên và không tạo trạng thái đã nhận bằng timer. Hoàn tất gửi không tự chuyển về phòng đã rời.
+- Bỏ máy lẻ giả mặc định, nhận số thật từ SDK/Confd và đồng bộ callStore. Chuyển các state được chỉ ra trong audit sang Vue reactive, giữ đối tượng phiên SDK trong shallowReactive Map.
+
+### Thay đổi hành vi cần biết
+
+Thêm/xóa thành viên nhóm hiện bị chặn trước mọi thao tác thay phòng/chuyển lịch sử, có thông báo cần API nhóm phía server. Nhóm thiếu metadata quản trị cũng không mở thao tác quản trị. Đây là biện pháp bảo toàn dữ liệu; chưa phải triển khai đầy đủ membership/RBAC/receipt hoặc trạng thái đóng phòng bền vững. Các luồng này cần contract server và kiểm tra tương thích Android. Phụ thuộc vòng giữa các service còn cần refactor tiếp.
+
+### Xác minh
+
+- `node --test tests/regressions.test.cjs`: **27/27 đạt**. Các ranh giới mạng, trình duyệt và SDK được thay thế chỉ trong bộ kiểm thử; ứng dụng không được chèn dữ liệu thử.
+- `npm run build`: thành công; còn cảnh báo kích thước bundle chính trên 500 kB.
+- Kiểm tra Git và khoảng trắng của phần sửa; giữ nguyên thay đổi có sẵn của người dùng trong `FileQuest/`.
+- Chưa xác minh SIP/media/IdP trên server thật; dùng bảng kiểm tích hợp trong báo cáo trước khi triển khai rộng. Không commit, push hoặc triển khai production trong bước này.
+
+---
+
+## BƯỚC 78: BỎ GHIM VÀ TRẠNG THÁI GỬI/ĐỌC TIN NHẮN (19/11/2026)
+
+Theo yêu cầu mới, xóa toàn bộ chức năng ghim tin, trạng thái đang gửi/đã gửi/đã nhận/đã xem, danh sách người đọc và bộ đếm chưa đọc liên quan. Dọn cả giao diện, service, state, listener, timer đếm và CSS; không chỉ ẩn nút. Giữ nội dung, thời gian, luồng gửi/nhận API và thông báo gửi thất bại.
+
+Không còn yêu cầu triển khai pin/receipt/read cursor trong phạm vi hiện tại. Báo cáo chi tiết nằm tại [ghi nhận bỏ chức năng ghim và read](audit/11-remove-message-pin-and-read-status.md). Thay đổi này không xóa lịch sử tin trên máy chủ.
+
+Xác minh: bộ hồi quy **27/27 đạt**, `npm run build` thành công; còn cảnh báo bundle lớn. Chưa thử giao nhận trên tổng đài thật; chưa commit/push hoặc triển khai.
+
 
 
 

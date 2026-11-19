@@ -158,9 +158,9 @@ const tryConnectPhone = async () => {
 }
 
 // --- Xử lý sự kiện Modal cuộc gọi đến (Điều hướng qua wazoService) ---
-const onAcceptIncomingCall = (callData) => {
+const onAcceptIncomingCall = async (callData) => {
   const ext = callData?.extension || callData?.number || ''
-  wazoService.acceptIncomingCall(callData)
+  if (!await wazoService.acceptIncomingCall(callData)) return
   showToast(`Đã nhận cuộc gọi từ ${callData?.name || ext}!`, 'success')
 
   // Chuyển sang màn hình CallsView đang đàm thoại

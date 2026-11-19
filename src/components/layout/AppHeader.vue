@@ -100,7 +100,7 @@ const presenceState = ref('available')
 
 // Lấy thông tin tài khoản đang đăng nhập đồng bộ từ callStore (SSOT)
 const userName = computed(() => callStore.myUserName || localStorage.getItem('smartcall_username') || 'Quản trị viên')
-const userExtension = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '1001')
+const userExtension = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '')
 const userDepartment = computed(
   () =>
     callStore.myDepartment ||

@@ -106,7 +106,6 @@
               </div>
               <div class="room-bottom">
                 <span class="room-preview">{{ room.preview }}</span>
-                <span v-if="room.unread" class="badge-unread">{{ room.unread }}</span>
               </div>
             </div>
 
@@ -169,15 +168,6 @@
           </div>
         </div>
 
-        <!-- Thanh thông báo ghim -->
-        <div v-if="currentRoom && currentRoom.pinned" class="pinned-bar">
-          <div class="pinned-content">
-            <span class="pinned-tag">📌 Ghim:</span>
-            <span class="pinned-text">{{ currentRoom.pinned }}</span>
-          </div>
-          <button class="btn-close-pin" title="Gỡ thông báo ghim" @click="unpinMessage">✖</button>
-        </div>
-
         <!-- Danh sách tin nhắn -->
         <div ref="msgContainerRef" class="chat-messages">
           <div v-if="isLoadingMessages" class="messages-loading">
@@ -200,31 +190,7 @@
               </div>
               <div class="msg-meta">
                 <span>{{ msg.time }}</span>
-                <span
-                  v-if="msg.sender === 'mine' || msg.sender === 'me'"
-                  class="read-tag"
-                  :class="{
-                    'sending': msg.readStatus === 'Đang gửi...',
-                    'sent': msg.readStatus === 'Đã gửi',
-                    'delivered': msg.readStatus === 'Đã nhận',
-                    'read': msg.readStatus === 'Đã xem'
-                  }"
-                  title="Trạng thái tin nhắn (Nhấp để xem chi tiết)"
-                  @click.stop="openReadIdModal(msg)"
-                >
-                  <span v-if="msg.readStatus === 'Đang gửi...'">⏳ Đang gửi...</span>
-                  <span v-else-if="msg.readStatus === 'Đã gửi'">✓ Đã gửi</span>
-                  <span v-else-if="msg.readStatus === 'Đã nhận'">✓✓ Đã nhận</span>
-                  <span v-else-if="msg.readStatus === 'Đã xem'">✓✓ Đã xem</span>
-                  <span v-else>{{ msg.readStatus || 'Đã gửi' }}</span>
-                </span>
-                <button
-                  class="btn-pin-msg"
-                  title="Ghim tin nhắn này lên đầu phòng chat"
-                  @click.stop="pinMessage(msg)"
-                >
-                  📌 Ghim
-                </button>
+                <span v-if="msg.sendFailed" class="send-error" role="status">Gửi thất bại</span>
               </div>
             </div>
           </template>
@@ -488,32 +454,6 @@
       </div>
     </div>
 
-    <!-- MODAL: DANH SÁCH NGƯỜI ĐÃ ĐỌC TIN NHẮN (READ ID) -->
-    <div v-if="showReadModal" class="modal-overlay" @click.self="showReadModal = false">
-      <div class="modal-card modal-sm">
-        <div class="modal-head">
-          <span>DANH SÁCH ĐÃ ĐỌC (READ ID)</span>
-          <button class="btn-close" @click="showReadModal = false">✖</button>
-        </div>
-
-        <div class="modal-body">
-          <p v-if="selectedMsg?.readStatus === 'Đã xem'" class="read-time-hint">
-            Đã xem vào thời điểm: {{ selectedMsg?.time }}
-          </p>
-          <p v-else class="read-time-hint">
-            Trạng thái: Đã gửi (Người nhận chưa mở tin nhắn)<br />
-            <small>Thời gian gửi: {{ selectedMsg?.time }}</small>
-          </p>
-          <label class="form-label">NGƯỜI NHẬN TRONG PHÒNG:</label>
-          <ul class="readers-list">
-            <li v-for="name in selectedMsgReaders" :key="name">
-              <span class="check-icon">✔</span>
-              <strong>{{ name }}</strong>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -523,14 +463,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { chatService, formatMessageDateTime } from '@/services/chatService'
 import { contactService } from '@/services/contactService'
 import { wazoService, callStore } from '@/services/wazo'
+import { captureSessionContext, isSessionContextCurrent } from '@/services/sessionScope'
 
+let viewActive = true
+let roomSelectionVersion = 0
 const route = useRoute()
 const router = useRouter()
 
 const showCreateGroupModal = ref(false)
 const expandingGroupRoomId = ref(null)
 const showMemberModal = ref(false)
-const showReadModal = ref(false)
 const inputText = ref('')
 const chatInputRef = ref(null)
 const pendingForwardMessages = ref([])
@@ -538,7 +480,6 @@ const newGroupTitle = ref('')
 const groupContactSearch = ref('')
 const selectedGroupMemberUuids = ref([])
 const isSubmittingGroup = ref(false)
-const selectedMsg = ref(null)
 const msgContainerRef = ref(null)
 const isLoadingRooms = ref(false)
 const isLoadingMessages = ref(false)
@@ -549,24 +490,15 @@ const isDeletingRooms = ref(false)
 const isDeletingGroup = ref(false)
 
 // Trạng thái phòng bị giải tán qua Tombstone SYSTEM:ROOM_CLOSED
-const isRoomClosed = computed(() => {
-  if (!currentRoom.value || currentRoom.value.isDirect) return false
-  if (currentRoom.value.isClosed) return true
-  const msgs = currentRoom.value.messages || []
-  if (msgs.length === 0) {
-    return Boolean(currentRoom.value.preview && currentRoom.value.preview.includes('[SYSTEM:ROOM_CLOSED'))
-  }
-  const lastMsg = msgs[msgs.length - 1]
-  return Boolean(lastMsg?.text && lastMsg.text.includes('[SYSTEM:ROOM_CLOSED'))
-})
+const isRoomClosed = computed(() => Boolean(currentRoom.value?.isClosed))
 
 const isRoomAdmin = (room) => {
-  if (!room || room.isDirect) return false
+  if (!room || room.isDirect || !room.adminVerified) return false
   const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid')
   if (myUuid && room.adminUuid) {
     return room.adminUuid === myUuid
   }
-  return localStorage.getItem('smartcall_is_admin') === 'true'
+  return false
 }
 
 const groupRoomsCount = computed(() => sortedRooms.value.filter((r) => !r.isDirect && isRoomAdmin(r)).length)
@@ -681,21 +613,7 @@ const handleDeleteGroupRoom = async () => {
 }
 
 // Trạng thái thành viên bị mời ra khỏi nhóm
-const isKickedFromCurrentRoom = computed(() => {
-  if (!currentRoom.value || currentRoom.value.isDirect) return false
-  if (currentRoom.value.isKicked) return true
-  const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || ''
-  const myExt = wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
-  const msgs = currentRoom.value.messages || []
-  return msgs.some((m) => {
-    if (!m.text) return false
-    const t = m.text.toLowerCase()
-    return (
-      t.includes('mời ra khỏi nhóm') &&
-      ((myName && t.includes(myName.toLowerCase())) || (myExt && t.includes(myExt)))
-    )
-  })
-})
+const isKickedFromCurrentRoom = computed(() => Boolean(currentRoom.value?.isKicked))
 
 const autoResizeTextarea = () => {
   const el = chatInputRef.value
@@ -727,15 +645,15 @@ const confirmLeaveKickedRoom = () => {
 
 // Phân quyền Quản trị viên vs Người dùng thường
 const currentIsAdmin = computed(() => {
-  if (!currentRoom.value || currentRoom.value.isDirect) return false
+  if (!currentRoom.value || currentRoom.value.isDirect || !currentRoom.value.adminVerified) return false
   const myUuid = callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid')
   if (myUuid && currentRoom.value.adminUuid) {
     return currentRoom.value.adminUuid === myUuid
   }
-  return localStorage.getItem('smartcall_is_admin') === 'true'
+  return false
 })
 const currentUserName = computed(() => localStorage.getItem('smartcall_username') || 'Quản trị viên')
-const currentUserExt = computed(() => localStorage.getItem('smartcall_extension') || '1001')
+const currentUserExt = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '')
 
 const rooms = ref([])
 const currentRoom = ref(null)
@@ -756,19 +674,6 @@ const currentRoomMembers = computed(() => {
     }))
   }
   return list
-})
-
-const selectedMsgReaders = computed(() => {
-  if (selectedMsg.value?.readers && selectedMsg.value.readers.length > 0) {
-    return selectedMsg.value.readers
-  }
-  if (currentRoom.value?.isDirect) {
-    return [currentRoom.value.title]
-  }
-  const others = (currentRoom.value?.members || [])
-    .filter((m) => m.name !== currentUserName.value && m.name !== 'Tôi')
-    .map((m) => m.name)
-  return others.length > 0 ? others : ['Đồng nghiệp']
 })
 
 // Thông tin đối phương trong cuộc trò chuyện 1-1
@@ -832,9 +737,11 @@ const availableContactsForGroup = computed(() => {
 })
 
 const loadRooms = async () => {
+  const context = captureSessionContext()
   isLoadingRooms.value = true
   try {
     const list = await chatService.getRooms()
+    if (!isSessionContextCurrent(context)) return
     rooms.value = [...list]
     // Giữ nguyên phòng đang mở nếu có, KHÔNG tự ý chọn rooms[0] để bảo toàn badge (Issue 6)
     if (currentRoom.value) {
@@ -848,9 +755,9 @@ const loadRooms = async () => {
 
 const selectRoom = async (room) => {
   if (isRoomSelectMode.value) return
+  const context = captureSessionContext()
+  const selectionVersion = ++roomSelectionVersion
   currentRoom.value = room
-  room.unread = 0
-  chatService.setActiveRoomId(room.id)
   chatService.saveRooms()
   if (route.query && route.query.ext) {
     router.replace({ path: '/messages', query: {} }).catch(() => {})
@@ -860,36 +767,15 @@ const selectRoom = async (room) => {
     isLoadingMessages.value = true
     try {
       const msgs = await chatService.getRoomMessages(room.id)
+      if (!isSessionContextCurrent(context)) return
       if (msgs && msgs.length > 0) {
         room.messages = msgs
       }
     } finally {
-      isLoadingMessages.value = false
+      if (selectionVersion === roomSelectionVersion) isLoadingMessages.value = false
     }
   }
   scrollToBottom()
-}
-
-// Ghim tin nhắn bất kỳ lên đầu phòng chat (Issue 7 - per-room)
-const pinMessage = async (msg) => {
-  if (!currentRoom.value) return
-  const pinText = `${msg.senderName}: "${msg.text}"`
-  currentRoom.value.pinned = pinText
-  await chatService.updatePinnedMessage(currentRoom.value.id, pinText)
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: {
-        message: `📌 Đã ghim tin nhắn của [${msg.senderName}] lên đầu phòng chat!`,
-        type: 'success',
-      },
-    }),
-  )
-}
-
-const unpinMessage = async () => {
-  if (!currentRoom.value) return
-  currentRoom.value.pinned = ''
-  await chatService.updatePinnedMessage(currentRoom.value.id, '')
 }
 
 const sendMessage = async () => {
@@ -897,6 +783,8 @@ const sendMessage = async () => {
   if (!text || !currentRoom.value || isKickedFromCurrentRoom.value || isRoomClosed.value) return
 
   const targetId = currentRoom.value.id
+  const selectionVersion = roomSelectionVersion
+  const context = captureSessionContext()
   inputText.value = ''
   if (chatInputRef.value) {
     chatInputRef.value.style.height = 'auto'
@@ -913,14 +801,16 @@ const sendMessage = async () => {
 
   // Lưu bền vững vào cơ sở dữ liệu chatService và đồng bộ Wazo Chatd
   const sentMsg = await chatService.sendMessage(targetId, text, currentUserName.value)
+  if (!isSessionContextCurrent(context)) return
   const freshRooms = await chatService.getRooms()
+  if (!isSessionContextCurrent(context)) return
   rooms.value = [...freshRooms]
   const updated = rooms.value.find(
     (r) =>
       r.id === targetId ||
       (sentMsg && r.messages?.some((m) => m.id === sentMsg.id)),
   )
-  if (updated) currentRoom.value = updated
+  if (updated && viewActive && currentRoom.value?.id === targetId && selectionVersion === roomSelectionVersion) currentRoom.value = updated
   scrollToBottom()
 }
 
@@ -934,7 +824,9 @@ const scrollToBottom = () => {
 
 // Xử lý mở hội thoại 1-1 trực tiếp khi người dùng chuyển từ Danh bạ sang (Zero-ms switch)
 const checkDirectChatRoute = async () => {
-  if (route.query && route.query.ext) {
+  if (viewActive && route.path === '/messages' && route.query && route.query.ext) {
+    const selectionVersion = ++roomSelectionVersion
+    const context = captureSessionContext()
     const ext = String(route.query.ext).split('@')[0].trim()
     const isSelf = ext === currentUserExt.value
     const rawName = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
@@ -955,7 +847,6 @@ const checkDirectChatRoute = async () => {
         target.title = `${target.title} (Bạn)`
       }
       currentRoom.value = target
-      chatService.setActiveRoomId(target.id)
     }
 
     // Xóa sạch query URL ngay lập tức để tránh re-trigger khi switch tab
@@ -964,10 +855,9 @@ const checkDirectChatRoute = async () => {
     // 2. Phân giải hoặc nâng cấp phòng Wazo Chatd server thật
     try {
       const serverRoom = await chatService.getDirectRoom(ext, name, currentUserName.value)
-      if (serverRoom) {
+      if (serverRoom && viewActive && selectionVersion === roomSelectionVersion && isSessionContextCurrent(context)) {
         currentRoom.value = serverRoom
         rooms.value = [...chatService.rooms]
-        chatService.setActiveRoomId(serverRoom.id)
         if (!serverRoom.id.startsWith('direct-')) {
           const msgs = await chatService.getRoomMessages(serverRoom.id)
           if (msgs && msgs.length > 0) {
@@ -1021,9 +911,6 @@ const onRoomClosed = (ev) => {
 onMounted(async () => {
   await loadRooms()
   checkDirectChatRoute()
-  if (currentRoom.value) {
-    chatService.setActiveRoomId(currentRoom.value.id)
-  }
   window.addEventListener('smartcall-message-received', onMessageReceived)
   window.addEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.addEventListener('smartcall-refresh-rooms', loadRooms)
@@ -1031,18 +918,23 @@ onMounted(async () => {
 })
 
 onActivated(async () => {
+  viewActive = true
+  const context = captureSessionContext()
   await loadRooms()
+  if (!viewActive || !isSessionContextCurrent(context)) return
   if (route.query && route.query.ext) {
     checkDirectChatRoute()
   }
 })
 
 onDeactivated(() => {
-  chatService.setActiveRoomId(null)
+  viewActive = false
+  roomSelectionVersion += 1
 })
 
 onUnmounted(() => {
-  chatService.setActiveRoomId(null)
+  viewActive = false
+  roomSelectionVersion += 1
   window.removeEventListener('smartcall-message-received', onMessageReceived)
   window.removeEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.removeEventListener('smartcall-refresh-rooms', loadRooms)
@@ -1233,11 +1125,6 @@ const openAddMoreToGroup = () => {
     })
     newGroupTitle.value = currentRoom.value.title || 'Nhóm thảo luận'
   }
-}
-
-const openReadIdModal = (msg) => {
-  selectedMsg.value = msg
-  showReadModal.value = true
 }
 
 const startVoiceCall = () => {
@@ -1618,15 +1505,6 @@ const getRoomStatusClass = (room) => {
   text-overflow: ellipsis;
 }
 
-.badge-unread {
-  background: #e74c3c;
-  color: white;
-  font-size: 0.7rem;
-  font-weight: bold;
-  padding: 2px 7px;
-  border-radius: 10px;
-}
-
 /* Cột khung chat chính */
 .chat-main-col {
   flex: 1;
@@ -1718,39 +1596,6 @@ const getRoomStatusClass = (room) => {
   cursor: pointer;
 }
 
-/* Pinned Bar */
-.pinned-bar {
-  background: #fffbeb;
-  border-bottom: 1px solid #fef3c7;
-  color: #92400e;
-  padding: 8px 16px;
-  font-size: 0.85rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.pinned-content {
-  display: flex;
-  gap: 8px;
-}
-
-.pinned-tag {
-  font-weight: 700;
-}
-
-.btn-close-pin {
-  background: none;
-  border: none;
-  cursor: pointer;
-  opacity: 0.6;
-  font-size: 0.9rem;
-}
-
-.btn-close-pin:hover {
-  opacity: 1;
-}
-
 /* Messages */
 .chat-messages {
   flex: 1;
@@ -1813,6 +1658,11 @@ const getRoomStatusClass = (room) => {
   border-bottom-left-radius: 2px;
 }
 
+.send-error {
+  color: #dc2626;
+  font-weight: 500;
+}
+
 .msg-meta {
   display: flex;
   align-items: center;
@@ -1820,55 +1670,6 @@ const getRoomStatusClass = (room) => {
   font-size: 0.7rem;
   color: #94a3b8;
   margin-top: 4px;
-}
-
-.read-tag {
-  color: #0284c7;
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 0.68rem;
-  padding: 1px 4px;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.read-tag.sending {
-  color: #d97706;
-  font-style: italic;
-}
-
-.read-tag.sent {
-  color: #94a3b8;
-}
-
-.read-tag.delivered {
-  color: #64748b;
-  font-weight: 500;
-}
-
-.read-tag.read {
-  color: #2563eb;
-  font-weight: 600;
-}
-
-.read-tag:hover {
-  text-decoration: underline;
-}
-
-.btn-pin-msg {
-  background: none;
-  border: none;
-  color: #b45309;
-  cursor: pointer;
-  font-size: 0.7rem;
-  padding: 0 2px;
-  border-radius: 2px;
-}
-
-.btn-pin-msg:hover {
-  text-decoration: underline;
 }
 
 /* Kicked Member Banner */
@@ -1971,10 +1772,6 @@ const getRoomStatusClass = (room) => {
   width: 480px;
   overflow: hidden;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-}
-
-.modal-sm {
-  width: 380px;
 }
 
 .modal-head {
@@ -2552,35 +2349,6 @@ const getRoomStatusClass = (room) => {
   font-weight: 700;
   flex-shrink: 0;
   margin-right: 10px;
-}
-
-.read-time-hint {
-  font-size: 0.8rem;
-  color: #64748b;
-  margin-bottom: 12px;
-}
-
-.readers-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.readers-list li {
-  padding: 8px 0;
-  border-bottom: 1px solid #f1f5f9;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.88rem;
-  color: #1e293b;
-}
-
-.check-icon {
-  color: #16a34a;
-  font-weight: bold;
 }
 
 /* Loading Spinners & Empty states */

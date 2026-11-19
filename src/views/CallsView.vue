@@ -601,7 +601,7 @@
                       <strong class="contact-name" :title="c.name">
                         {{ c.name }}
                         <span
-                          v-if="c.number && String(c.number).trim() === String(callStore.myExtension || '1001').trim()"
+                          v-if="c.number && String(c.number).trim() === String(callStore.myExtension || '').trim()"
                           class="self-badge"
                         >(Bạn)</span>
                         <span
@@ -696,7 +696,6 @@
                         d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
                       />
                     </svg>
-                    <span v-if="c.unreadCount > 0" class="badge-unread">{{ c.unreadCount }}</span>
                   </button>
                 </div>
               </div>
@@ -1070,6 +1069,7 @@ const dialAvatarBg = computed(() => {
 const callerName = computed(() => {
   if (!callStore.activeCall) return 'Cuộc Gọi Thoại Nội Bộ'
   const ext = callStore.activeCall.number || extension.value
+  if (callStore.activeCall.status === 'answering') return 'Đang kết nối cuộc gọi đến...'
   if (callStore.activeCall.status === 'ringing') {
     return `Đang đổ chuông tới máy lẻ ${ext}...`
   }
@@ -1082,8 +1082,8 @@ const callerSip = computed(() => {
     .replace(/^https?:\/\//, '')
     .split(':')[0]
   if (callStore.activeCall) return `sip:${callStore.activeCall.number}@${host || 'smartcall'}`
-  const myExt = callStore.myExtension || wazoService.getMyExtension() || '1001'
-  return `Máy lẻ ${myExt}`
+  const myExt = callStore.myExtension || wazoService.getMyExtension() || ''
+  return myExt ? `Máy lẻ ${myExt}` : 'Chưa có máy lẻ'
 })
 
 const callAvatarInitials = computed(() => {
@@ -1101,6 +1101,7 @@ const formattedDuration = computed(() => {
 
 const durationText = computed(() => {
   if (!callStore.activeCall) return '00:00'
+  if (callStore.activeCall.status === 'answering') return 'Đang kết nối...'
   if (callStore.activeCall.status === 'ringing') return '📞 Đang đổ chuông...'
   return formattedDuration.value
 })
@@ -1615,7 +1616,6 @@ const handleCallFromPanel = async (contact) => {
 
 // Chuyển sang màn hình Tin nhắn
 const handleMessage = (contact) => {
-  contact.unreadCount = 0
   const ext = contact.number || (contact.email ? contact.email.split('@')[0] : contact.id)
   router.push({
     path: '/messages',
@@ -1705,7 +1705,7 @@ const onCallEnded = () => {
 const hangupCall = () => {
   if (recordService.isRecording()) {
     try {
-      recordService.stopRecording()
+      recordService.stopRecording().catch(() => {})
     } catch (e) {}
   }
   wazoService.hangup()
@@ -1727,9 +1727,10 @@ const toggleRecord = async () => {
       )
     } catch (e) {
       console.warn('Lỗi khi dừng ghi âm máy chủ:', e)
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: e.message || 'Chưa xác nhận dừng ghi âm. Vui lòng thử lại.', type: 'error' } }))
     }
   } else if (callStore.activeCall) {
-    if (callState.value === 'ringing') {
+    if (callState.value !== 'connected') {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -1742,13 +1743,15 @@ const toggleRecord = async () => {
     }
 
     try {
-      await recordService.startRecording(null, {
+      const recordingCallId = callStore.activeCall.callId
+      const started = await recordService.startRecording(null, {
         name: callStore.activeCall.name,
         number: callStore.activeCall.number,
         extension: callStore.activeCall.number,
         dept: callStore.activeCall.dept,
         direction: callStore.activeCall.direction,
       })
+      if (!started || callStore.activeCall?.callId !== recordingCallId) return
       callStore.activeCall.isRecorded = true
       window.dispatchEvent(
         new CustomEvent('app-toast', {
@@ -3414,18 +3417,6 @@ onUnmounted(() => {
 
 .btn-action-icon:disabled * {
   pointer-events: none;
-}
-
-.badge-unread {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  background: #ef4444;
-  color: white;
-  font-size: 0.6rem;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 10px;
 }
 
 .panel-state-message {

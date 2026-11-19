@@ -1,3 +1,4 @@
+import { captureSessionContext, isSessionContextCurrent, createSessionFetch, invalidateSession } from './sessionScope'
 import { wazoService } from './wazo'
 import { logger } from './loggerService'
 
@@ -11,7 +12,7 @@ class HistoryService {
    * Tải lại lịch sử từ máy chủ Wazo (gọi khi đăng nhập thành công hoặc làm mới)
    * Đặt lại bộ nhớ RAM và fetch trực tiếp từ Call-Logd API
    */
-  async reload() {
+async reload() {
     this.localHistory = []
     this._fetchingHistoryPromise = null
     return await this.getHistory({ forceRefresh: true })
@@ -93,6 +94,8 @@ class HistoryService {
    * Tuân thủ nguyên tắc Zero Local Business Data: dữ liệu thuần RAM, không lưu localStorage.
    */
   async getHistory({ tab = 'all', limit = 50, forceRefresh = false } = {}) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (forceRefresh) {
       this._fetchingHistoryPromise = null
       this.localHistory = []
@@ -210,12 +213,12 @@ class HistoryService {
         return merged
       } catch (err) {
         logger.warn('API', 'Không thể nạp CDR từ Wazo call-logd:', err.message)
-        if (forceRefresh) {
+        if (forceRefresh && isSessionContextCurrent(sessionContext)) {
           this.localHistory = []
         }
         return this.localHistory || []
       } finally {
-        this._fetchingHistoryPromise = null
+        if (isSessionContextCurrent(sessionContext)) this._fetchingHistoryPromise = null
       }
     })()
 
@@ -249,7 +252,7 @@ class HistoryService {
   /**
    * Xóa toàn bộ lịch sử cuộc gọi trong RAM
    */
-  async clearAllHistory() {
+async clearAllHistory() {
     this.localHistory = []
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))
     return true
@@ -258,7 +261,7 @@ class HistoryService {
   /**
    * Xóa 1 bản ghi lịch sử cụ thể trong RAM
    */
-  async deleteItem(id) {
+async deleteItem(id) {
     const idx = this.localHistory.findIndex((item) => item.id === id)
     if (idx !== -1) {
       this.localHistory.splice(idx, 1)
@@ -272,6 +275,7 @@ class HistoryService {
    * Dọn dẹp bộ nhớ in-memory khi đăng xuất (SSOT)
    */
   reset() {
+    invalidateSession()
     this.localHistory = []
     this._fetchingHistoryPromise = null
     window.dispatchEvent(new CustomEvent('smartcall-cdr-updated'))

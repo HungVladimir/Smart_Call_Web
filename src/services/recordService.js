@@ -1,3 +1,4 @@
+import { captureSessionContext, assertSessionContext, isSessionContextCurrent, createSessionFetch } from './sessionScope'
 /**
  * RecordService - Module Quản lý Ghi âm Cuộc gọi Máy chủ Wazo (Pure Server-Side Recording)
  * Tuân thủ quy tắc bất biến: API Server First - Triệt tiêu Local Storage / IndexedDB nghiệp vụ (GEMINI.md)
@@ -11,6 +12,9 @@ import { logger } from './loggerService'
 
 export const recordStore = reactive({
   isRecording: false,
+  isStarting: false,
+  isStopping: false,
+  error: '',
   duration: 0,
   currentCallId: null, // ID cuộc gọi trên máy chủ Wazo Calld
   meta: null,
@@ -20,6 +24,7 @@ class RecordService {
   constructor() {
     this._stopPromise = null
     this._durationTimer = null
+    this._recordingEpoch = 0
     this._blobUrls = new Map() // cache URL ObjectURL trong phiên duyệt hiện tại (cdrId_recUuid -> objectUrl)
   }
 
@@ -52,6 +57,8 @@ class RecordService {
    * GET /api/calld/1.0/users/me/calls
    */
   async getActiveServerCall() {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     try {
       const token = this.getToken()
       if (!token) return null
@@ -89,6 +96,10 @@ class RecordService {
    * @param {object} meta - Thông tin người đàm thoại
    */
   async startRecording(callId = null, meta = {}) {
+    if (recordStore.isStarting || recordStore.isStopping) throw new Error('Thao tác ghi âm đang được xử lý.')
+    const recordingEpoch = this._recordingEpoch
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (recordStore.isRecording) {
       logger.warn('RECORD', 'Đang có một tiến trình ghi âm máy chủ hoạt động.')
       return false
@@ -99,23 +110,27 @@ class RecordService {
       throw new Error('Chưa đăng nhập tổng đài (Thiếu token)')
     }
 
+    recordStore.isStarting = true
+    recordStore.error = ''
     const host = this.getHost()
     let serverCallId = callId
 
-    // Nếu chưa có server call_id (hoặc callId là mã tạm client), truy vấn từ Wazo Calld
-    if (!serverCallId || String(serverCallId).startsWith('rec-') || String(serverCallId).startsWith('call-')) {
-      const activeCall = await this.getActiveServerCall()
-      serverCallId = activeCall?.id || activeCall?.call_id || null
-    }
-
-    if (!serverCallId) {
-      logger.warn('RECORD', 'Không tìm thấy cuộc gọi đang đàm thoại trên máy chủ để ghi âm.')
-      throw new Error('Không tìm thấy cuộc gọi đang kết nối trên tổng đài Wazo.')
-    }
-
-    logger.info('RECORD', `Gửi yêu cầu Bắt đầu ghi âm tới máy chủ Wazo Calld: ${serverCallId}`)
-
     try {
+      // Nếu chưa có server call_id (hoặc callId là mã tạm client), truy vấn từ Wazo Calld
+      if (!serverCallId || String(serverCallId).startsWith('rec-') || String(serverCallId).startsWith('call-')) {
+        const activeCall = await this.getActiveServerCall()
+        serverCallId = activeCall?.id || activeCall?.call_id || null
+      }
+
+      if (!serverCallId) {
+        logger.warn('RECORD', 'Không tìm thấy cuộc gọi đang đàm thoại trên máy chủ để ghi âm.')
+        throw new Error('Không tìm thấy cuộc gọi đang kết nối trên tổng đài Wazo.')
+      }
+
+      assertSessionContext(sessionContext)
+      if (recordingEpoch !== this._recordingEpoch) return false
+      logger.info('RECORD', `Gửi yêu cầu Bắt đầu ghi âm tới máy chủ Wazo Calld: ${serverCallId}`)
+
       // 1. Thử endpoint theo ngữ cảnh user: /users/me/calls/{call_id}/record/start
       let res = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/start`, {
         method: 'PUT',
@@ -151,6 +166,13 @@ class RecordService {
         throw new Error(`Tổng đài từ chối lệnh ghi âm (HTTP ${res.status}): ${errDetail}`)
       }
 
+      if (recordingEpoch !== this._recordingEpoch || !isSessionContextCurrent(sessionContext)) {
+        if (isSessionContextCurrent(sessionContext)) {
+          const stopped = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/stop`, { method: 'PUT', headers: { 'X-Auth-Token': token }, signal: AbortSignal.timeout(5000) })
+          if (!stopped.ok) throw new Error('Chưa xác nhận dừng yêu cầu ghi âm đã hủy.')
+        }
+        return false
+      }
       // Kích hoạt trạng thái ghi âm máy chủ thành công
       recordStore.isRecording = true
       recordStore.duration = 0
@@ -174,7 +196,14 @@ class RecordService {
     } catch (err) {
       logger.error('RECORD', 'Lỗi khi kích hoạt ghi âm trên máy chủ Wazo:', err.message)
       throw err
+    } finally {
+      if (recordingEpoch === this._recordingEpoch) recordStore.isStarting = false
     }
+  }
+
+  cancelPendingStart() {
+    this._recordingEpoch += 1
+    recordStore.isStarting = false
   }
 
   /**
@@ -182,88 +211,66 @@ class RecordService {
    * PUT /api/calld/1.0/users/me/calls/{call_id}/record/stop
    */
   stopRecording(callId = null) {
-    if (this._stopPromise) {
-      return this._stopPromise
-    }
-
-    if (!recordStore.isRecording) {
-      return Promise.resolve(null)
-    }
-
+    if (this._stopPromise) return this._stopPromise
+    if (!recordStore.isRecording) return Promise.resolve(null)
+    const context = captureSessionContext()
+    const fetch = createSessionFetch(context)
     const serverCallId = callId || recordStore.currentCallId
     const duration = recordStore.duration
-    logger.info('RECORD', `Gửi yêu cầu Dừng ghi âm máy chủ Wazo: ${serverCallId}`)
-
-    if (this._durationTimer) {
-      clearInterval(this._durationTimer)
-      this._durationTimer = null
+    const token = this.getToken()
+    const host = this.getHost()
+    if (!serverCallId || !token) {
+      recordStore.error = 'Không có phiên/cuộc gọi để dừng ghi âm.'
+      return Promise.reject(new Error(recordStore.error))
     }
-
-    recordStore.isRecording = false
-    recordStore.duration = 0
-    recordStore.currentCallId = null
-    recordStore.meta = null
-
-    this._stopPromise = (async () => {
+    recordStore.isStopping = true
+    recordStore.error = ''
+    const promise = (async () => {
       try {
-        if (serverCallId) {
-          const token = this.getToken()
-          const host = this.getHost()
-          if (token) {
-            // Thử endpoint users/me trước, sau đó fallback calls/{id}
-            let res = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/stop`, {
-              method: 'PUT',
-              headers: {
-                'X-Auth-Token': token,
-                Accept: 'application/json',
-              },
-            }).catch(() => null)
-
-            if (res && !res.ok && res.status === 404) {
-              await fetch(`${host}/api/calld/1.0/calls/${serverCallId}/record/stop`, {
-                method: 'PUT',
-                headers: {
-                  'X-Auth-Token': token,
-                  Accept: 'application/json',
-                },
-              }).catch(() => null)
-            }
-          }
-        }
-        logger.success('RECORD', `⏹️ Đã dừng ghi âm cuộc gọi trên máy chủ Wazo (${duration}s): ${serverCallId}`)
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(
-            new CustomEvent('smartcall-recording-stopped', {
-              detail: { serverCallId, duration },
-            }),
-          )
-        }
+        let res = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/stop`, {
+          method: 'PUT', headers: { 'X-Auth-Token': token, Accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+        })
+        if (res.status === 404) res = await fetch(`${host}/api/calld/1.0/calls/${serverCallId}/record/stop`, {
+          method: 'PUT', headers: { 'X-Auth-Token': token, Accept: 'application/json' }, signal: AbortSignal.timeout(5000),
+        })
+        if (!res.ok) throw new Error(`Tổng đài chưa xác nhận dừng ghi âm (HTTP ${res.status}).`)
+        assertSessionContext(context)
+        clearInterval(this._durationTimer)
+        this._durationTimer = null
+        recordStore.isRecording = false
+        recordStore.currentCallId = null
+        recordStore.duration = 0
+        recordStore.meta = null
+        window.dispatchEvent(new CustomEvent('smartcall-recording-stopped', { detail: { serverCallId, duration } }))
         return { serverCallId, duration }
       } catch (err) {
-        logger.warn('RECORD', 'Lỗi khi gửi lệnh dừng ghi âm tới server:', err.message)
-        return null
+        if (isSessionContextCurrent(context)) recordStore.error = err.message
+        throw err
       } finally {
-        this._stopPromise = null
+        if (isSessionContextCurrent(context)) recordStore.isStopping = false
+        if (this._stopPromise === promise) this._stopPromise = null
       }
     })()
-
-    return this._stopPromise
+    this._stopPromise = promise
+    return promise
   }
 
   /**
    * Tạm dừng ghi âm trên máy chủ (Pause)
    */
   async pauseRecording(callId = null) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     const serverCallId = callId || recordStore.currentCallId
     if (!serverCallId) return false
     const token = this.getToken()
     const host = this.getHost()
     try {
-      await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/pause`, {
+      const res = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/pause`, {
         method: 'PUT',
         headers: { 'X-Auth-Token': token, Accept: 'application/json' },
       })
-      return true
+      return res.ok
     } catch (e) {
       return false
     }
@@ -273,16 +280,18 @@ class RecordService {
    * Tiếp tục ghi âm trên máy chủ (Resume)
    */
   async resumeRecording(callId = null) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     const serverCallId = callId || recordStore.currentCallId
     if (!serverCallId) return false
     const token = this.getToken()
     const host = this.getHost()
     try {
-      await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/resume`, {
+      const res = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/resume`, {
         method: 'PUT',
         headers: { 'X-Auth-Token': token, Accept: 'application/json' },
       })
-      return true
+      return res.ok
     } catch (e) {
       return false
     }
@@ -304,6 +313,8 @@ class RecordService {
    * GET /api/call-logd/1.0/users/me/cdr/{id}/recordings/{recording_uuid}/media
    */
   async getAudioUrlForCall(call, { wazoHost = '', token = '' } = {}) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (!call) return null
 
     const cdrId = call.id
@@ -312,7 +323,7 @@ class RecordService {
       return null
     }
 
-    const cacheKey = `${cdrId}_${recordingUuid}`
+    const cacheKey = `${sessionContext.userUuid}_${this.getHost(wazoHost)}_${cdrId}_${recordingUuid}`
     if (this._blobUrls.has(cacheKey)) {
       return this._blobUrls.get(cacheKey)
     }
@@ -347,13 +358,14 @@ class RecordService {
       this._blobUrls.set(cacheKey, objectUrl)
       return objectUrl
     } catch (err) {
+      if (!isSessionContextCurrent(sessionContext)) return null
       logger.error('RECORD', `Lỗi tải file ghi âm từ máy chủ Wazo (CDR ${cdrId}):`, err.message)
       return null
     }
   }
 
   // Phương thức bí danh hỗ trợ cả truyền callId hoặc call object
-  async getRecordingAudioUrl(callOrId, options = {}) {
+async getRecordingAudioUrl(callOrId, options = {}) {
     const call =
       typeof callOrId === 'string'
         ? { id: callOrId, recordingUuid: callOrId }
@@ -364,7 +376,7 @@ class RecordService {
   /**
    * Tải file ghi âm từ máy chủ tổng đài Wazo về máy tính người dùng
    */
-  async downloadRecording(callOrId, filename = null) {
+async downloadRecording(callOrId, filename = null) {
     const call =
       typeof callOrId === 'string'
         ? { id: callOrId, recordingUuid: callOrId }
@@ -372,10 +384,12 @@ class RecordService {
     return this.downloadRecordingForCall(call, filename)
   }
 
-  async downloadRecordingForCall(call, filename = null) {
+async downloadRecordingForCall(call, filename = null) {
+    const sessionContext = captureSessionContext()
     if (!call) throw new Error('Không có thông tin cuộc gọi')
 
     const audioUrl = await this.getAudioUrlForCall(call)
+    assertSessionContext(sessionContext)
     if (!audioUrl) {
       throw new Error('Không tìm thấy file ghi âm trên máy chủ tổng đài Wazo')
     }
@@ -397,6 +411,10 @@ class RecordService {
 
   // Xóa cache ObjectURL khi đăng xuất
   clearSessionCache() {
+    this.cancelPendingStart()
+    this._stopPromise = null
+    recordStore.isStopping = false
+    recordStore.error = ''
     this._blobUrls.forEach((url) => {
       try {
         URL.revokeObjectURL(url)

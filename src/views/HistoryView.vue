@@ -206,6 +206,7 @@ import { historyService } from '@/services/historyService'
 import { contactService } from '@/services/contactService'
 import { recordService } from '@/services/recordService'
 import { callStore } from '@/services/wazo'
+import { captureSessionContext, isSessionContextCurrent } from '@/services/sessionScope'
 
 const router = useRouter()
 
@@ -226,8 +227,12 @@ const playbackProgress = computed(() => {
 })
 
 let globalAudio = null
+let playbackGeneration = 0
+let viewActive = true
+let historyRequest = 0
 
 const stopCurrentAudio = () => {
+  playbackGeneration += 1
   if (globalAudio) {
     globalAudio.pause()
     globalAudio.removeAttribute('src')
@@ -257,22 +262,26 @@ const syncRecordingsAvailability = () => {
 }
 
 const togglePlayCall = async (call) => {
+  if (!viewActive || callStore.activeCall || callStore.incomingCall) return
   if (currentPlayingId.value === call.id) {
     if (isPlaying.value) {
       globalAudio?.pause()
       isPlaying.value = false
     } else {
-      globalAudio?.play()
-      isPlaying.value = true
+      try { await globalAudio?.play(); isPlaying.value = Boolean(globalAudio) } catch { isPlaying.value = false }
     }
     return
   }
 
   stopCurrentAudio()
   currentPlayingId.value = call.id
+  const generation = playbackGeneration
+  const context = captureSessionContext()
+  const current = () => generation === playbackGeneration && viewActive && isSessionContextCurrent(context) && currentPlayingId.value === call.id && !callStore.activeCall && !callStore.incomingCall
 
   try {
     const audioUrl = await recordService.getAudioUrlForCall(call)
+    if (!current()) return
     if (!audioUrl) {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
@@ -286,27 +295,32 @@ const togglePlayCall = async (call) => {
       return
     }
 
-    globalAudio = new Audio(audioUrl)
-    globalAudio.ontimeupdate = () => {
-      playbackCurrentTime.value = globalAudio.currentTime || 0
-      if (globalAudio.duration && isFinite(globalAudio.duration)) {
-        playbackDuration.value = globalAudio.duration
+    const audio = new Audio(audioUrl)
+    globalAudio = audio
+    audio.ontimeupdate = () => {
+      if (!current()) return
+      playbackCurrentTime.value = audio.currentTime || 0
+      if (audio.duration && isFinite(audio.duration)) {
+        playbackDuration.value = audio.duration
       } else if (call.duration) {
         playbackDuration.value = call.duration
       }
     }
-    globalAudio.onloadedmetadata = () => {
-      if (globalAudio.duration && isFinite(globalAudio.duration)) {
-        playbackDuration.value = globalAudio.duration
+    audio.onloadedmetadata = () => {
+      if (!current()) return
+      if (audio.duration && isFinite(audio.duration)) {
+        playbackDuration.value = audio.duration
       } else if (call.duration) {
         playbackDuration.value = call.duration
       }
     }
-    globalAudio.onended = () => {
+    audio.onended = () => {
+      if (!current()) return
       isPlaying.value = false
       playbackCurrentTime.value = 0
     }
-    globalAudio.onerror = (e) => {
+    audio.onerror = (e) => {
+      if (!current()) return
       console.warn('Lỗi phát âm thanh:', e)
       isPlaying.value = false
       window.dispatchEvent(
@@ -319,11 +333,12 @@ const togglePlayCall = async (call) => {
       )
     }
 
-    await globalAudio.play()
+    await audio.play()
+    if (!current()) { audio.pause(); return }
     isPlaying.value = true
   } catch (err) {
     console.error('Không thể phát ghi âm:', err)
-    stopCurrentAudio()
+    if (current()) stopCurrentAudio()
   }
 }
 
@@ -337,7 +352,7 @@ const seekCallAudio = async (call, event) => {
     await togglePlayCall(call)
   }
 
-  if (globalAudio) {
+  if (globalAudio && currentPlayingId.value === call.id && viewActive) {
     const totalDuration = playbackDuration.value || call.duration || 0
     const newTime = ratio * totalDuration
     globalAudio.currentTime = newTime
@@ -378,6 +393,8 @@ const formatTime = (seconds) => {
 
 // Nạp dữ liệu từ historyService (hỗ trợ Optimistic Rendering & Force Refresh)
 const fetchHistory = async (force = false) => {
+  const request = ++historyRequest
+  const context = captureSessionContext()
   // Optimistic rendering: nạp ngay dữ liệu cục bộ nếu calls chưa có
   if (calls.value.length === 0) {
     calls.value = historyService.getLocalHistory({ tab: 'all' })
@@ -388,6 +405,7 @@ const fetchHistory = async (force = false) => {
   }
   try {
     const list = await historyService.getHistory({ tab: 'all', limit: 100, forceRefresh: force })
+    if (request !== historyRequest || !isSessionContextCurrent(context)) return
     calls.value = [...list]
     await syncRecordingsAvailability()
   } catch (err) {
@@ -408,10 +426,12 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  viewActive = true
   fetchHistory(false)
 })
 
 onDeactivated(() => {
+  viewActive = false
   stopCurrentAudio()
 })
 
@@ -424,6 +444,8 @@ watch(
 )
 
 onUnmounted(() => {
+  viewActive = false
+  historyRequest += 1
   stopCurrentAudio()
   window.removeEventListener('smartcall-cdr-updated', onCdrUpdated)
   window.removeEventListener('smartcall-recording-saved', syncRecordingsAvailability)
@@ -467,7 +489,7 @@ const filteredCalls = computed(() => {
   } else if (currentTab.value === 'outgoings') {
     list = list.filter((c) => c.direction === 'outbound')
   } else if (currentTab.value === 'missed') {
-    list = list.filter((c) => c.status === 'missed' || !c.answered)
+    list = list.filter((c) => c.status === 'missed' || (c.direction === 'inbound' && !c.answered))
   }
   return list
 })

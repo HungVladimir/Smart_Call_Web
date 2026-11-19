@@ -1,7 +1,17 @@
+import { reactive } from 'vue'
+import { captureSessionContext, assertSessionContext, isSessionContextCurrent, createSessionFetch, invalidateSession } from './sessionScope'
 import { wazoService, callStore } from './wazo'
 import { logger } from './loggerService'
 
+const contactState = reactive({ currentContacts: [], presences: {}, favoriteIds: [] })
+
 class ContactService {
+  get currentContacts() { return contactState.currentContacts }
+  set currentContacts(value) { contactState.currentContacts = value }
+  get presences() { return contactState.presences }
+  set presences(value) { contactState.presences = value }
+  get favoriteIds() { return contactState.favoriteIds }
+  set favoriteIds(value) { contactState.favoriteIds = value }
   constructor() {
     this.currentContacts = []
     this.presences = {}
@@ -35,6 +45,8 @@ class ContactService {
    * GET /api/dird/0.1/directories/favorites/default
    */
   async fetchFavorites() {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     try {
       const token = wazoService.getToken()
       if (!token) {
@@ -104,6 +116,8 @@ class ContactService {
    * DELETE /api/dird/0.1/directories/favorites/{directory}/{contact}
    */
   async toggleFavorite(contactOrId) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     let contact = null
     let contactId = ''
     if (contactOrId && typeof contactOrId === 'object') {
@@ -297,7 +311,10 @@ class ContactService {
    * Lấy danh bạ toàn bộ nhân viên trực tiếp từ Wazo (100% dữ liệu thật, không mock data)
    */
   async getContacts() {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     await this.fetchFavorites()
+    if (!isSessionContextCurrent(sessionContext)) return []
     const favorites = this.favoriteIds || []
     try {
       const token = wazoService.getToken()
@@ -417,7 +434,6 @@ class ContactService {
             number: String(number || ''),
             status: 'offline',
             statusLabel: 'Ngoại tuyến',
-            unreadCount: 0,
             isFavorite: isFav,
             isMobileApp: false,
           }
@@ -437,6 +453,7 @@ class ContactService {
         }
 
         const finalContacts = await this.loadPresencesForContacts(mappedList)
+        assertSessionContext(sessionContext)
         this.startPresencePolling()
         return this._filterContacts(finalContacts)
       }
@@ -485,7 +502,6 @@ class ContactService {
             number: String(number || ''),
             status: 'offline',
             statusLabel: 'Ngoại tuyến',
-            unreadCount: 0,
             isFavorite: isFav,
             isMobileApp: false,
           }
@@ -505,6 +521,7 @@ class ContactService {
         }
 
         const finalContacts = await this.loadPresencesForContacts(mappedList)
+        assertSessionContext(sessionContext)
         this.startPresencePolling()
         return this._filterContacts(finalContacts)
       }
@@ -557,6 +574,8 @@ class ContactService {
    * GET /api/chatd/1.0/users/presences?user_uuid=...
    */
   async loadPresencesForContacts(contacts) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (!Array.isArray(contacts) || contacts.length === 0) return contacts
     const token = wazoService.getToken()
     if (!token) return contacts
@@ -676,6 +695,7 @@ class ContactService {
    * Dọn dẹp sạch sẽ toàn bộ trạng thái khi người dùng đăng xuất
    */
   reset() {
+    invalidateSession()
     this.stopPresencePolling()
     this.currentContacts = []
     this.presences = {}
@@ -704,7 +724,7 @@ class ContactService {
    * Đảm bảo tính sẵn sàng 100% khi người dùng gọi lại (autocall) từ Lịch sử cuộc gọi
    * @param {string} ext - Số máy lẻ
    */
-  async getOrLookupContact(ext) {
+async getOrLookupContact(ext) {
     if (!ext) return null
     const cleanExt = String(ext).split('@')[0].trim()
     let found = (this.currentContacts || []).find(
@@ -746,6 +766,8 @@ class ContactService {
    * Phân giải User UUID từ số máy lẻ (tra cứu cache hoặc gọi Wazo Dird lookup nếu chưa có)
    */
   async resolveUserUuid(ext) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (!ext) return null
     const cleanExt = String(ext).split('@')[0].trim()
     const cached = this.findContactByExtension(cleanExt)

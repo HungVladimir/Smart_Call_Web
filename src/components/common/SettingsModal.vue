@@ -221,7 +221,7 @@
 
       <div class="modal-foot">
         <button class="btn-secondary" @click="$emit('close')">Đóng</button>
-        <button class="btn-primary" @click="handleSave">Lưu cài đặt</button>
+        <button class="btn-primary" :disabled="saving" @click="handleSave">{{ saving ? 'Đang lưu...' : 'Lưu cài đặt' }}</button>
       </div>
     </div>
   </div>
@@ -231,6 +231,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getFeatures, saveFeatures, resetFeatures } from '@/config/features'
 import { wazoService, callStore } from '@/services/wazo'
+import { captureSessionContext, isSessionContextCurrent, createSessionFetch } from '@/services/sessionScope'
 
 const props = defineProps({
   isOpen: Boolean,
@@ -239,7 +240,7 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 const currentUsername = computed(() => wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'admin')
-const currentExt = computed(() => wazoService.getMyExtension() || localStorage.getItem('smartcall_user_exten') || '1001')
+const currentExt = computed(() => callStore.myExtension || wazoService.getMyExtension() || '')
 const sipHostInfo = computed(() => {
   const host = (wazoService.host || '').trim().replace(/^https?:\/\//, '').split(':')[0]
   return `sip:${currentExt.value}@${host || 'smartcall'}`
@@ -273,6 +274,8 @@ let audioContext = null
 let analyser = null
 let micStream = null
 let animFrameId = null
+let micGeneration = 0
+let disposed = false
 
 const loadAudioDevices = async () => {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return
@@ -318,6 +321,8 @@ const loadAudioDevices = async () => {
 
 const startMicMeter = async () => {
   stopMicMeter()
+  const generation = micGeneration
+  if (disposed || !props.isOpen || activeTab.value !== 'audio') return
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return
 
   try {
@@ -327,13 +332,19 @@ const startMicMeter = async () => {
           ? { deviceId: { exact: selectedMic.value } }
           : true,
     }
-    micStream = await navigator.mediaDevices.getUserMedia(constraints)
+    const stream = await navigator.mediaDevices.getUserMedia(constraints)
+    if (generation !== micGeneration || disposed || !props.isOpen || activeTab.value !== 'audio') {
+      stream.getTracks().forEach((track) => track.stop())
+      return
+    }
+    micStream = stream
     const AudioCtx = window.AudioContext || window.webkitAudioContext
-    if (!AudioCtx) return
+    if (!AudioCtx) { stopMicMeter(); return }
     audioContext = new AudioCtx()
     if (audioContext.state === 'suspended') {
       await audioContext.resume()
     }
+    if (generation !== micGeneration || disposed || !props.isOpen) return
     analyser = audioContext.createAnalyser()
     analyser.fftSize = 256
     analyser.smoothingTimeConstant = 0.4
@@ -344,7 +355,7 @@ const startMicMeter = async () => {
     const dataArray = new Uint8Array(analyser.frequencyBinCount)
 
     const updateVolume = () => {
-      if (!analyser) return
+      if (!analyser || generation !== micGeneration) return
       analyser.getByteFrequencyData(dataArray)
       let sum = 0
       for (let i = 0; i < dataArray.length; i++) {
@@ -376,6 +387,7 @@ const startMicMeter = async () => {
 }
 
 const stopMicMeter = () => {
+  micGeneration += 1
   if (animFrameId) {
     cancelAnimationFrame(animFrameId)
     animFrameId = null
@@ -439,6 +451,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
   stopMicMeter()
 })
 
@@ -456,6 +469,17 @@ const autoRecordCalls = ref(localStorage.getItem('smartcall_auto_record_calls') 
 const forwardBusy = ref('')
 const forwardNoAnswer = ref('')
 const forwardAll = ref('')
+const serviceBaseline = ref({ dnd: null, forwards: null })
+const saving = ref(false)
+let servicesLoadId = 0
+watch(() => callStore.myUserUuid, () => {
+  servicesLoadId += 1
+  serviceBaseline.value = { dnd: null, forwards: null }
+  dndEnabled.value = false
+  forwardBusy.value = forwardNoAnswer.value = forwardAll.value = ''
+  oldPassword.value = newPassword.value = confirmPassword.value = ''
+  stopMicMeter()
+})
 
 const saveAutoRecord = () => {
   localStorage.setItem('smartcall_auto_record_calls', autoRecordCalls.value ? 'true' : 'false')
@@ -480,33 +504,35 @@ const resetEmailLoading = ref(false)
 const loadCallServices = async () => {
   const token = wazoService.getToken()
   if (!token) return
-  const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
-  try {
-    const dndRes = await fetch(`${host}/api/confd/1.1/users/me/services/dnd`, {
-      headers: { 'X-Auth-Token': token, Accept: 'application/json' },
-      signal: AbortSignal.timeout(3500),
-    })
-    if (dndRes.ok) {
-      const dndData = await dndRes.json()
-      dndEnabled.value = Boolean(dndData.enabled)
-    }
-  } catch (err) {
-    console.warn('Không thể nạp dịch vụ DND:', err)
-  }
-
-  try {
-    const fwdRes = await fetch(`${host}/api/confd/1.1/users/me/forwards`, {
-      headers: { 'X-Auth-Token': token, Accept: 'application/json' },
-      signal: AbortSignal.timeout(3500),
-    })
-    if (fwdRes.ok) {
-      const fwdData = await fwdRes.json()
-      forwardBusy.value = fwdData.busy?.destination || ''
-      forwardNoAnswer.value = fwdData.noanswer?.destination || ''
-      forwardAll.value = fwdData.unconditional?.destination || ''
-    }
-  } catch (err) {
-    console.warn('Không thể nạp cấu hình forwards:', err)
+  const loadId = ++servicesLoadId
+  const context = captureSessionContext()
+  const fetch = createSessionFetch(context)
+  const host = wazoService.getHostUrl()
+  const headers = { 'X-Auth-Token': token, Accept: 'application/json' }
+  const current = () => loadId === servicesLoadId && isSessionContextCurrent(context)
+  const results = await Promise.allSettled([
+    (async () => {
+      const res = await fetch(`${host}/api/confd/1.1/users/me/services/dnd`, { headers, signal: AbortSignal.timeout(3500) })
+      if (!res.ok) throw new Error(`Không thể tải DND (HTTP ${res.status})`)
+      const data = await res.json()
+      if (!current()) return
+      dndEnabled.value = Boolean(data.enabled)
+      serviceBaseline.value.dnd = dndEnabled.value
+    })(),
+    (async () => {
+      const res = await fetch(`${host}/api/confd/1.1/users/me/forwards`, { headers, signal: AbortSignal.timeout(3500) })
+      if (!res.ok) throw new Error(`Không thể tải chuyển tiếp (HTTP ${res.status})`)
+      const data = await res.json()
+      if (!current()) return
+      const destination = (value) => value?.enabled === false ? '' : (value?.destination || '')
+      forwardBusy.value = destination(data.busy)
+      forwardNoAnswer.value = destination(data.noanswer)
+      forwardAll.value = destination(data.unconditional)
+      serviceBaseline.value.forwards = { busy: forwardBusy.value, noanswer: forwardNoAnswer.value, unconditional: forwardAll.value }
+    })(),
+  ])
+  if (current() && results.some((result) => result.status === 'rejected')) {
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { type: 'warning', message: 'Chưa tải được đầy đủ dịch vụ cuộc gọi. Các trường chưa tải sẽ không được ghi.' } }))
   }
 }
 
@@ -668,77 +694,53 @@ const sendPasswordResetEmail = async () => {
 }
 
 const handleSave = async () => {
-  localStorage.setItem('smartcall_selected_mic', selectedMic.value)
-  localStorage.setItem('smartcall_selected_speaker', selectedSpeaker.value)
-  saveFeatures(featureConfig.value)
-  stopMicMeter()
-
-  // Lưu cấu hình DND và Chuyển tiếp cuộc gọi lên Wazo Confd (Mục 6)
-  const token = wazoService.getToken()
-  if (token) {
-    const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
-    try {
-      await fetch(`${host}/api/confd/1.1/users/me/services/dnd`, {
-        method: 'PUT',
-        headers: {
-          'X-Auth-Token': token,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ enabled: dndEnabled.value }),
-      })
-
-      await fetch(`${host}/api/confd/1.1/users/me/forwards/busy`, {
-        method: 'PUT',
-        headers: {
-          'X-Auth-Token': token,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          enabled: Boolean(forwardBusy.value.trim()),
-          destination: forwardBusy.value.trim() || null,
-        }),
-      })
-
-      await fetch(`${host}/api/confd/1.1/users/me/forwards/noanswer`, {
-        method: 'PUT',
-        headers: {
-          'X-Auth-Token': token,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          enabled: Boolean(forwardNoAnswer.value.trim()),
-          destination: forwardNoAnswer.value.trim() || null,
-        }),
-      })
-
-      await fetch(`${host}/api/confd/1.1/users/me/forwards/unconditional`, {
-        method: 'PUT',
-        headers: {
-          'X-Auth-Token': token,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          enabled: Boolean(forwardAll.value.trim()),
-          destination: forwardAll.value.trim() || null,
-        }),
-      })
-    } catch (e) {
-      console.warn('Lỗi lưu dịch vụ cuộc gọi lên Wazo Confd:', e)
+  if (saving.value) return
+  saving.value = true
+  const context = captureSessionContext()
+  const fetch = createSessionFetch(context)
+  try {
+    localStorage.setItem('smartcall_selected_mic', selectedMic.value)
+    localStorage.setItem('smartcall_selected_speaker', selectedSpeaker.value)
+    await wazoService.applyAudioDevices()
+    saveFeatures(featureConfig.value)
+    const token = wazoService.getToken()
+    const host = wazoService.getHostUrl()
+    const changes = []
+    const baseline = serviceBaseline.value
+    if (baseline.dnd !== null && baseline.dnd !== dndEnabled.value) {
+      const enabled = dndEnabled.value
+      changes.push({ path: 'services/dnd', body: { enabled }, commit: () => { baseline.dnd = enabled } })
     }
-  }
-
-  localStorage.setItem('smartcall_auto_record_calls', autoRecordCalls.value ? 'true' : 'false')
-  emit('close')
-  window.dispatchEvent(
-    new CustomEvent('app-toast', {
-      detail: { message: '✅ Đã lưu cài đặt và cấu hình tổng đài thành công!', type: 'success' },
-    }),
-  )
+    if (baseline.forwards) {
+      for (const [type, value] of [['busy', forwardBusy.value.trim()], ['noanswer', forwardNoAnswer.value.trim()], ['unconditional', forwardAll.value.trim()]]) {
+        if (value !== baseline.forwards[type]) {
+          changes.push({ path: `forwards/${type}`, body: { enabled: Boolean(value), destination: value || null }, commit: () => { baseline.forwards[type] = value } })
+        }
+      }
+    }
+    if (changes.length && !token) throw new Error('Phiên đăng nhập đã kết thúc.')
+    const failures = []
+    for (const change of changes) {
+      try {
+        const res = await fetch(`${host}/api/confd/1.1/users/me/${change.path}`, {
+          method: 'PUT', headers: { 'X-Auth-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(change.body), signal: AbortSignal.timeout(5000),
+        })
+        if (!res.ok) throw new Error(`${change.path}: HTTP ${res.status}`)
+        change.commit()
+      } catch (err) { failures.push(err.message) }
+    }
+    if (!isSessionContextCurrent(context)) return
+    if (failures.length) throw new Error(`Chưa lưu được một số dịch vụ: ${failures.join('; ')}`)
+    localStorage.setItem('smartcall_auto_record_calls', autoRecordCalls.value ? 'true' : 'false')
+    stopMicMeter()
+    emit('close')
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { type: 'success', message: 'Đã lưu các cài đặt đã thay đổi.' } }))
+  } catch (err) {
+    if (isSessionContextCurrent(context)) window.dispatchEvent(new CustomEvent('app-toast', { detail: { type: 'error', message: err.message } }))
+  } finally { saving.value = false }
 }
+
 </script>
 
 <style scoped>

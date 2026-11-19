@@ -1,4 +1,64 @@
-Oke, bây giờ lên plan chi tiết thực hiện việc sau giúp tôi:
-1. Loại bỏ hoàn toàn tính năng hold và icon hold , thay vào đó xem thêm button add member vào cuộc gọi đang có, như bên android ấy, ví dụ tôi đang call 3 người , tôi ấn vào nút add người, danh sách add người này cũng chỉ hiện danh sách người đang online, cho phép chọn để add thêm vào cuộc hội thoại, check xem wazo có giới hạn bao nhiêu người trong cuộc trò chuyện không
-2. Chỉnh sửa view nhận được cuộc gọi tới, view và icon nghe và từ chối trông chưa ổn lắm
-3. check lại xem cái refresh token của mình xem, thi thoảng tôi vẫn thấy acc của tôi bị logout trên web mặc dù không ai đăng nhập vào, check xem nguyên nhân do đâu
+
+Tôi vừa bàn bạc xong và giờ có các cách thức triển khai mới và nhiệm vụ mới. Tôi sẽ tổng hợp lại theo ý kiến của tôi, hãy phân tích và đưa ra hướng đi đsung đắn, hoặc nếu cần thêm thông tin nào cần xác thực chi tiết để hiểu rõ vấn đề hơn thì cứ bảo để tôi trả lời.
+1. Đây là vấn đề cũ, luồng code của mình ngày xưa là logout giữa web - web rất ổn, sau đó mình chỉnh theo app thì logout giữa web- app rất ổn do mình bắn status, nhưng lại bị hạn chế và delay bên web, sau đó mình chỉnh sửa thành bản hiện tại thì tôi test web-web rất oke, nhưng bên web-app lại không còn realtime như lần thứ 2 nữa, nó chỉ thực sự bị đăng xuất khi call api, nghĩa là nếu điện thoại k ấn gì, thì vẫn k bị đăng xuất, check cho tôi xem tại sao, có cách nào fix triệt để không, và tôi cũng test ra được 1 case : ví dụ tôi login acc Vladimir trước, sau đó ngắt kết nối mạng của web đó, sau đó và web khác đăng nhập lại acc vladimir, thì vừa đăng nhập xong thì nó hiện đã đăng nhập tại chỗ khác và đăng xuất luôn, hình như khi ngắt mạng thì token ,... tất cả bị lỗi bị null hết thì phải, check giúp tôi case này nữa
+
+2. Đây mới là phần rule và lộ trình mới.
++ triển khai REST API bằng Python ( sử dụng db sqlLite)
++ tạo các api liên quan đến việc login bằng SingleIdAuth
++ tạo các api tin nhắn trên db này
+
+2.1 Đại loại là hiện tại mình lấy dữ liệu , tài khoản, tên hiển thị, email ,... từ bên wazo, nhưng nó chỉ là data fake mình tạo ra, mục đích của ứng dụng này là dành cho các công nhân trong công ty sử dụng, sẽ phải login và lấy thông tin thật của họ chứ không phải như trên wazo mình tự tạo tự test như hiện giờ.
+như hiện tại, khi trên máy tính của tôi, khi tôi mở chrome hoặc edge thì nó sẽ tự động mở 1 trang (https://idp.samsungdisplay.com/samlsso?tenantDomain=display.company&spEntityID=www.samsung.net) , trang này sẽ tự động đăng nhập tài khoản trong công ty của tôi, sau khi nó sẽ tự login và tài khoản của tôi, có hết tất cả thông tin của tôi trong công ty như :
+Đây là payload :   0: "1: "USERID"2: "3: "MAIL"4: "THEME"5: "SORGID"6: "VOIPSTATUS"7: "VOIPNUMBER" 8: "TIMEZONE"9: "TIMEZONEID"10: "ICODE": "MCODE"12: "IMCODE"13: "COOKIESAVEDYN"14: "COMPID"15: "DARKMODEYN"16: "USABLESVCLIST"17: "BIZCLSFCD"
+Đây là preview : LOGINID: "MAIL: "vhung99.nguyen@samsung.com,....
+Đây là respronse của userinfo.js :
+
+deptID": "20003109C5D16127",
+        "email": "vhung99.nguyen@samsung.com",
+                "encoding": "EUC-KR",
+                        "epHeader": null,
+                                "epID": "P260804015627C110329",
+                                        "hostName": "cas104.samsung.com",
+                                                "icode": null,
+                                                        "internalAttachOnly": "N",
+                                                                "locale": "en_US",
+                                                                        "localeStr": "en_US.EUC-KR",
+                                                                                "mobiledeskUser": "N",
+                                                                                        "orgID": "SDBN",
+                                                                                                "protocolType": null,
+                                                                                                        "secuGrdCd": "5",
+                                                                                                                "sendrIndiVal": "Nguyen Van Hung/AI Transformation Part(SDV)/Samsung Display",
+                                                                                                                        "serverLocation": "KR",
+                                                                                                                                "timeZone": "GMT+9",
+                                                                                                                                        "timeZoneId": "Asia/Seoul",
+                                                                                                                                                "userID": "vhung99.nguyen",
+                                                                                                                                                        "name": "Nguyen Van Hung",
+                                                                                                                                                                "deptName": "AI Transformation Part(SDV)",
+                                                                                                                                                                        "compName": "Samsung Display",
+                                                                                                                                                                                "position": "",
+                                                                                                                                                                                        "mailVersion": "v6.5_c1.0",
+                                                                                                                                                                                                "extStorage": "N",
+                                                                                                                                                                                                        "voipStatus": "WC",
+                                                                                                                                                                                                                "mailSetCode": "104P@kor4.samsung.net",
+                                                                                                                                                                                                                        "compDomain": "C11@kor4.samsung.net",
+                                                                                                                                                                                                                                "realNameYN": "Y",
+                                                                                                                                                                                                                                        "outlAcntTypeCd": "",
+                                                                                                                                                                                                                                                "cntEncUser": "N",
+                                                                                                                                                                                                                                                        "cntEncSecurity": "",
+                                                                                                                                                                                                                                                                "cntEncDeptHeader": "",
+                                                                                                                                                                                                                                                                        "kmsStatsCd": null,
+                                                                                                                                                                                                                                                                                "mysingleVersion": "V8",
+                                                                                                                                                                                                                                                                                        "bizClsfCd": null
+                                                                                                                                                                                                                                                                                        Tóm lại, trước giờ mình fake data, và giờ mình cần phương thức truy cập và lấy dữ liệu từ idp, bởi vì của mình là web, và cơ chế hiện tại đã là mở web lên nó tự login và idp và hiện thị hết thông tin người dùng rồi
+                                                                                                                                                                                                                                                                                        Tôi cũng chưa chắc chắn và nghe rõ đoạn này lắm, nhưng đại loại là wazo sẽ đổ data thật vào, sẽ gồm name và email và 1 vài cái khác,...
+                                                                                                                                                                                                                                                                                        Và ta sẽ cần phải connect giữa wazo và idp, wazo sẽ chứa các trường thông tin name, mail,... và ta sẽ phải liên kết qua mail vì mail là cố định, vậy là khi ấn login trên web, web sẽ call tới idp, idp sẽ trả về json, mình sẽ bóc tách và so sánh với bên wazo theo email, và thông tin tên sẽ lấy từ wazo, các cái khác như id , depart, avata , .. và rất nhiều thông tin khác nếu cần thiết.
+
+                                                                                                                                                                                                                                                                                        Đó sẽ là nhiệm vụ 1 của mình.
+                                                                                                                                                                                                                                                                                        Và nhiệm vụ thứ 2 là sẽ có khả năng bên web mình sẽ phải xây dựng backend nữa ( tôi cũng chưa hiểu đoạn này có mục đích để làm gì lắm). Cụ thể thì là 3 ý ở mục 2 :
+                                                                                                                                                                                                                                                                                        + triển khai REST API bằng Python ( sử dụng db sqlLite)
+                                                                                                                                                                                                                                                                                        + tạo các api liên quan đến việc login bằng SingleIdAuth
+                                                                                                                                                                                                                                                                                        + tạo các api tin nhắn trên db này
+
+                                                                                                                                                                                                                                                                                        Tôi được nghe bảo sẽ tạo backend bên web, dùng restAPI + python, tạo các api tin nhắn như delete, insert , như hiện tại mình thì mình đang mã hóa , nên bên web hiện thị oke còn bên phone thì không handle nên hiện thị raw text luôn
+
+                                                                                                                                                                                                                                                                                        Hãy đọc hiểu, phân tích chi tiết, và giải thích lại cho tôi, chi rõ hướng đi, việc cần làm, và những gì chưa hiểu cần confirm thì hỏi tôi. 

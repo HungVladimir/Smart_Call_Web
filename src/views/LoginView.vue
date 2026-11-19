@@ -199,6 +199,7 @@ import { useRouter } from 'vue-router'
 import { wazoService, callStore } from '@/services/wazo'
 import { getFeatures } from '@/config/features'
 import { logger } from '@/services/loggerService'
+import { captureSessionContext, assertSessionContext, createSessionFetch } from '@/services/sessionScope'
 
 const router = useRouter()
 const features = ref(getFeatures())
@@ -280,11 +281,14 @@ const handleLogin = async () => {
       setTimeout(() => reject(new Error('Timeout máy chủ tổng đài')), 15000),
     )
     const session = await Promise.race([wazoService.login(u, p), timeoutPromise])
+    const loginContext = captureSessionContext()
+    const fetch = createSessionFetch(loginContext)
+    let profileUuid = ''
 
     // 1. Trích xuất thông tin người dùng trực tiếp từ Session SDK (không phát sinh CORS preflight)
     const profile = session?.profile || wazoService.session?.profile || {}
     const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim()
-    realDisplayName = fullName || session?.displayName || u
+    realDisplayName = fullName || (typeof session?.displayName === 'function' ? session.displayName() : session?.displayName) || u
 
     let exten = ''
     try {
@@ -292,7 +296,7 @@ const handleLogin = async () => {
     } catch {
       /* ignore */
     }
-    realExtension = exten || (u === 'alice' ? '1001' : (u === 'bob' ? '1002' : '1001'))
+    realExtension = exten || ''
 
     let realDepartment = profile?.department || ''
 
@@ -302,11 +306,12 @@ const handleLogin = async () => {
       const host = wazoService.host.startsWith('http') ? wazoService.host : `https://${wazoService.host}`
       const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
         headers: { 'X-Auth-Token': token },
+        signal: AbortSignal.timeout(5000),
       })
       if (meRes.ok) {
         const meData = await meRes.json()
         if (meData.uuid) {
-          localStorage.setItem('smartcall_user_uuid', meData.uuid)
+          profileUuid = meData.uuid
         }
         if (!realDisplayName) {
           realDisplayName = [meData.firstname, meData.lastname].filter(Boolean).join(' ').trim()
@@ -323,6 +328,8 @@ const handleLogin = async () => {
       console.warn('Không thể truy xuất thông tin mở rộng từ confd:', confdErr)
     }
 
+    assertSessionContext(loginContext)
+    if (profileUuid) localStorage.setItem('smartcall_user_uuid', profileUuid)
     // Ghi nhớ tên đăng nhập nếu bật Remember me
     if (rememberMe.value) {
       localStorage.setItem('smartcall_remembered_username', u)
@@ -331,10 +338,13 @@ const handleLogin = async () => {
     }
 
     const finalName = realDisplayName || u
-    const finalExt = realExtension || '1001'
+    const finalExt = realExtension || ''
 
     localStorage.setItem('smartcall_username', finalName)
     localStorage.setItem('smartcall_extension', finalExt)
+    callStore.myExtension = finalExt
+    callStore.myUserName = finalName
+    callStore.myUserUuid = localStorage.getItem('smartcall_user_uuid') || ''
     if (realDepartment) {
       localStorage.setItem('smartcall_department', realDepartment)
       localStorage.setItem('smartcall_user_department', realDepartment)

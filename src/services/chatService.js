@@ -1,3 +1,4 @@
+import { captureSessionContext, assertSessionContext, isSessionContextCurrent, createSessionFetch, invalidateSession } from './sessionScope'
 import { wazoService } from './wazo'
 import { contactService } from './contactService'
 import { websocketService } from './websocketService'
@@ -44,7 +45,6 @@ export const formatMessageDateTime = (isoOrTimestamp) => {
 class ChatService {
   constructor() {
     this.rooms = []
-    this.activeRoomId = null
     this._fetchingRoomsPromise = null
     if (typeof window !== 'undefined') {
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
@@ -54,15 +54,6 @@ class ChatService {
         this.getRooms().catch(() => {})
       })
     }
-  }
-
-  // Quản lý ID phòng đang mở tích cực trong RAM (SSOT - Triệt tiêu localStorage)
-  setActiveRoomId(roomId) {
-    this.activeRoomId = roomId || null
-  }
-
-  getActiveRoomId() {
-    return this.activeRoomId
   }
 
   // Tải dữ liệu phòng chat: thuần 100% API thật từ Wazo server (Issue 8 & Rule 2 GEMINI.md)
@@ -88,6 +79,19 @@ class ChatService {
     }
   }
 
+  _trustedCommand(room, message) {
+    const sender = message?.user_uuid || message?.message?.user_uuid || ''
+    const content = message?.content || message?.message?.content || ''
+    if (!room || room.isDirect || !room.adminVerified || sender !== room.adminUuid) return false
+    return /^(?:🚫|🔔)?\s*\[SYSTEM:(?:ROOM_CLOSED|MSG_DELETED|ROOM_RENAME)(?::|\])/.test(content)
+  }
+
+  _requireRoomAdmin(room) {
+    if (!room?.adminVerified || room.adminUuid !== wazoService.getMyUserUuid()) {
+      throw new Error('Máy chủ chưa xác nhận quyền quản trị nhóm. Không thể thực hiện thao tác này an toàn.')
+    }
+  }
+
   // Xử lý tin nhắn đến thời gian thực qua WebSocket (Tập trung toàn hệ thống - SSOT)
   handleIncomingMessage(data) {
     if (!data) return
@@ -99,18 +103,16 @@ class ChatService {
     const timeStr = formatMessageDateTime(data.created_at || msgTimestamp)
 
     if (!roomUuid || !content) return
+    const trustedCommand = this._trustedCommand(this.rooms.find((room) => room.id === roomUuid), data)
 
     // 0. Xử lý Tombstone giải tán / đóng phòng thời gian thực
-    if (content.includes('[SYSTEM:ROOM_CLOSED')) {
+    if (trustedCommand && content.includes('[SYSTEM:ROOM_CLOSED')) {
       logger.info('CHAT', `Phòng [${roomUuid}] đã bị giải tán qua Tombstone SYSTEM:ROOM_CLOSED. Tự động ẩn phòng.`)
       const targetRoom = (this.rooms || []).find((r) => r.id === roomUuid)
       if (targetRoom) {
         targetRoom.isClosed = true
       }
       this.rooms = (this.rooms || []).filter((r) => r.id !== roomUuid)
-      if (this.activeRoomId === roomUuid) {
-        this.setActiveRoomId(null)
-      }
       this.saveRooms()
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId: roomUuid } }))
@@ -119,7 +121,7 @@ class ChatService {
     }
 
     // 0.1. Xử lý Tombstone xóa tin nhắn thời gian thực
-    if (content.includes('[SYSTEM:MSG_DELETED:ids="')) {
+    if (trustedCommand && content.includes('[SYSTEM:MSG_DELETED:ids="')) {
       const delMatch = content.match(/\[SYSTEM:MSG_DELETED:ids="([^"]+)"/)
       if (delMatch && delMatch[1]) {
         const deletedIds = delMatch[1].split(',').map((s) => s.trim()).filter(Boolean)
@@ -159,7 +161,6 @@ class ChatService {
         title: alias || 'Cuộc trò chuyện',
         preview: content,
         time: timeStr,
-        unread: 0,
         avatarBg: isGroup ? '#8b5cf6' : '#3b82f6',
         icon: isGroup ? '👥' : (alias || 'CH').slice(0, 2).toUpperCase(),
         isDirect: !isGroup,
@@ -194,18 +195,18 @@ class ChatService {
     const fwdMatch = content.match(fwdRegex)
     if (fwdMatch) {
       isFwd = true
-      if (fwdMatch[1]) senderUuid = fwdMatch[1].trim()
-      if (fwdMatch[2]) senderAlias = fwdMatch[2].trim()
-      if (fwdMatch[3]) finalTimeStr = fwdMatch[3].trim()
+      // Forward metadata never overrides the authenticated sender UUID.
+      // Keep the actual alias; forwarded attribution is display-only.
+      // Giữ thời điểm do máy chủ cung cấp để sắp xếp tin nhắn.
       finalContent = fwdMatch[4]
     }
 
     // Nhận diện và làm sạch thẻ đổi tên nhóm (ROOM_RENAME) chuẩn hệ thống
-    const renameMatch = finalContent.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/)
+    const renameMatch = trustedCommand && finalContent.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/)
     if (renameMatch && renameMatch[1]) {
       targetRoom.title = renameMatch[1].trim()
       finalContent = finalContent.replace(/\[SYSTEM:ROOM_RENAME:title="[^"]+"\]\s*/, '')
-    } else if (finalContent.includes('đã đổi tên nhóm thành: "')) {
+    } else if (trustedCommand && finalContent.includes('đã đổi tên nhóm thành: "')) {
       const legacyMatch = finalContent.match(/đã đổi tên nhóm thành: "([^"]+)"/)
       if (legacyMatch && legacyMatch[1]) {
         targetRoom.title = legacyMatch[1].trim()
@@ -213,11 +214,9 @@ class ChatService {
     }
 
     let isMine = false
-    if (myUserUuid && senderUuid && senderUuid === myUserUuid) {
+    if (myUserUuid && senderUuid === myUserUuid) {
       isMine = true
-    } else if (currentUserName && senderAlias && senderAlias.toLowerCase() === currentUserName.toLowerCase()) {
-      isMine = true
-    }
+      }
 
     // 2. Nếu là tin nhắn của chính mình, kiểm tra xem có tin tạm (prefix cmsg-) cùng nội dung hay không
     if (isMine) {
@@ -252,21 +251,11 @@ class ChatService {
       text: finalContent,
       time: finalTimeStr,
       timestamp: msgTimestamp,
-      readStatus: isMine ? 'Đã gửi' : 'Read',
-      readers: [],
       user_uuid: senderUuid,
       alias: senderAlias,
       isForwarded: isFwd,
     }
 
-    if (!isMine) {
-      // Khi đối phương gửi tin nhắn phản hồi, chuyển tất cả tin trước đó của mình sang Đã xem
-      targetRoom.messages.forEach((m) => {
-        if (m.sender === 'mine') {
-          m.readStatus = 'Đã xem'
-        }
-      })
-    }
 
     targetRoom.messages.push(newMsg)
     targetRoom.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
@@ -275,13 +264,8 @@ class ChatService {
     targetRoom.updatedAt = msgTimestamp
 
 
-    const activeRoomId = this.activeRoomId
-    if (activeRoomId !== roomUuid && !isMine) {
-      targetRoom.unread = (targetRoom.unread || 0) + 1
-    }
-
     this.saveRooms()
-    logger.info('CHAT', `Nhận tin nhắn mới từ [${senderDisplayName}] trong phòng [${targetRoom.title}]: ${content}`)
+    logger.info('CHAT', 'Nhận tin nhắn mới', { roomId: roomUuid, messageId: msgId })
     window.dispatchEvent(
       new CustomEvent('smartcall-message-received', { detail: { roomId: roomUuid, message: newMsg } }),
     )
@@ -291,6 +275,8 @@ class ChatService {
    * Lấy danh sách các phòng chat của người dùng (Đồng bộ phòng server Wazo và phòng 1-1 cục bộ)
    */
   async getRooms() {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (this._fetchingRoomsPromise) {
       return this._fetchingRoomsPromise
     }
@@ -335,6 +321,7 @@ class ChatService {
             ).toLowerCase().trim()
 
             // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
+            assertSessionContext(sessionContext)
             const serverRooms = items.map((room) => {
               const existing = (this.rooms || []).find((r) => r.id === room.uuid)
               const serverUsers = Array.isArray(room.users) ? room.users : []
@@ -390,24 +377,7 @@ class ChatService {
                 }
               } else {
                 displayTitle = room.name || 'Phòng thảo luận nhóm'
-                // Nhận diện tên nhóm cập nhật mới nhất từ Tag hệ thống chuyên biệt
-                if (existing?.messages && existing.messages.length > 0) {
-                  const renameMsg = [...existing.messages].reverse().find(
-                    (m) =>
-                      m.text &&
-                      (m.text.includes('[SYSTEM:ROOM_RENAME:title="') ||
-                        /\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/.test(m.text) ||
-                        m.text.includes('đã đổi tên nhóm thành: "')),
-                  )
-                  if (renameMsg) {
-                    const match =
-                      renameMsg.text.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/) ||
-                      renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
-                    if (match && match[1]) {
-                      displayTitle = match[1].trim()
-                    }
-                  }
-                }
+
               }
 
               // Chuẩn hóa updatedAt theo timestamp của tin nhắn gần nhất
@@ -427,9 +397,8 @@ class ChatService {
               const serverAdminUuid =
                 room.admin_uuid ||
                 room.creator_uuid ||
-                room.user_uuid ||
-                (serverUsers[0] ? (typeof serverUsers[0] === 'string' ? serverUsers[0] : serverUsers[0].uuid) : '')
-              const defaultAdminUuid = existing?.adminUuid || serverAdminUuid
+                ''
+              const defaultAdminUuid = serverAdminUuid
 
               // Ánh xạ thành viên 100% từ danh sách serverUsers của máy chủ Wazo
               const mappedMembers = serverUsers.map((u) => {
@@ -455,16 +424,15 @@ class ChatService {
                 title: displayTitle,
                 preview: existing?.preview || (isGroup ? 'Phòng thảo luận nhóm mới' : 'Cuộc trò chuyện mới'),
                 time: existing?.time || '',
-                unread: existing?.unread || 0,
                 avatarBg: avatarBg,
                 icon: icon,
                 isDirect: isDirect,
                 ext: directExt,
                 adminUuid: defaultAdminUuid,
+                adminVerified: Boolean(serverAdminUuid),
                 messages: existing?.messages || [],
                 members: mappedMembers,
                 memberCount: memberCount,
-                pinned: existing?.pinned || '',
                 updatedAt: lastMsgTimestamp || existing?.updatedAt || 0,
               }
             })
@@ -477,7 +445,7 @@ class ChatService {
               await Promise.allSettled(
                 roomsNeedFetch.map(async (room) => {
                   try {
-                    const msgs = await this.getRoomMessages(room.id, 15)
+                    const msgs = await this.getRoomMessages(room.id, 15, room)
                     if (msgs && msgs.length > 0) {
                       room.messages = msgs
                       const last = msgs[msgs.length - 1]
@@ -496,16 +464,8 @@ class ChatService {
             serverRooms.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
             // Lọc bỏ hoàn toàn các phòng nhóm đã bị giải tán (Tombstone SYSTEM:ROOM_CLOSED)
-            const activeServerRooms = serverRooms.filter((r) => {
-              if (r.isDirect) return true // Luôn giữ lại toàn bộ cuộc trò chuyện 1-1
-              if (r.isClosed) return false
-              const lastMsg = r.messages?.[r.messages.length - 1]
-              const preview = r.preview || ''
-              const isClosed =
-                (lastMsg?.text && lastMsg.text.includes('[SYSTEM:ROOM_CLOSED')) ||
-                preview.includes('[SYSTEM:ROOM_CLOSED')
-              return !isClosed
-            })
+            const activeServerRooms = serverRooms.filter((room) => !room.isClosed)
+
 
             // Giữ lại các phòng chat 1-1 local nếu CHƯA có phòng server nào tương ứng
             const directRooms = (this.rooms || []).filter(
@@ -520,6 +480,7 @@ class ChatService {
                 merged.push(dr)
               }
             }
+            assertSessionContext(sessionContext)
             this.rooms = merged
             this.saveRooms(true) // Silent: không kích hoạt vòng lặp sự kiện
             return [...this.rooms]
@@ -528,7 +489,7 @@ class ChatService {
       } catch (err) {
         /* Fallback sang local rooms */
       } finally {
-        this._fetchingRoomsPromise = null
+        if (isSessionContextCurrent(sessionContext)) this._fetchingRoomsPromise = null
       }
 
       this.sortRooms()
@@ -542,9 +503,11 @@ class ChatService {
    * Tải lịch sử tin nhắn từ Wazo Chatd server cho một phòng chat
    * GET /api/chatd/1.0/users/me/rooms/{roomId}/messages?limit=50
    */
-  async getRoomMessages(roomId, limit = 50) {
+  async getRoomMessages(roomId, limit = 50, roomContext = null) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (!roomId) return []
-    const localRoom = this.rooms.find((r) => r.id === roomId)
+    const localRoom = roomContext || this.rooms.find((r) => r.id === roomId)
 
     try {
       const token = wazoService.getToken()
@@ -575,14 +538,14 @@ class ChatService {
             // Tìm mốc giải tán nhóm gần nhất [SYSTEM:ROOM_CLOSED] nếu có
             let lastClosedIdx = -1
             for (let i = sortedItems.length - 1; i >= 0; i--) {
-              if (sortedItems[i].content && sortedItems[i].content.includes('[SYSTEM:ROOM_CLOSED')) {
+              if (this._trustedCommand(localRoom, sortedItems[i]) && sortedItems[i].content.includes('[SYSTEM:ROOM_CLOSED')) {
                 lastClosedIdx = i
                 break
               }
             }
 
             // Nếu mốc [SYSTEM:ROOM_CLOSED] là tin nhắn cuối cùng -> Phòng hiện đang bị giải tán
-            if (lastClosedIdx === sortedItems.length - 1) {
+            if (lastClosedIdx >= 0 && lastClosedIdx === sortedItems.length - 1) {
               if (localRoom) {
                 if (!localRoom.isDirect) {
                   localRoom.isClosed = true
@@ -611,7 +574,7 @@ class ChatService {
             const deletedIdsSet = new Set()
             for (const item of activeItems) {
               const c = item.content || ''
-              if (c.includes('[SYSTEM:MSG_DELETED:ids="')) {
+              if (this._trustedCommand(localRoom, item) && c.includes('[SYSTEM:MSG_DELETED:ids="')) {
                 const match = c.match(/\[SYSTEM:MSG_DELETED:ids="([^"]+)"/)
                 if (match && match[1]) {
                   match[1].split(',').forEach((id) => {
@@ -626,7 +589,7 @@ class ChatService {
             const visibleItems = activeItems.filter((item) => {
               const itemId = item.uuid || item.id
               if (itemId && deletedIdsSet.has(itemId)) return false
-              if (item.content && (item.content.includes('[SYSTEM:MSG_DELETED:ids=') || item.content.includes('[SYSTEM:ROOM_CLOSED'))) return false
+              if (this._trustedCommand(localRoom, item) && (item.content.includes('[SYSTEM:MSG_DELETED:ids=') || item.content.includes('[SYSTEM:ROOM_CLOSED'))) return false
               return true
             })
 
@@ -644,25 +607,23 @@ class ChatService {
               const fwdMatch = msgContent.match(fwdRegex)
               if (fwdMatch) {
                 isFwd = true
-                if (fwdMatch[1]) senderUuid = fwdMatch[1].trim()
-                if (fwdMatch[2]) senderAlias = fwdMatch[2].trim()
-                if (fwdMatch[3]) msgTimeStr = fwdMatch[3].trim()
+                // Preserve the server sender UUID for forwarded content.
+                // Preserve the server alias.
+                // Preserve the server timestamp.
                 msgContent = fwdMatch[4] // Lấy nội dung gốc sạch sẽ
               }
 
               // Giải mã thẻ đổi tên nhóm (ROOM_RENAME) chuẩn hệ thống
-              const renameMatch = msgContent.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/)
+              const renameMatch = this._trustedCommand(localRoom, m) && msgContent.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/)
               if (renameMatch && renameMatch[1]) {
                 latestRenamedTitle = renameMatch[1].trim()
                 msgContent = msgContent.replace(/\[SYSTEM:ROOM_RENAME:title="[^"]+"\]\s*/, '')
               }
 
               let isMine = false
-              if (myUserUuid && senderUuid && senderUuid === myUserUuid) {
+              if (myUserUuid && senderUuid === myUserUuid) {
                 isMine = true
-              } else if (currentUserName && senderAlias && senderAlias.toLowerCase() === currentUserName.toLowerCase()) {
-                isMine = true
-              }
+                }
 
               let senderDisplayName = senderAlias || 'Đồng nghiệp'
               if (isMine) {
@@ -681,8 +642,6 @@ class ChatService {
                 text: msgContent,
                 time: msgTimeStr,
                 timestamp: msgTimestamp,
-                readStatus: isMine ? 'Đã gửi' : 'Read',
-                readers: [],
                 user_uuid: senderUuid,
                 alias: senderAlias,
                 isForwarded: isFwd,
@@ -691,45 +650,6 @@ class ChatService {
 
             // Sắp xếp tăng dần theo thời gian (cũ ở trên, mới ở dưới)
             mapped.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-
-            // Chuẩn hóa trạng thái: Đang gửi... -> Đã gửi -> Đã nhận -> Đã xem
-            let lastTheirsIndex = -1
-            for (let idx = mapped.length - 1; idx >= 0; idx--) {
-              if (mapped[idx].sender === 'theirs') {
-                lastTheirsIndex = idx
-                break
-              }
-            }
-
-            let isRecipientOnline = false
-            if (localRoom?.isDirect) {
-              const myExt = wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
-              const otherMember = (localRoom.members || []).find((mem) => {
-                const isMe =
-                  (myUserUuid && (mem.id === myUserUuid || mem.uuid === myUserUuid)) ||
-                  (myExt && (mem.ext === myExt || mem.number === myExt))
-                return !isMe
-              })
-              const targetExt = otherMember?.ext || (localRoom.ext ? String(localRoom.ext).split('@')[0] : '')
-              const targetUuid = otherMember?.id || otherMember?.uuid || localRoom.peerUuid || ''
-              const targetContact = (targetExt && contactService.findContactByExtension(targetExt)) ||
-                                    (targetUuid && contactService.findContactByUuid(targetUuid))
-              if (targetContact && targetContact.status && targetContact.status !== 'offline' && targetContact.status !== 'unavailable') {
-                isRecipientOnline = true
-              }
-            }
-
-            mapped.forEach((msg, idx) => {
-              if (msg.sender === 'mine') {
-                if (lastTheirsIndex !== -1 && idx < lastTheirsIndex) {
-                  msg.readStatus = 'Đã xem'
-                } else if (isRecipientOnline) {
-                  msg.readStatus = 'Đã nhận'
-                } else {
-                  msg.readStatus = 'Đã gửi'
-                }
-              }
-            })
 
             if (localRoom) {
               localRoom.messages = mapped
@@ -743,22 +663,6 @@ class ChatService {
                   // Phân giải tên nhóm mới nhất từ tin nhắn đổi tên chuẩn Tag hệ thống
                   if (latestRenamedTitle) {
                     localRoom.title = latestRenamedTitle
-                  } else {
-                    const renameMsg = [...mapped].reverse().find(
-                      (m) =>
-                        m.text &&
-                        (m.text.includes('[SYSTEM:ROOM_RENAME:title="') ||
-                          /\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/.test(m.text) ||
-                          m.text.includes('đã đổi tên nhóm thành: "')),
-                    )
-                    if (renameMsg) {
-                      const match =
-                        renameMsg.text.match(/\[SYSTEM:ROOM_RENAME:title="([^"]+)"\]/) ||
-                        renameMsg.text.match(/đã đổi tên nhóm thành: "([^"]+)"/)
-                      if (match && match[1]) {
-                        localRoom.title = match[1].trim()
-                      }
-                    }
                   }
                 }
               }
@@ -779,12 +683,14 @@ class ChatService {
    * Tìm hoặc tạo phòng chat 1-1 với một máy lẻ (Hỗ trợ Wazo Chatd API chuẩn)
    */
   async getDirectRoom(ext, name, currentUserName = 'Người dùng') {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     if (!this.rooms || this.rooms.length === 0) {
       this.rooms = this.loadSavedRooms()
     }
 
     const myExt =
-      wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || '1001'
+      wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
     const myUuid =
       wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || 'me'
 
@@ -818,6 +724,7 @@ class ChatService {
     } else {
       targetUuid = await contactService.resolveUserUuid(cleanExt)
     }
+    assertSessionContext(sessionContext)
 
     // 3. Gọi Wazo Chatd API để tìm phòng 1-1 có sẵn hoặc tạo phòng mới trên server tổng đài
     let realRoomUuid = null
@@ -887,6 +794,7 @@ class ChatService {
       }
     }
 
+    assertSessionContext(sessionContext)
     // 4. Nâng cấp phòng tạm hiện có hoặc tạo mới
     if (realRoomUuid) {
       // Tìm phòng tạm direct- cũ để thay thế ID
@@ -920,7 +828,6 @@ class ChatService {
         title: displayTitle,
         preview: 'Bắt đầu cuộc trò chuyện...',
         time: 'Mới',
-        unread: 0,
         avatarBg: isSelf ? '#059669' : '#0284c7',
         icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
         isDirect: true,
@@ -960,7 +867,6 @@ class ChatService {
       title: displayTitle,
       preview: 'Bắt đầu cuộc trò chuyện...',
       time: 'Mới',
-      unread: 0,
       avatarBg: isSelf ? '#059669' : '#0284c7',
       icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
       isDirect: true,
@@ -989,12 +895,14 @@ class ChatService {
    * Cập nhật tức thì vào mảng phòng (Optimistic 0ms) và đồng bộ với Wazo Chatd
    */
   async sendMessage(roomId, text, userAlias = null) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
     const myRealName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Người dùng'
     const actualAlias = userAlias && userAlias !== 'Tôi' ? userAlias : myRealName
     const now = new Date()
     const msgTimestamp = now.getTime()
     const timeStr = formatMessageDateTime(now)
-    const tempId = `cmsg-${msgTimestamp}`
+    const tempId = `cmsg-${crypto.randomUUID()}`
 
     let targetRoomId = roomId
     let room = this.rooms.find((r) => r.id === targetRoomId)
@@ -1012,9 +920,11 @@ class ChatService {
       }
     }
 
-    const isSystemDeleter = text.includes('[SYSTEM:MSG_DELETED:ids=')
+    assertSessionContext(sessionContext)
+    const isSystemCommand = this._trustedCommand(room, { content: text, user_uuid: wazoService.getMyUserUuid() })
+    const isSystemDeleter = isSystemCommand && text.includes('[SYSTEM:MSG_DELETED:ids=')
     let displayText = text
-    if (text.includes('[SYSTEM:ROOM_RENAME:title="')) {
+    if (isSystemCommand && text.includes('[SYSTEM:ROOM_RENAME:title="')) {
       displayText = text.replace(/\[SYSTEM:ROOM_RENAME:title="[^"]+"\]\s*/, '')
     }
 
@@ -1026,8 +936,6 @@ class ChatService {
       text: displayText,
       time: timeStr,
       timestamp: msgTimestamp,
-      readStatus: 'Đang gửi...',
-      readers: [],
     }
 
     if (room && !isSystemDeleter) {
@@ -1073,29 +981,7 @@ class ChatService {
               }
             }
           }
-          newMsg.readStatus = 'Đã gửi'
 
-          // Kiểm tra xem đối phương có trực tuyến không để chuyển sang 'Đã nhận'
-          if (room?.isDirect) {
-            const myExt = wazoService.getMyExtension() || localStorage.getItem('smartcall_extension') || ''
-            const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
-            const otherMember = (room.members || []).find((mem) => {
-              const isMe =
-                (myUserUuid && (mem.id === myUserUuid || mem.uuid === myUserUuid)) ||
-                (myExt && (mem.ext === myExt || mem.number === myExt))
-              return !isMe
-            })
-            const targetExt = otherMember?.ext || (room.ext ? String(room.ext).split('@')[0] : '')
-            const targetUuid = otherMember?.id || otherMember?.uuid || room.peerUuid || ''
-            const targetContact = (targetExt && contactService.findContactByExtension(targetExt)) ||
-                                  (targetUuid && contactService.findContactByUuid(targetUuid))
-            if (targetContact && targetContact.status && targetContact.status !== 'offline' && targetContact.status !== 'unavailable') {
-              setTimeout(() => {
-                newMsg.readStatus = 'Đã nhận'
-                this.saveRooms()
-              }, 600)
-            }
-          }
           this.saveRooms()
         } else {
           throw new Error(`Máy chủ tổng đài báo lỗi khi gửi tin nhắn (${res.status})`)
@@ -1104,7 +990,7 @@ class ChatService {
         throw new Error('Không thể gửi tin nhắn do chưa kết nối máy chủ hoặc phòng chưa sẵn sàng')
       }
     } catch (e) {
-      newMsg.readStatus = 'Lỗi gửi'
+      if (!isSessionContextCurrent(sessionContext)) throw e
       newMsg.sendFailed = true
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
@@ -1128,6 +1014,9 @@ class ChatService {
    * @returns {Promise<Object>} Phòng nhóm mới được tạo
    */
   async createGroupRoom(groupName, memberUserUuids = [], forwardedMessages = []) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
+    if (forwardedMessages.length) throw new Error('Chuyển tiếp lịch sử khi tạo lại nhóm chưa được máy chủ hỗ trợ an toàn. Hội thoại gốc được giữ nguyên.')
     const cleanName = (groupName || '').trim() || 'Nhóm thảo luận mới'
     const myUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
     const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Người dùng'
@@ -1182,9 +1071,10 @@ class ChatService {
 
     const roomData = await res.json()
     const newRoomUuid = roomData.uuid || roomData.id
+    if (!newRoomUuid) throw new Error('Máy chủ chưa trả về mã nhóm hợp lệ.')
     logger.info('CHAT', `Tạo nhóm thành công trên Wazo server với UUID: ${newRoomUuid}`)
 
-    // Gửi tin nhắn khởi tạo nhóm chào mừng các thành viên & chuyển tiếp lịch sử (nếu có)
+    // Gửi lời chào dưới danh tính hiện tại; không tái tạo lịch sử hội thoại.
     try {
       await fetch(`${host}/api/chatd/1.0/users/me/rooms/${newRoomUuid}/messages`, {
         method: 'POST',
@@ -1200,41 +1090,14 @@ class ChatService {
         }),
       })
 
-      // Chuyển tiếp tin nhắn cũ sang phòng nhóm mới kèm FWD Metadata đối xứng
-      if (Array.isArray(forwardedMessages) && forwardedMessages.length > 0) {
-        const recentMsgs = forwardedMessages.slice(-25)
-        for (const m of recentMsgs) {
-          if (!m.text) continue
-          const origSender = m.senderName || (m.sender === 'mine' ? myName : 'Thành viên')
-          const origUuid = m.user_uuid || ''
-          const timeStr = m.time || ''
-          const fwdPayload = `💬 [FWD:user_uuid=${origUuid}|sender=${origSender}|time=${timeStr}] ${m.text}`
-
-          try {
-            await fetch(`${host}/api/chatd/1.0/users/me/rooms/${newRoomUuid}/messages`, {
-              method: 'POST',
-              headers: {
-                'X-Auth-Token': token,
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-              },
-              signal: AbortSignal.timeout(4000),
-              body: JSON.stringify({
-                content: fwdPayload,
-                alias: origSender,
-              }),
-            })
-          } catch (fwdErr) {
-            /* ignore individual message failure */
-          }
-        }
-      }
     } catch (msgErr) {
-      logger.warn('CHAT', `Không thể gửi tin nhắn khởi tạo/chuyển tiếp: ${msgErr.message}`)
+      logger.warn('CHAT', `Không thể gửi tin nhắn khởi tạo: ${msgErr.message}`)
     }
 
     // Làm mới danh sách phòng từ server
+    assertSessionContext(sessionContext)
     await this.getRooms()
+    assertSessionContext(sessionContext)
     const createdRoom = (this.rooms || []).find((r) => r.id === newRoomUuid)
     return createdRoom || roomData
   }
@@ -1244,27 +1107,29 @@ class ChatService {
    * @param {string} roomId - UUID phòng chat
    * @param {string} newTitle - Tên nhóm mới
    */
-  async renameGroup(roomId, newTitle) {
+async renameGroup(roomId, newTitle) {
+    const sessionContext = captureSessionContext()
     const cleanTitle = (newTitle || '').trim()
     if (!cleanTitle) {
       throw new Error('Vui lòng nhập tên nhóm mới')
     }
     const room = (this.rooms || []).find((r) => r.id === roomId)
-    if (!room) {
-      throw new Error('Không tìm thấy phòng chat')
-    }
+    if (!room) throw new Error('Không tìm thấy phòng chat')
+    this._requireRoomAdmin(room)
 
     const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Quản trị viên'
-    room.title = cleanTitle
-    room.updatedAt = Date.now()
-    this.saveRooms()
 
     // Gửi tin nhắn thông báo hệ thống lên server Wazo theo chuẩn Tag hệ thống chuyên biệt
     const renameTag = `🔔 [SYSTEM:ROOM_RENAME:title="${cleanTitle}"] [${myName}] đã đổi tên nhóm thành: "${cleanTitle}"`
     try {
-      await this.sendMessage(roomId, renameTag, 'Hệ thống')
+      const sent = await this.sendMessage(roomId, renameTag, 'Hệ thống')
+      if (sent.sendFailed) throw new Error('Chưa đổi tên nhóm trên máy chủ.')
+      assertSessionContext(sessionContext)
+      room.title = cleanTitle
+      room.updatedAt = Date.now()
+      this.saveRooms()
     } catch (e) {
-      logger.warn('CHAT', `Lỗi gửi tin nhắn thông báo đổi tên: ${e.message}`)
+      throw e
     }
 
     return room
@@ -1277,67 +1142,7 @@ class ChatService {
    * @param {string} memberUuid - UUID thành viên cần xóa
    */
   async removeMemberFromGroup(roomId, memberUuid) {
-    const room = (this.rooms || []).find((r) => r.id === roomId)
-    if (!room) {
-      throw new Error('Không tìm thấy phòng chat')
-    }
-
-    const remainingMembers = (room.members || []).filter(
-      (m) => (m.id !== memberUuid && m.uuid !== memberUuid),
-    )
-
-    if (remainingMembers.length < 2) {
-      throw new Error('Số lượng thành viên tối thiểu của nhóm là 2 người, không thể xóa thêm!')
-    }
-
-    const removedMember = (room.members || []).find(
-      (m) => (m.id === memberUuid || m.uuid === memberUuid),
-    )
-    const removedName = removedMember?.name || 'Một thành viên'
-    const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Quản trị viên'
-    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
-
-    const remainingUuids = remainingMembers.map((m) => m.id || m.uuid).filter(Boolean)
-
-    logger.info('CHAT', `Đang cập nhật nhóm sau khi xóa [${removedName}]...`)
-    const newRoom = await this.createGroupRoom(room.title, remainingUuids, room.messages || [])
-
-    // Gửi thông báo đến phòng cũ để thành viên bị xóa nhận biết trạng thái
-    try {
-      await this.sendMessage(roomId, `⚠️ Bạn [${removedName}] đã được Quản trị viên (${myName}) mời ra khỏi nhóm thảo luận.`, 'Hệ thống')
-    } catch (e) {
-      /* ignore */
-    }
-
-    // Đóng phòng cũ bằng Tombstone SYSTEM:ROOM_CLOSED chuẩn Wazo API
-    try {
-      await this.sendMessage(
-        roomId,
-        `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|new_room=${newRoom.id}|name="${room.title}"] Nhóm đã được chuyển sang phòng mới.`,
-        'Hệ thống',
-      )
-    } catch (e) {
-      /* ignore */
-    }
-
-    // Ẩn phòng cũ ngay lập tức khỏi RAM
-    this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
-    if (this.activeRoomId === roomId) {
-      this.setActiveRoomId(newRoom.id)
-    }
-    this.saveRooms()
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
-    }
-
-    // Gửi tin nhắn thông báo cập nhật vào phòng mới
-    try {
-      await this.sendMessage(newRoom.id, `👋 [${myName}] đã cập nhật thành viên: [${removedName}] đã rời nhóm thảo luận.`, 'Hệ thống')
-    } catch (e) {
-      /* ignore */
-    }
-
-    return newRoom
+    throw new Error('Thay đổi thành viên cần API quản lý nhóm của máy chủ. Nhóm và lịch sử hiện tại được giữ nguyên để tránh mất dữ liệu.')
   }
 
   /**
@@ -1349,70 +1154,7 @@ class ChatService {
    * @returns {Promise<Object>} Phòng nhóm mới được tạo
    */
   async addMembersToGroup(roomId, allMemberUuids, customTitle = null) {
-    const room = (this.rooms || []).find((r) => r.id === roomId)
-    if (!room) throw new Error('Không tìm thấy thông tin phòng nhóm cũ.')
-
-    const myName = wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || 'Quản trị viên'
-    const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
-    const targetTitle = (customTitle && customTitle.trim()) || room.title || 'Nhóm thảo luận'
-
-    // Xác định tên các thành viên mới được thêm vào
-    const oldMemberUuids = new Set((room.members || []).map((m) => m.id || m.uuid).filter(Boolean))
-    const addedUuids = (allMemberUuids || []).filter((u) => !oldMemberUuids.has(u))
-    const addedNames = addedUuids.map((u) => {
-      const c = (this.rooms || []).flatMap((r) => r.members || []).find((m) => (m.id === u || m.uuid === u))
-      return c?.name || `Thành viên`
-    })
-
-    logger.info('CHAT', `Đang tạo phòng nhóm mới mở rộng từ phòng [${roomId}] với ${allMemberUuids.length} thành viên...`)
-    const newRoom = await this.createGroupRoom(targetTitle, allMemberUuids, room.messages || [])
-
-    // Gửi thông báo đến phòng cũ để tất cả thành viên trong phòng cũ biết nhóm đã được mở rộng
-    try {
-      const addedDesc = addedNames.length > 0 ? ` (+${addedNames.join(', ')})` : ''
-      await this.sendMessage(
-        roomId,
-        `⚠️ Nhóm đã được Quản trị viên (${myName}) thêm thành viên${addedDesc} và chuyển sang phòng mới.`,
-        'Hệ thống',
-      )
-    } catch (e) {
-      /* ignore */
-    }
-
-    // Đóng phòng cũ bằng Tombstone SYSTEM:ROOM_CLOSED chuẩn Wazo API
-    try {
-      await this.sendMessage(
-        roomId,
-        `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|new_room=${newRoom.id}|name="${room.title}"] Nhóm đã được chuyển sang phòng mới.`,
-        'Hệ thống',
-      )
-    } catch (e) {
-      /* ignore */
-    }
-
-    // Ẩn phòng cũ ngay lập tức khỏi RAM
-    this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
-    if (this.activeRoomId === roomId) {
-      this.setActiveRoomId(newRoom.id)
-    }
-    this.saveRooms()
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
-    }
-
-    // Gửi tin nhắn chào mừng/thông báo vào phòng mới
-    try {
-      const addedDesc = addedNames.length > 0 ? `: [${addedNames.join(', ')}]` : ''
-      await this.sendMessage(
-        newRoom.id,
-        `👋 [${myName}] đã thêm thành viên mới vào nhóm thảo luận${addedDesc}.`,
-        'Hệ thống',
-      )
-    } catch (e) {
-      /* ignore */
-    }
-
-    return newRoom
+    throw new Error('Thay đổi thành viên cần API quản lý nhóm của máy chủ. Nhóm và lịch sử hiện tại được giữ nguyên để tránh mất dữ liệu.')
   }
 
   /**
@@ -1421,25 +1163,26 @@ class ChatService {
    * CHỈ áp dụng cho phòng nhóm (!isDirect), bảo toàn tuyệt đối kênh liên lạc 1-1
    * @param {string} roomId - UUID phòng chat nhóm
    */
-  async deleteRoom(roomId) {
+async deleteRoom(roomId) {
+    const sessionContext = captureSessionContext()
     const room = (this.rooms || []).find((r) => r.id === roomId)
     if (!room || room.isDirect) return false
+    this._requireRoomAdmin(room)
 
     const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
     const roomTitle = room.title || 'Nhóm thảo luận'
     const tombstoneMsg = `🚫 [SYSTEM:ROOM_CLOSED:by=${myUserUuid}|name="${roomTitle}"] Nhóm này đã được giải tán.`
 
     try {
-      await this.sendMessage(roomId, tombstoneMsg, 'Hệ thống')
+      const sent = await this.sendMessage(roomId, tombstoneMsg, 'Hệ thống')
+      if (sent.sendFailed) throw new Error('Chưa giải tán nhóm trên máy chủ.')
+      assertSessionContext(sessionContext)
     } catch (e) {
-      logger.warn('CHAT', `Lỗi gửi tombstone giải tán nhóm: ${e.message}`)
+      throw e
     }
 
     // Ẩn phòng nhóm ngay lập tức khỏi RAM
     this.rooms = (this.rooms || []).filter((r) => r.id !== roomId)
-    if (this.activeRoomId === roomId) {
-      this.setActiveRoomId(null)
-    }
     this.saveRooms()
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('smartcall-room-closed', { detail: { roomId } }))
@@ -1452,10 +1195,12 @@ class ChatService {
    * Xóa / Giải tán đồng loạt nhiều phòng nhóm (Batch Group Rooms Deletion)
    * @param {string[]} roomIds - Danh sách UUID phòng chat nhóm cần xóa
    */
-  async deleteMultipleRooms(roomIds) {
+async deleteMultipleRooms(roomIds) {
+    const sessionContext = captureSessionContext()
     if (!Array.isArray(roomIds) || roomIds.length === 0) return 0
     let count = 0
     for (const rId of roomIds) {
+      assertSessionContext(sessionContext)
       try {
         const ok = await this.deleteRoom(rId)
         if (ok) count++
@@ -1470,29 +1215,16 @@ class ChatService {
    * Giải tán / Xóa phòng nhóm bằng Tombstone System Message (Hỗ trợ tương thích ngược)
    * @param {string} roomId - UUID phòng chat
    */
-  async deleteGroupRoom(roomId) {
+async deleteGroupRoom(roomId) {
     return this.deleteRoom(roomId)
-  }
-
-  /**
-   * Ghim hoặc hủy ghim thông báo
-   */
-  async updatePinnedMessage(roomId, pinnedText) {
-    const room = this.rooms.find((r) => r.id === roomId)
-    if (room) {
-      room.pinned = pinnedText
-      this.saveRooms()
-      return true
-    }
-    return false
   }
 
   /**
    * Dọn dẹp sạch sẽ toàn bộ trạng thái khi đăng xuất
    */
   reset() {
+    invalidateSession()
     this.rooms = []
-    this.activeRoomId = null
     this._fetchingRoomsPromise = null
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('smartcall-rooms-updated'))
