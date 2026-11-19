@@ -1127,6 +1127,17 @@ class WazoService {
           if (callStore.activeCall) {
             callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
             callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+            if (callStore.activeCall.number === endedSecExt) {
+              const myExt = this.getMyExtension()
+              const remainingOthers = this.groupParticipantExtensions.filter((e) => e !== myExt)
+              if (remainingOthers.length > 0) {
+                callStore.activeCall.number = remainingOthers[0]
+                const contact = contactService.findContactByExtension(remainingOthers[0])
+                if (contact?.name) {
+                  callStore.activeCall.name = contact.name
+                }
+              }
+            }
           }
           window.dispatchEvent(
             new CustomEvent('app-toast', {
@@ -1479,6 +1490,66 @@ class WazoService {
     }
 
     this._onCallAcceptedHandler = (callSession) => {
+      // 1. Kiểm tra xem session này có phải là nhánh phụ (Secondary Leg) trong cuộc gọi nhóm hay không
+      const acceptedSipId = callSession?.sipCallId || (callSession?.getId && callSession.getId()) || callSession?.id
+      let isSecondaryLeg = false
+      let matchedSecExt = null
+      for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
+        const secSipId = secSession?.sipCallId || (secSession?.getId && secSession.getId()) || secSession?.id
+        if (secSession === callSession || (acceptedSipId && secSipId && String(secSipId) === String(acceptedSipId))) {
+          isSecondaryLeg = true
+          matchedSecExt = secExt
+          break
+        }
+      }
+
+      // Xử lý riêng cho nhánh phụ (Secondary Leg) trong cuộc gọi nhóm do Host điều phối
+      if (this.isGroupCall && this.isGroupHost && isSecondaryLeg) {
+        logger.success('CALL', `🟢 Nhánh phụ [${matchedSecExt || 'N/A'}] đã nghe máy trong cuộc gọi nhóm.`)
+        audioService.stopRingbackTone()
+        if (matchedSecExt) {
+          this._clearSecondaryLegTimeout(matchedSecExt)
+        }
+
+        if (callStore.incomingCall) {
+          callStore.incomingCall = null
+        }
+
+        if (callStore.activeCall) {
+          callStore.activeCall.status = 'connected'
+          // Giữ nguyên thời gian bắt đầu (startTime) của cuộc gọi nhóm đang diễn ra, không reset về 0
+          if (!this.currentCallSession) {
+            this.currentCallSession = callSession
+            callStore.activeCall.session = callSession
+          }
+        } else {
+          this.currentCallSession = callSession
+          const ext = matchedSecExt || callSession?.number || callSession?.callerNumber || callSession?.extension || ''
+          const contact = contactService.findContactByExtension(ext)
+          callStore.activeCall = {
+            session: callSession,
+            callId: `rec-${Date.now()}`,
+            number: ext,
+            name: contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp'),
+            dept: contact?.dept || '',
+            direction: 'outbound',
+            status: 'connected',
+            startTime: Date.now(),
+            duration: 0,
+            isMuted: false,
+            isRecorded: false,
+          }
+          this.startCallDurationTimer()
+        }
+
+        // Tự động kết nối nhánh phụ vừa nghe máy vào Ad-hoc Conference qua Asterisk ConfBridge
+        this.syncActiveCallsToAdhocConference()
+
+        // Tuyệt đối không gắn trực tiếp luồng stream của nhánh phụ vào loa (tránh xung đột âm thanh với ConfBridge)
+        window.dispatchEvent(new CustomEvent('wazo-accepted', { detail: callSession }))
+        return
+      }
+
       this.currentCallSession = callSession
       logger.success('CALL', '🟢 Sự kiện Wazo: Cuộc gọi đã được kết nối! Đang đàm thoại 2 chiều (Full-Duplex).')
       audioService.stopRingbackTone()
@@ -1517,10 +1588,9 @@ class WazoService {
       this._clearPrimaryLegTimeout()
 
       // Xóa timer timeout 30s của nhánh phụ nếu đây là nhánh phụ vừa nghe máy
-      const acceptedSipId = callSession?.sipCallId || (callSession?.getId && callSession.getId())
       for (const [secExt, secSession] of this.secondaryCallSessions.entries()) {
-        const secSipId = secSession.sipCallId || (secSession.getId && secSession.getId())
-        if (secSession === callSession || (acceptedSipId && secSipId === acceptedSipId)) {
+        const secSipId = secSession?.sipCallId || (secSession?.getId && secSession.getId()) || secSession?.id
+        if (secSession === callSession || (acceptedSipId && secSipId && String(secSipId) === String(acceptedSipId))) {
           this._clearSecondaryLegTimeout(secExt)
           break
         }
@@ -2755,7 +2825,8 @@ class WazoService {
           if (peerId && peerId !== hostCallId) {
             let matchedExt = null
             for (const [ext, secSession] of this.secondaryCallSessions.entries()) {
-              if (secSession.sipCallId === sipId) {
+              const secSip = secSession?.sipCallId || (secSession?.getId && secSession.getId()) || secSession?.id
+              if (secSession.sipCallId === sipId || (secSip && sipId && String(secSip) === String(sipId))) {
                 matchedExt = ext
                 break
               }
@@ -2893,6 +2964,18 @@ class WazoService {
     if (callStore.activeCall) {
       callStore.activeCall.groupParticipantExtensions = [...this.groupParticipantExtensions]
       callStore.activeCall.groupTitle = `Cuộc gọi nhóm (${this.groupParticipantExtensions.length} người)`
+
+      // Khi một thành viên rời đi, nếu activeCall.number đang trỏ vào thành viên đó, chuyển sang thành viên tiếp theo còn lại
+      if (callStore.activeCall.number === leftExt) {
+        const remainingOthers = this.groupParticipantExtensions.filter((e) => e !== myExt)
+        if (remainingOthers.length > 0) {
+          callStore.activeCall.number = remainingOthers[0]
+          const contact = contactService.findContactByExtension(remainingOthers[0])
+          if (contact?.name) {
+            callStore.activeCall.name = contact.name
+          }
+        }
+      }
     }
 
     // Nếu máy này là thành viên và nhận tin Chủ phòng rời khỏi cuộc gọi -> kết thúc cuộc gọi

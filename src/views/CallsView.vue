@@ -1783,12 +1783,13 @@ const selectedAddExtensions = ref([])
 const availableAddParticipants = computed(() => {
   const myExt = String(callStore.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
   const activeExt = String(callStore.activeCall?.number || '').trim()
+  const isGroup = Boolean(callStore.activeCall?.isGroupCall)
   const inCallExts = new Set(
     (callStore.activeCall?.groupParticipantExtensions || wazoService.groupParticipantExtensions || []).map((e) =>
       String(e).trim(),
     ),
   )
-  if (activeExt) inCallExts.add(activeExt)
+  if (!isGroup && activeExt) inCallExts.add(activeExt)
   if (myExt) inCallExts.add(myExt)
 
   let list = contacts.value.filter((c) => {
@@ -2092,13 +2093,14 @@ onUnmounted(() => {
    CENTER-EXPANDING ACCORDION SYSTEM (SMOOTH 60FPS ZERO-FLICKER LAYOUT)
    ========================================================================= */
 
-/* Desktop Layout: Căn giữa màn hình, Bàn phím 320px, Danh bạ 580px cố định (hết to thô), Cột thoại mở rộng êm ái ở giữa khi gọi */
+/* Desktop Layout: Căn giữa màn hình, Bàn phím 320px, Danh bạ 680px, Cột thoại mở rộng êm ái ở giữa khi gọi */
 .calls-grid-layout {
   display: flex;
   justify-content: center;
   align-items: stretch;
   width: 100%;
   max-width: 1400px;
+  height: 580px;
   margin: 0 auto;
   transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -2148,21 +2150,32 @@ onUnmounted(() => {
   width: 400px;
   max-width: 400px;
   min-width: 360px;
-  height: 100%;
+  height: 580px;
+  max-height: 580px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
 }
 
-/* Khung Danh bạ: Bề rộng chuẩn đẹp 580px, không bị dãn bè ngang to thô */
+/* Khung Danh bạ: Bề rộng chuẩn đẹp 680px, hiển thị đầy đủ tiêu đề các tab */
 .contacts-col {
-  width: 580px;
-  max-width: 620px;
-  flex: 0 1 580px;
+  width: 680px;
+  max-width: 720px;
+  flex: 0 1 680px;
   flex-shrink: 0;
   transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* --- Dialer Box --- */
 .dialer-box {
+  height: 580px;
+  max-height: 580px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   background: white;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
@@ -2819,11 +2832,12 @@ onUnmounted(() => {
   border-radius: 12px;
   border: 1px solid #e2e8f0;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  overflow: hidden;
+  height: 580px;
+  max-height: 580px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 500px;
+  overflow: hidden;
 }
 
 .panel-header {
@@ -2967,7 +2981,7 @@ onUnmounted(() => {
   transition: all 0.2s ease;
   white-space: nowrap;
   border-radius: 6px;
-  padding: 6px 4px;
+  padding: 6px 6px;
   min-width: 0;
   width: 100%;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
@@ -3142,7 +3156,7 @@ onUnmounted(() => {
 
 .panel-list-container {
   flex: 1;
-  max-height: 620px;
+  min-height: 0;
   overflow-y: auto;
   padding: 10px 12px;
 }
@@ -3440,6 +3454,7 @@ onUnmounted(() => {
     flex-wrap: wrap;
     justify-content: center;
     gap: 16px;
+    height: auto;
   }
 
   .dialer-col {
@@ -3481,11 +3496,14 @@ onUnmounted(() => {
   }
 
   .contacts-panel-card {
-    min-height: 600px;
+    height: 580px;
+    max-height: 580px;
   }
 
   .panel-list-container {
-    max-height: 520px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
   }
 }
 
@@ -3499,6 +3517,7 @@ onUnmounted(() => {
 
   .calls-grid-layout {
     display: block;
+    height: auto;
   }
 
   .calls-grid-layout.mobile-show-dialer .contacts-col {
@@ -3554,6 +3573,13 @@ onUnmounted(() => {
 
   .dialer-box {
     padding: 16px;
+    height: auto;
+    max-height: none;
+  }
+
+  .contacts-panel-card {
+    height: auto;
+    max-height: none;
   }
 
   .key-btn {

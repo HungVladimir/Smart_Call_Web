@@ -3926,6 +3926,58 @@ Trong quá trình rà soát toàn diện vòng đời trạng thái hệ thống
 - **Rà soát Zero Local Business Data**: Quét toàn bộ `historyService.js`, `chatService.js`, `wazo.js` đảm bảo không còn bất kỳ khóa `localStorage` nghiệp vụ nào (chỉ giữ các khóa xác thực phiên máy khách theo đúng danh mục được phê duyệt tại GEMINI.md).
 - **Kiểm tra Git**: Không có file rác untracked ngoài ý muốn, mã nguồn sẵn sàng commit và push lên nhánh chính.
 
+---
+
+## BƯỚC 76: ĐỒNG BỘ KHÓA CHIỀU CAO 580PX, MỞ RỘNG BỀ RỘNG DANH BẠ 680PX, TỐI ƯU MODAL THÊM THÀNH VIÊN VÀ BẢO TOÀN NHÁNH PHỤ CUỘC GỌI NHÓM
+
+### 1. Bối cảnh & Các Yêu Cầu Cần Tối Ưu:
+Sau khi đưa vào vận hành thực tế giao diện Bố cục Cửa trượt trung tâm (Center-Expanding Accordion) và cơ chế Cuộc gọi nhóm Ad-hoc Conference, hệ thống ghi nhận một số điểm cần tinh chỉnh dứt điểm:
+1. **Lệch Chiều Cao & Co Rút Giao Diện**: Khi chuyển đổi giữa các tab danh bạ (tab có nhiều liên hệ như "Tất cả" vs tab ít liên hệ như "Trực tuyến"), thẻ danh bạ và bàn phím chưa có chiều cao cố định đồng nhất, dẫn đến hiện tượng khung danh bạ bị co ngắn lại hoặc giãn không đều so với bàn phím và hộp trạng thái đàm thoại.
+2. **Cắt Chữ Tab Danh Bạ**: Độ rộng khung danh bạ 580px khiến 6 tab bộ lọc ("Tất cả", "Yêu thích", "Trực tuyến", "Ngoại tuyến", "Bộ phận", "Gọi nhóm") bị chật, một số tiêu đề tab bị cắt bớt hoặc hiển thị dấu chấm ba (`...`).
+3. **Modal Thêm Thành Viên Lọc Nhầm Người Đã Rời Đi**: Khi một thành viên trong cuộc gọi nhóm rời khỏi phòng, người dùng muốn mời lại người đó thông qua modal "Thêm người tham gia", nhưng máy lẻ đó vẫn bị lọc mất khỏi danh sách do biến `activeCall.number` vẫn giữ số của người đó.
+4. **Nhánh Phụ Cuộc Gọi Nhóm Bị Reset Thời Gian & Tranh Chấp Stream**: Trong cuộc gọi nhóm do Host điều phối, khi một thành viên nhánh phụ nghe máy (`_onCallAcceptedHandler`), logic cũ có nguy cơ ghi đè phiên `currentCallSession`, reset bộ đếm thời gian bắt đầu `startTime`, hoặc tranh chấp luồng stream thoại với hội nghị Asterisk ConfBridge.
+
+---
+
+### 2. Chi tiết Triển khai Kỹ thuật:
+
+#### 2.1. Khóa Cố Định Chiều Cao 580px Toàn Bộ Khối Gọi Thoại (`src/views/CallsView.vue`)
+- **Khung bao `.calls-grid-layout`**: Thiết lập `height: 580px;` cố định trên màn hình desktop, đảm bảo toàn bộ hệ thống cột được neo trên cùng một mặt phẳng.
+- **Cột Bàn Phím `.dialer-box`**: Bổ sung `height: 580px; max-height: 580px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;`. Bàn phím số và khe hiển thị luôn giữ chuẩn kích thước, không bị chèn ép.
+- **Hộp Trạng Thái Cuộc Gọi `.status-col .call-status-box`**: Thiết lập `height: 580px; max-height: 580px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center;`.
+- **Khung Danh Bạ `.contacts-panel-card`**: Thiết lập `height: 580px; max-height: 580px; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden;`.
+- **Danh Sách Cuộn Nội Bộ `.panel-list-container`**: Bỏ giới hạn cứng `max-height: 620px`, chuyển thành `flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px;`. Nhờ vậy, dù tab có 500 liên hệ hay 0 liên hệ, thẻ Danh bạ luôn khóa cứng chính xác ở 580px, căn thẳng hàng tuyệt đối với Bàn phím và Hộp thoại, cuộn mượt mà không gây giật giao diện.
+
+#### 2.2. Mở Rộng Bề Rộng Danh Bạ 680px & Hiển Thị Đầy Đủ Tab (`src/views/CallsView.vue`)
+- Mở rộng cột Danh bạ `.contacts-col` từ 580px lên: `width: 680px; max-width: 720px; flex: 0 1 680px;`.
+- Tinh chỉnh `.panel-tab-btn` với `padding: 6px 6px;` giúp 6 tab danh bạ dàn đều, thoáng đẹp và hiển thị trọn vẹn 100% tiêu đề chữ ("Tất cả", "Yêu thích", "Trực tuyến", "Ngoại tuyến", "Bộ phận", "Gọi nhóm") mà không bị dấu ba chấm (`...`).
+
+#### 2.3. Tối Ưu Bộ Lọc Modal Thêm Thành Viên Cho Phép Mời Lại (`src/views/CallsView.vue`)
+- Trong `availableAddParticipants` computed property:
+  + Nhận diện cờ `const isGroup = Boolean(callStore.activeCall?.isGroupCall)`.
+  + Khi đang trong cuộc gọi nhóm, tập hợp `inCallExts` được khởi tạo chuẩn xác từ danh sách thành viên thực tế: `callStore.activeCall?.groupParticipantExtensions || wazoService.groupParticipantExtensions`.
+  + Chỉ thêm `activeExt` vào `inCallExts` khi KHÔNG phải là cuộc gọi nhóm (`if (!isGroup && activeExt) inCallExts.add(activeExt)`).
+  + Nhờ đó, nếu một thành viên rời cuộc gọi nhóm, máy lẻ của họ lập tức xuất hiện trở lại trong modal "Thêm người tham gia", cho phép Host mời lại dễ dàng.
+
+#### 2.4. Bảo Toàn Nhánh Phụ Cuộc Gọi Nhóm & Cập Nhật Người Đại Diện (`src/services/wazo.js`)
+- **Phát hiện chính xác Nhánh Phụ trong `_onCallAcceptedHandler(callSession)`**:
+  + Bổ sung vòng lặp đối chiếu SIP Call ID (`sipCallId` / `getId()` / `id`) của `callSession` với các phiên trong `secondaryCallSessions` để nhận diện cờ `isSecondaryLeg` và số máy lẻ `matchedSecExt`.
+  + Khi Host tiếp nhận sự kiện nghe máy từ một nhánh phụ trong cuộc gọi nhóm:
+    * Hủy bộ đếm timeout 30s của nhánh phụ (`_clearSecondaryLegTimeout(matchedSecExt)`).
+    * Giữ nguyên thời gian bắt đầu `startTime` và thời lượng đàm thoại của cuộc gọi nhóm đang diễn ra (không reset về 0).
+    * Không ghi đè `this.currentCallSession` hoặc `callStore.activeCall.session` khi phiên đàm thoại chính đang hoạt động.
+    * Tự động đồng bộ nhánh phụ vừa nghe máy vào hội nghị Ad-hoc (`syncActiveCallsToAdhocConference()`).
+    * Tuyệt đối không gắn trực tiếp luồng stream âm thanh của nhánh phụ vào thẻ audio nhằm tránh xung đột với Asterisk ConfBridge.
+- **Cập nhật Người Đại diện khi Có Thành viên Rời Đi (`handleParticipantLeftGroupCall`)**:
+  + Khi một thành viên rời khỏi cuộc gọi nhóm (`leftExt`), nếu `callStore.activeCall.number` đang trỏ đúng vào máy lẻ đó, hệ thống tự động chuyển `activeCall.number` và `activeCall.name` sang thành viên khác còn lại trong nhóm, không lưu giữ thông tin người đã rời đi.
+
+---
+
+### 3. Kết Quả Kiểm Tra Biên Dịch & Xác Nhận Hệ Thống:
+- **Kiểm tra biên dịch sản xuất**: `npm run build` hoàn thành thành công 100% với mã thoát `0` (323 modules transformed, 609ms).
+- **Kiểm tra Git**: Các chỉnh sửa chuẩn xác, không làm phát sinh file rác untracked, đảm bảo đúng quy chuẩn kiến trúc hệ thống và quy tắc phát triển trong GEMINI.md.
+
+
 
 
 
