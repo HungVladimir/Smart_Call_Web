@@ -1,5 +1,7 @@
 # Phím số lần đầu và badge tin nhắn đến — 20/11/2026
 
+**Cập nhật tiếp theo:** người dùng đã yêu cầu giữ bộ đếm qua F5/đăng nhập lại bằng localStorage như cách cũ. Xem [giải pháp lưu tạm](19-temporary-persistent-message-badges-2026-11-20.md). Mô tả chỉ giữ RAM bên dưới là trạng thái của commit `86b2011`, trước yêu cầu bổ sung này.
+
 ## Yêu cầu
 
 1. Xử lý việc lần bấm phím số đầu tiên sau đăng nhập bị khựng 3–4 giây; những lần sau không gặp lại.

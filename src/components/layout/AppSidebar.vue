@@ -40,7 +40,9 @@ import { chatService } from '@/services/chatService'
 const features = ref(getFeatures())
 const totalUnread = computed(() => chatService.totalUnread)
 const onFeaturesChanged = (e) => {
+  const messagesWereEnabled = features.value.messages
   features.value = e.detail || getFeatures()
+  if (!messagesWereEnabled && features.value.messages) chatService.restoreUnreadNotifications().catch(() => {})
 }
 
 const onCallsNavClick = () => {
@@ -52,6 +54,8 @@ const onMessagesNavClick = () => {
 }
 
 onMounted(() => {
+  // Nạp lại số đã lưu sau login/F5; không cần tải toàn bộ phòng nếu cache không có tin chưa mở.
+  if (features.value.messages) chatService.restoreUnreadNotifications().catch(() => {})
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 

@@ -56,6 +56,7 @@ class ChatService {
     this._closedRoomIds = new Set()
     this._seenIncomingMessageIds = new Map()
     this._visibleRoomId = null
+    this._unreadStorageKey = null
     if (typeof window !== 'undefined') {
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
       websocketService.on('chatd_user_room_message_created', (data) => this.handleIncomingMessage(data))
@@ -66,9 +67,64 @@ class ChatService {
     }
   }
 
-  /** Lấy số tin đến chưa mở của một phòng; bộ đếm chỉ sống trong phiên Web hiện tại. */
+  /** Lấy số tin đến chưa mở của một phòng; dữ liệu được khôi phục từ cache riêng của tài khoản. */
   getUnreadCount(roomId) {
     return chatState.unreadByRoom[roomId]?.size || 0
+  }
+
+  /** Khóa cache chỉ dùng cho bộ đếm, tách theo máy chủ và UUID; không dùng tài khoản mặc định dùng chung. */
+  _getUnreadStorageKey() {
+    const userUuid = wazoService.getMyUserUuid()
+    if (!userUuid) return null
+    const host = wazoService.getHostUrl().replace(/\/+$/, '').toLowerCase()
+    return `smartcall_unread_v1:${encodeURIComponent(host)}:${encodeURIComponent(userUuid)}`
+  }
+
+  /** Nạp cache khi đã biết tài khoản; không gọi từ constructor vì có vòng import với wazoService. */
+  _restoreUnreadState() {
+    const key = this._getUnreadStorageKey()
+    if (key === this._unreadStorageKey) return
+    this._unreadStorageKey = key
+    chatState.unreadByRoom = Object.create(null)
+    this._seenIncomingMessageIds.clear()
+    this._visibleRoomId = null
+    if (!key) return
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || 'null')
+      if (saved?.version !== 1 || !saved.rooms || typeof saved.rooms !== 'object') return
+      for (const [roomId, state] of Object.entries(saved.rooms)) {
+        if (!state || !Array.isArray(state.unread) || !Array.isArray(state.seen)) continue
+        const validId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 256
+        const unread = state.unread.filter(validId)
+        if (unread.length) chatState.unreadByRoom[roomId] = new Set(unread)
+        this._seenIncomingMessageIds.set(roomId, new Set([...state.seen.filter(validId).slice(-1000), ...unread]))
+      }
+    } catch {
+      // Cache hỏng/bị chặn không được làm hỏng đăng nhập hoặc nhận tin thời gian thực.
+      logger.warn('CHAT', 'Không khôi phục được bộ đếm tin nhắn trên trình duyệt.')
+    }
+  }
+
+  /** Lưu ID chưa mở và tối đa 1000 ID gần nhất/phòng; không lưu nội dung, token hoặc hồ sơ. */
+  _persistUnreadState() {
+    const key = this._unreadStorageKey
+    if (!key || key !== this._getUnreadStorageKey()) return // Không ghi cache A bằng state đã chuyển sang B.
+    try {
+      const rooms = Object.create(null)
+      for (const [roomId, seen] of this._seenIncomingMessageIds) {
+        rooms[roomId] = { unread: [...(chatState.unreadByRoom[roomId] || [])], seen: [...seen].slice(-1000) }
+      }
+      localStorage.setItem(key, JSON.stringify({ version: 1, rooms }))
+    } catch {
+      // Hết quota hoặc chế độ chặn storage: vẫn nhận tin/đếm trong RAM, không báo lưu thành công giả.
+      logger.warn('CHAT', 'Không lưu được bộ đếm tin nhắn trên trình duyệt.')
+    }
+  }
+
+  /** Sidebar khôi phục số sau login/F5, rồi đối chiếu phòng thật trên server trước khi hiển thị tổng. */
+  async restoreUnreadNotifications() {
+    this._restoreUnreadState()
+    if (Object.values(chatState.unreadByRoom).some((ids) => ids.size > 0)) await this.getRooms()
   }
 
   /** Chỉ coi hội thoại đang được xem khi màn hình đó hoạt động và cửa sổ thực sự ở phía trước. */
@@ -79,12 +135,17 @@ class ChatService {
 
   /** View gọi khi chọn phòng, kích hoạt lại hoặc rời màn hình; không gửi read receipt lên Wazo. */
   setVisibleRoom(roomId) {
+    this._restoreUnreadState()
     this._visibleRoomId = roomId || null
-    if (roomId && this._isRoomVisible(roomId)) delete chatState.unreadByRoom[roomId]
+    if (roomId && this._isRoomVisible(roomId) && chatState.unreadByRoom[roomId]) {
+      delete chatState.unreadByRoom[roomId]
+      this._persistUnreadState()
+    }
   }
 
   /** Khử trùng theo UUID server, kể cả event đã xuất hiện trong lịch sử REST hoặc vừa được mở xem. */
   _trackIncomingUnread(roomId, messageId, senderUuid, isControlMessage) {
+    this._restoreUnreadState()
     if (!messageId) return // Không tự tạo ID để đếm một event không có định danh server.
     if (!this._seenIncomingMessageIds.has(roomId)) this._seenIncomingMessageIds.set(roomId, new Set())
     const seen = this._seenIncomingMessageIds.get(roomId)
@@ -93,10 +154,12 @@ class ChatService {
     if (!senderUuid || senderUuid === wazoService.getMyUserUuid() || isControlMessage) return
     if (this._isRoomVisible(roomId)) {
       delete chatState.unreadByRoom[roomId]
+      this._persistUnreadState()
       return
     }
     if (!chatState.unreadByRoom[roomId]) chatState.unreadByRoom[roomId] = new Set()
     chatState.unreadByRoom[roomId].add(messageId)
+    this._persistUnreadState()
   }
 
   // Tải dữ liệu phòng chat: thuần 100% API thật từ Wazo server (Issue 8 & Rule 2 GEMINI.md)
@@ -139,6 +202,7 @@ class ChatService {
   _markRoomClosed(roomId, room = this.rooms.find((item) => item.id === roomId)) {
     delete chatState.unreadByRoom[roomId]
     this._seenIncomingMessageIds.delete(roomId)
+    this._persistUnreadState()
     if (this._visibleRoomId === roomId) this._visibleRoomId = null
     this._closedRoomIds.add(roomId)
     if (room) room.isClosed = true
@@ -221,6 +285,7 @@ class ChatService {
       if (delMatch && delMatch[1]) {
         const deletedIds = delMatch[1].split(',').map((s) => s.trim()).filter(Boolean)
         for (const id of deletedIds) chatState.unreadByRoom[roomUuid]?.delete(id)
+        this._persistUnreadState()
         const targetRoom = (this.rooms || []).find((r) => r.id === roomUuid)
         if (targetRoom && targetRoom.messages) {
           targetRoom.messages = targetRoom.messages.filter((m) => !deletedIds.includes(m.id))
@@ -372,6 +437,7 @@ class ChatService {
    * Lấy danh sách các phòng chat của người dùng (Đồng bộ phòng server Wazo và phòng 1-1 cục bộ)
    */
   async getRooms() {
+    this._restoreUnreadState()
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (this._fetchingRoomsPromise) {
@@ -1335,6 +1401,7 @@ async deleteGroupRoom(roomId) {
     chatState.unreadByRoom = Object.create(null)
     this._seenIncomingMessageIds.clear()
     this._visibleRoomId = null
+    this._unreadStorageKey = null // Chỉ dọn RAM; giữ cache riêng để người dùng đăng nhập lại vẫn còn số.
     this.rooms = []
     this._fetchingRoomsPromise = null
     this._closedRoomIds.clear()

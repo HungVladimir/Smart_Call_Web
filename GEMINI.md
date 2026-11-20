@@ -42,6 +42,7 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
    - Cấm tuyệt đối việc sử dụng `IndexedDB`, `localStorage`, hay `sessionStorage` để lưu trữ nội dung dữ liệu nghiệp vụ (không lưu file âm thanh Blob trong trình duyệt, không lưu cache lịch sử cuộc gọi/danh bạ/tin nhắn cục bộ làm sai lệch tính đồng bộ giữa các máy).
    - Mọi dữ liệu hiển thị trên giao diện (Lịch sử cuộc gọi, file ghi âm, danh bạ, tin nhắn) phải được fetch thời gian thực từ máy chủ Wazo.
 3. **Phạm vi duy nhất được phép sử dụng `localStorage`**:
+   - **Ngoại lệ tạm được người dùng cho phép ngày 20/11/2026**: lưu bộ đếm tin đến chưa mở bằng khóa `smartcall_unread_v1:<host>:<user_uuid>`, gồm room ID, UUID tin chưa mở và các UUID gần nhất để khử trùng. Giữ qua F5/đăng nhập lại, tách theo tài khoản và máy chủ. Không mở rộng ngoại lệ sang lưu nội dung tin nhắn, danh sách phòng, hồ sơ, ghi âm hoặc lịch sử gọi. Xem `doc/audit/19-temporary-persistent-message-badges-2026-11-20.md`.
    - Chỉ được phép lưu 2 nhóm thông tin kỹ thuật máy khách tối thiểu:
      a) **Phiên xác thực phiên làm việc**: `smartcall_wazo_token`, `smartcall_user_uuid`, `smartcall_wazo_host`, `smartcall_tenant_id`, `smartcall_extension`, `smartcall_username` (để khi người dùng F5 / reload trang không bị văng đăng nhập).
      b) **Cấu hình phần cứng cục bộ của máy tính đó**: `smartcall_selected_mic`, `smartcall_selected_speaker`, `smartcall_selected_camera` (do ID thiết bị phần cứng là duy nhất trên từng máy tính vật lý).
@@ -90,7 +91,7 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
 ### 3.4. Giao diện Sidebar & Huy hiệu số (Badges)
 - **Cập nhật 20/11/2026 — khôi phục bộ đếm tin đến**: hiển thị tổng tin chưa mở tại menu Tin nhắn và số tương ứng ở từng hội thoại. Đây là yêu cầu mới, thay phần bỏ unread badge trước đó; không khôi phục ghim hoặc trạng thái gửi/đã xem của người nhận.
   - Đếm event tin đến từ Web/Mobile theo UUID server, không đếm trùng, tin của chính mình hoặc lệnh quản trị đã xác minh. Chỉ xóa số khi người dùng mở đúng hội thoại trong màn hình/cửa sổ đang hiển thị.
-  - Khi chưa có API read cursor được xác nhận, chỉ giữ số trong RAM của phiên Web; không tự lưu nghiệp vụ vào localStorage và không khẳng định đồng bộ số chưa đọc qua F5/đăng xuất/thiết bị khác.
+  - **Yêu cầu tiếp theo ngày 20/11/2026**: tạm dùng localStorage như cơ chế cũ để giữ bộ đếm qua F5/đăng nhập lại trên cùng trình duyệt. Chỉ lưu metadata của bộ đếm theo ngoại lệ ở mục 2, không khẳng định đồng bộ trạng thái đọc với thiết bị khác. Khi có API read cursor, thay bằng trạng thái server.
 - **Sidebar**: Loại bỏ hoàn toàn số đếm đỏ trên tab *Danh bạ* và tab *Lịch sử cuộc gọi* (chỉ giữ huy hiệu số tin nhắn chưa đọc trên tab *Tin nhắn*).
 - **Bộ lọc Lịch sử cuộc gọi**: Giữ nguyên số đếm trên 4 tab bộ lọc (`ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`).
 

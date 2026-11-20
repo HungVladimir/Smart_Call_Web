@@ -4033,6 +4033,12 @@ Kiểm chứng: **93/93 test đạt**, có ca compile/mount Sidebar và Messages
 
 Chi tiết và giới hạn: [phím số lần đầu và badge tin nhắn](audit/18-first-keypad-latency-and-message-badges-2026-11-20.md).
 
+## BƯỚC 81: LƯU TẠM BỘ ĐẾM TIN NHẮN QUA F5/ĐĂNG NHẬP LẠI (20/11/2026)
+
+Theo yêu cầu tiếp theo, dùng lại localStorage như phiên bản cũ từng lưu `room.unread`, nhưng chỉ giữ room ID và UUID tin để đếm/khử trùng. Cache tách theo máy chủ và tài khoản, không lưu nội dung phòng/tin nhắn. Sidebar tự khôi phục số và đối chiếu metadata phòng từ server. Logout chỉ dọn RAM; mở hội thoại/xóa tin/đóng phòng cập nhật cache.
+
+Đây là ngoại lệ lưu tạm được người dùng cho phép, đã ghi vào `GEMINI.md`; chưa phải read cursor server và không đồng bộ với thiết bị khác. Bộ kiểm thử **98/98 đạt**, build thành công. Chi tiết lịch sử code, định dạng lưu và giới hạn: [lưu tạm badge tin nhắn](audit/19-temporary-persistent-message-badges-2026-11-20.md).
+
 
 
 

@@ -174,6 +174,66 @@ test('Badge: callback nạp phòng đến sau logout không khôi phục bộ đ
   await drain(); assert.equal(c.svc.totalUnread, 0); assert.equal(c.svc.getUnreadCount('private'), 0)
 })
 
+test('Badge lưu tạm: tải lại Web giữ số và khử trùng; mở phòng rồi tải lại không tăng lại', async () => {
+  const first = unreadFixture(); first.receive('one'); first.receive('two')
+  const key = first.svc._unreadStorageKey, raw = first.localStorage.getItem(key)
+  assert.ok(raw); assert.equal(raw.includes('Tin one'), false); assert.equal(raw.includes('content'), false); assert.equal(raw.includes('token'), false)
+  const reloaded = unreadFixture(); reloaded.localStorage.setItem(key, raw)
+  reloaded.svc.getRooms = async () => [...reloaded.svc.rooms]
+  await reloaded.svc.restoreUnreadNotifications()
+  assert.equal(reloaded.svc.getUnreadCount('r'), 2)
+  reloaded.receive('one'); assert.equal(reloaded.svc.getUnreadCount('r'), 2)
+  reloaded.svc.setVisibleRoom('r')
+  const third = unreadFixture(); third.localStorage.setItem(key, reloaded.localStorage.getItem(key))
+  await third.svc.restoreUnreadNotifications(); third.receive('one')
+  assert.equal(third.svc.totalUnread, 0)
+})
+
+test('Badge lưu tạm: reset giữ cache tài khoản A; B hoặc máy chủ khác không dùng chung số', async () => {
+  const c = unreadFixture(); c.receive('one')
+  const keyA = c.svc._unreadStorageKey
+  c.svc.reset(); assert.ok(c.localStorage.getItem(keyA))
+  c.localStorage.setItem('smartcall_user_uuid', 'b')
+  c.svc.getRooms = async () => { c.svc.rooms = [{ id: 'r', messages: [] }]; return c.svc.rooms }
+  await c.svc.restoreUnreadNotifications(); assert.equal(c.svc.getUnreadCount('r'), 0)
+  c.localStorage.setItem('smartcall_user_uuid', 'a')
+  await c.svc.restoreUnreadNotifications(); assert.equal(c.svc.getUnreadCount('r'), 1)
+  c.wazoService.getHostUrl = () => 'https://another.invalid'
+  await c.svc.restoreUnreadNotifications(); assert.equal(c.svc.getUnreadCount('r'), 0)
+  assert.ok(c.localStorage.getItem(keyA))
+})
+
+test('Badge lưu tạm: Sidebar tự nạp lại phòng thật khi có số đã lưu, không đòi mở trang Tin nhắn', async () => {
+  const first = unreadFixture(); first.receive('one')
+  const c = chat(), key = first.svc._unreadStorageKey; c.localStorage.setItem(key, first.localStorage.getItem(key))
+  c.getFeatures = () => ({ messages: true })
+  let requests = 0
+  c.svc.getRooms = async () => { requests++; c.svc.rooms = [{ id: 'r', title: 'Hội thoại', messages: [] }]; return c.svc.rooms }
+  view(c, 'src/components/layout/AppSidebar.vue', 'globalThis.badge = totalUnread')
+  c.hooks.mounted[0](); await drain()
+  assert.equal(requests, 1); assert.equal(c.badge.value, 1)
+})
+
+test('Badge lưu tạm: cache hỏng/không hỗ trợ được bỏ qua, storage đầy vẫn nhận và đếm tin', async () => {
+  const first = unreadFixture(); first.receive('one'); const key = first.svc._unreadStorageKey
+  const c = unreadFixture(); c.localStorage.setItem(key, 'not-json')
+  await c.svc.restoreUnreadNotifications(); assert.equal(c.svc.totalUnread, 0)
+  c.localStorage.setItem = () => { throw new Error('QuotaExceededError') }
+  c.receive('new'); assert.equal(c.svc.getUnreadCount('r'), 1)
+})
+
+test('Badge lưu tạm: xóa tin và đóng phòng cũng cập nhật cache bền qua reload', async () => {
+  const c = unreadFixture(); c.svc.rooms[0].isDirect = false; c.svc.rooms[0].adminUuid = 'admin'; c.svc.rooms[0].adminVerified = true
+  c.receive('one'); c.receive('two')
+  c.svc.handleIncomingMessage({ uuid: 'delete', room_uuid: 'r', user_uuid: 'admin', content: '[SYSTEM:MSG_DELETED:ids="one"]' })
+  const key = c.svc._unreadStorageKey
+  assert.equal(JSON.parse(c.localStorage.getItem(key)).rooms.r.unread.length, 1)
+  c.svc.handleIncomingMessage({ uuid: 'close', room_uuid: 'r', user_uuid: 'admin', content: '[SYSTEM:ROOM_CLOSED]' })
+  assert.equal(JSON.parse(c.localStorage.getItem(key)).rooms.r, undefined)
+  const reloaded = unreadFixture(); reloaded.localStorage.setItem(key, c.localStorage.getItem(key))
+  await reloaded.svc.restoreUnreadNotifications(); assert.equal(reloaded.svc.totalUnread, 0)
+})
+
 test('Badge Vue thật: menu và hội thoại cùng đếm; chọn phòng, KeepAlive và focus xóa đúng số', async () => {
   const Vue = require('vue'), { parse, compileScript } = require('@vue/compiler-sfc'), c = unreadFixture()
   c.Vue = Vue; c.getFeatures = () => ({ calls: true, messages: true, history: true })
