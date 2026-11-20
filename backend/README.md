@@ -158,3 +158,18 @@ Kết quả ban đầu: 14 test backend; 167 test frontend/16 file, lint/archite
 Test dùng JWT ký RSA thật, HTTP/Redis fixture ở ranh giới và SQLite thật; không dùng tài khoản/IdP/Wazo thật. Chưa xác minh việc tạo người dùng/gọi điện trên tổng đài công ty. Build còn cảnh báo chunk lớn.
 
 Test thực tế: hai tài khoản Single ID; hủy login; sai state; hồ sơ nhưng chưa có cấu hình Wazo; tạo user mới; login lại không tạo trùng; email cũ; sai context/template; gọi 1-1 sau đăng nhập; F5; logout. Trước tiên dùng tài khoản thử để kiểm tra API/schema và dải số.
+
+
+## Nhập cấu hình từ bản mẫu — 20/11/2026
+
+Đặt bản dán gốc tại backend/doc/backendV1.py trên máy cần chạy, sau đó từ thư mục gốc gọi:
+
+~~~powershell
+.\backend\.venv\Scripts\python.exe -X utf8 backend/import_reference_env.py
+~~~
+
+Script đọc các dòng môi trường, không thực thi code tham chiếu. Nó điền issuer/client ID/client secret, Redis URL/TTL, PUBLIC_ORIGIN từ callback mẫu, discovery và JWKS đặc thù /t/display.company/oauth2/jwks. Chạy lại sẽ đồng bộ lại các giá trị IdP/Redis từ mẫu; giữ nguyên Wazo/CA đã cấu hình. Không sao chép credential MinIO/LLM/RDP/database vì SmartCall không sử dụng chúng. Secret chỉ ghi vào backend/.env bị ignore; Git chỉ chứa script và test. Sau pull ở máy khác phải chạy script tại máy đó với bản mẫu cục bộ hoặc tự điền .env; Git không chuyển secret.
+
+Trong mẫu chưa có WAZO_ADMIN_USERNAME, WAZO_ADMIN_PASSWORD và WAZO_TENANT_UUID: cần quản trị cung cấp ba giá trị này. TLS_CA_FILE chưa có file CA để điền; chỉ cần khi Python chưa tin CA máy chủ. Context internal, template global/webrtc và dải 1000–9999 là mặc định thử nghiệm theo yêu cầu, chưa được xác nhận trên server. Redis TTL lấy từ mẫu nhưng thời hạn phiên thực tế vẫn bị giới hạn bởi exp của ID token.
+
+Kiểm chứng cập nhật: 16 test backend đạt, gồm mapping env, giữ Wazo/CA, chạy lại không trùng biến và từ chối callback mẫu bất thường. Chưa gọi IdP/Redis/Wazo thật.

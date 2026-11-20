@@ -203,3 +203,18 @@ Tạo mới qua Confd POST user gộp auth/line/extension/SIP, password test 123
 Kiểm chứng: 14 test backend; 167 test frontend/16 file, lint/architecture/build/format. Health/proxy thật ok, callback HTML 200, guest profile 401. Chưa gọi IdP/Wazo công ty từ môi trường này. Cần điền credential cấp phát và tenant Wazo; IdP/Redis cục bộ lấy chọn lọc từ bản tham chiếu vào .env bị ignore. Hai file dán trong backend/doc giữ nguyên và được bỏ khỏi Git vì chứa secret.
 
 Hướng dẫn chạy, biến môi trường, API và bảng test đầy đủ: xem [backend/README.md](../../backend/README.md). Từ handbook ở doc/ dùng đường dẫn ../backend/README.md.
+
+
+## Nhập cấu hình từ bản mẫu — 20/11/2026
+
+Đặt bản dán gốc tại backend/doc/backendV1.py trên máy cần chạy, sau đó từ thư mục gốc gọi:
+
+~~~powershell
+.\backend\.venv\Scripts\python.exe -X utf8 backend/import_reference_env.py
+~~~
+
+Script đọc các dòng môi trường, không thực thi code tham chiếu. Nó điền issuer/client ID/client secret, Redis URL/TTL, PUBLIC_ORIGIN từ callback mẫu, discovery và JWKS đặc thù /t/display.company/oauth2/jwks. Chạy lại sẽ đồng bộ lại các giá trị IdP/Redis từ mẫu; giữ nguyên Wazo/CA đã cấu hình. Không sao chép credential MinIO/LLM/RDP/database vì SmartCall không sử dụng chúng. Secret chỉ ghi vào backend/.env bị ignore; Git chỉ chứa script và test. Sau pull ở máy khác phải chạy script tại máy đó với bản mẫu cục bộ hoặc tự điền .env; Git không chuyển secret.
+
+Trong mẫu chưa có WAZO_ADMIN_USERNAME, WAZO_ADMIN_PASSWORD và WAZO_TENANT_UUID: cần quản trị cung cấp ba giá trị này. TLS_CA_FILE chưa có file CA để điền; chỉ cần khi Python chưa tin CA máy chủ. Context internal, template global/webrtc và dải 1000–9999 là mặc định thử nghiệm theo yêu cầu, chưa được xác nhận trên server. Redis TTL lấy từ mẫu nhưng thời hạn phiên thực tế vẫn bị giới hạn bởi exp của ID token.
+
+Kiểm chứng cập nhật: 16 test backend đạt, gồm mapping env, giữ Wazo/CA, chạy lại không trùng biến và từ chối callback mẫu bất thường. Chưa gọi IdP/Redis/Wazo thật.

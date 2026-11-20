@@ -105,3 +105,6 @@ Tạo mới qua Confd POST user gộp auth/line/extension/SIP, password test 123
 Kiểm chứng: 14 test backend; 167 test frontend/16 file, lint/architecture/build/format. Health/proxy thật ok, callback HTML 200, guest profile 401. Chưa gọi IdP/Wazo công ty từ môi trường này. Cần điền credential cấp phát và tenant Wazo; IdP/Redis cục bộ lấy chọn lọc từ bản tham chiếu vào .env bị ignore. Hai file dán trong backend/doc giữ nguyên và được bỏ khỏi Git vì chứa secret.
 
 Hướng dẫn chạy, biến môi trường, API và bảng test đầy đủ: xem [backend/README.md](../../backend/README.md). Từ handbook ở doc/ dùng đường dẫn ../backend/README.md.
+
+
+20/11/2026: thêm importer cấu hình từ mẫu, 16/16 backend test đạt. Các kiểm tra frontend 167 test/lint/build/format trước đó không đổi vì không sửa frontend. Kiểm tra .env nạp đủ trường IdP/Redis, không in secret. Còn thiếu credential cấp phát/tenant Wazo và có thể CA PEM theo môi trường.
