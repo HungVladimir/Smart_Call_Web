@@ -4013,6 +4013,16 @@ Không còn yêu cầu triển khai pin/receipt/read cursor trong phạm vi hi�
 
 Xác minh: bộ hồi quy **27/27 đạt**, `npm run build` thành công; còn cảnh báo bundle lớn. Chưa thử giao nhận trên tổng đài thật; chưa commit/push hoặc triển khai.
 
+## BƯỚC 79: GIỮ NGƯỜI GỌI BAN ĐẦU LÀ HOST VÀ SỬA SỰ KIỆN HỘI NGHỊ (20/11/2026)
+
+Quy tắc mới được người dùng xác nhận: A gọi B, B thêm C thì **A vẫn là host**. B ủy quyền cho A mời C. A cúp thì yêu cầu giải tán nhóm/ngắt các nhánh; B hoặc C rời thì các thành viên còn lại tiếp tục với A làm host. Quy tắc được ghi vào `GEMINI.md` và xử lý tại `wazo.js`; view chỉ gọi service và hiển thị lỗi.
+
+Sửa lỗi listener của commit `5d5fe3e`: SDK xóa listener trong `connect()`, nên gắn lại sau connect và đồng bộ từ trạng thái đăng ký thật của SDK. Sửa thông báo C đã rời: không biến `call_ended` khi chuyển kênh vào ConfBridge thành sự kiện thành viên rời; đối chiếu đúng conference/call ID và chờ kết quả REST khi nhánh kết thúc giữa lúc ghép.
+
+Kiểm chứng: **82/82 test đạt**, `npm run build` thành công; còn cảnh báo bundle lớn. Test listener sử dụng cơ chế emitter thật của SDK đã cài; mạng/thiết bị được cô lập. Chưa thử tổng đài/Android thật. Các máy Web cần cùng bản sửa; không thay đổi mã tham chiếu Android.
+
+Chi tiết luồng, các ca lỗi, giới hạn tương thích và bảng thử tổng đài: [bản sửa host và sự kiện hội nghị](audit/17-original-caller-host-and-conference-events-2026-11-20.md).
+
 
 
 

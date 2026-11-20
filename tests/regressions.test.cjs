@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
+const { EventEmitter } = require('node:events')
 const { reactive, shallowReactive, ref, computed } = require('vue')
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
@@ -393,6 +394,7 @@ test('F01: không tin UUID mâu thuẫn, máy lẻ trùng hoặc nhiều tag đi
 
 test('F01: chỉ peer hiện tại được khởi tạo host; không tự chuyển quyền host', () => {
   const c = groupFixture()
+  c.state.activeCall.direction = 'inbound'
   c.svc.isGroupCall = c.svc.isGroupHost = false
   c.svc.groupHostExtension = ''
   c.signal({ uuid: 'outsider', status: '[GROUP:9000:1000,9000]' })
@@ -633,13 +635,218 @@ test('Cờ dữ liệu giả cũ không kích hoạt lại đường đăng nh�
   assert.equal(features.calls, false); assert.equal('mockData' in features, false)
 })
 
-test('SIP: kết nối trùng chỉ gọi SDK một lần và nhận được REGISTERED đồng bộ', async () => {
-  const c = wazo(), connecting = deferred(); const handlers = new Map(); let count = 0
-  c.Wazo.Phone.on = (name, handler) => handlers.set(name, handler)
-  c.Wazo.Phone.connect = async () => { count++; handlers.get(c.Wazo.Phone.ON_REGISTERED)(); await connecting.promise }
+test('SIP: SDK xóa listener trong connect; kết nối trùng vẫn nhận REGISTERED và cuộc gọi đến', async () => {
+  const c = wazo(), connecting = deferred(); const phone = sdkPhoneBoundary(c); let count = 0
+  phone.connect = async () => {
+    count++
+    phone._transferEvents()
+    phone.registered = true
+    phone.phone.eventEmitter.emit(phone.ON_REGISTERED)
+    await connecting.promise
+  }
   const first = c.svc.connectPhone(), second = c.svc.connectPhone()
-  await drain(); assert.equal(count, 1); assert.equal(c.state.isRegistered, true)
+  await drain(); assert.equal(count, 1); assert.equal(c.state.isRegistered, false)
   connecting.resolve(); await Promise.all([first, second])
+  assert.equal(c.state.isRegistered, true)
+  assert.equal(phone.eventEmitter.listenerCount(phone.ON_REGISTERED), 1)
+  phone.phone.eventEmitter.emit(phone.ON_CALL_INCOMING, { sipCallId: 'incoming', number: '2000' })
+  assert.equal(c.state.incomingCall.number, '2000')
+})
+
+/** Dùng chính Emitter và _transferEvents của SDK đã cài để test không bỏ sót unbind() trong connect. */
+function sdkPhoneBoundary(c) {
+  const sdk = fs.readFileSync(path.join(path.dirname(require.resolve('@wazo/sdk')), 'index.mjs'), 'utf8')
+  const emitterStart = sdk.indexOf('class Emitter {'), emitterEnd = sdk.indexOf('__webpack_require__.g.wazoClients', emitterStart)
+  const transferStart = sdk.indexOf('    _transferEvents() {', sdk.indexOf('class Phone_Phone extends Emitter'))
+  const transferEnd = sdk.indexOf('    _logConnector(', transferStart)
+  assert.ok(emitterStart >= 0 && emitterEnd > emitterStart && transferStart >= 0 && transferEnd > transferStart, 'Hợp đồng SDK thay đổi: cần cập nhật phép kiểm chứng listener')
+  const Emitter = vm.runInNewContext(sdk.slice(emitterStart, emitterEnd).replace('__WEBPACK_EXTERNAL_MODULE_events__["default"]', 'EventEmitter') + '\nEmitter', { EventEmitter })
+  const phone = new Emitter()
+  Object.assign(phone, c.Wazo.Phone)
+  // Giữ phương thức thật của Emitter; fixture mặc định dùng noop cho on/off.
+  delete phone.on; delete phone.off; delete phone.eventEmitter
+  phone.eventEmitter = new EventEmitter()
+  phone.client = new Emitter(); phone.phone = new Emitter()
+  phone.phone.isRegistered = () => phone.registered === true
+  const constants = Object.fromEntries(Object.entries(phone).filter(([key]) => key.startsWith('ON_')))
+  phone._transferEvents = vm.runInNewContext('({' + sdk.slice(transferStart, transferEnd) + '})', {
+    web_rtc_client_events: [], transportEvents: [], WebRTCPhone_namespaceObject: constants,
+  })._transferEvents
+  c.Wazo.Phone = phone
+  return phone
+}
+
+/** Tạo một máy Web có cuộc gọi thật về mặt state; mạng/SIP được thay riêng tại ranh giới kiểm thử. */
+function callClient(number, peer, direction) {
+  const c = wazo()
+  c.svc.getMyExtension = () => number; c.svc.getMyUserUuid = () => number
+  c.contactService.currentContacts = ['1000', '2000', '3000', '4000'].map((n) => ({ uuid: n, number: n }))
+  c.contactService.findContactByUuid = (uuid) => c.contactService.currentContacts.find((item) => item.uuid === uuid)
+  c.contactService.isContactAvailableForCall = () => true
+  c.svc.currentCallSession = { sipCallId: number + '-primary', answered: true }
+  c.state.activeCall = { callId: number + '-call', number: peer, direction, status: 'connected', session: c.svc.currentCallSession }
+  c.sent = []; c.dialed = []; c.deleted = []; c.hung = []
+  c.svc.setPresence = async (state, status) => { c.sent.push({ state, status }); return true }
+  c.Wazo.Phone.call = async (ext) => { c.dialed.push(ext); return { sipCallId: number + '-' + ext } }
+  c.svc.deleteAdhocConference = async (id) => c.deleted.push(id)
+  c.svc.hangupUserCall = async (id) => c.hung.push(id)
+  c.svc.syncActiveCallsToAdhocConference = noop
+  vm.runInContext('globalThis.signal = (data) => handleGroupPresenceSignal({ wazoService, callStore, contactService }, data)', c)
+  c.svc.attachListeners()
+  return c
+}
+
+test('Host: A gọi B, B mời C thì chỉ A gọi C và A giữ quyền giải tán nhóm', async () => {
+  const a = callClient('1000', '2000', 'outbound'), b = callClient('2000', '1000', 'inbound'), c = callClient('3000', '1000', 'inbound')
+  a.svc.setPresence = async (_, status) => { b.signal({ uuid: '1000', status }); c.signal({ uuid: '1000', status }); return true }
+  b.svc.setPresence = async (_, status) => { a.signal({ uuid: '2000', status }); return true }
+  await b.svc.addParticipantsToGroupCall(['3000']); await drain()
+  assert.deepEqual(b.dialed, []); assert.deepEqual(a.dialed, ['3000'])
+  assert.equal(a.svc.isGroupHost, true); assert.equal(a.svc.groupHostExtension, '1000')
+  assert.equal(b.svc.isGroupHost, false); assert.equal(b.svc.groupHostExtension, '1000')
+  assert.equal(c.svc.isGroupHost, false); assert.equal(c.svc.groupHostExtension, '1000')
+  assert.deepEqual([...a.svc.groupParticipantExtensions], ['1000', '2000', '3000'])
+  a.svc.activeAdhocConferenceId = 'conference'; a.svc.extensionToWazoCallIdMap.set('2000', 'B-call'); a.svc.extensionToWazoCallIdMap.set('3000', 'C-call')
+  for (const [client, id] of [[b, 'B-call'], [c, 'C-call']]) {
+    client.svc.currentCallSession.callId = id
+    client.svc._handleConferenceEvent('adhoc_conference_participant_joined', { conference_id: 'conference', call_id: id })
+  }
+  a.svc.deleteAdhocConference = async (id) => {
+    a.deleted.push(id); await drain()
+    b.svc._handleConferenceEvent('adhoc_conference_deleted', { id })
+    c.svc._handleConferenceEvent('adhoc_conference_deleted', { id })
+  }
+  a.svc.hangup(); await drain()
+  assert.ok(a.deleted.includes('conference')); assert.ok(a.hung.includes('B-call')); assert.ok(a.hung.includes('C-call'))
+  assert.equal(a.state.activeCall, null)
+  assert.equal(b.state.activeCall, null); assert.equal(c.state.activeCall, null)
+})
+
+test('Host: người gọi tự thêm C vẫn là host; thành viên rời không giải tán phòng', async () => {
+  const a = callClient('1000', '2000', 'outbound')
+  await a.svc.addParticipantsToGroupCall(['3000'])
+  assert.equal(a.svc.groupHostExtension, '1000'); assert.deepEqual(a.dialed, ['3000'])
+  a.svc.activeAdhocConferenceId = 'conference'
+  a.svc.extensionToWazoCallIdMap.set('2000', 'B-call'); a.svc.extensionToWazoCallIdMap.set('3000', 'C-call')
+  a.svc._handleConferenceEvent('adhoc_conference_participant_left', { conference_id: 'conference', call_id: 'B-call' })
+  assert.deepEqual([...a.svc.groupParticipantExtensions], ['1000', '3000'])
+  assert.equal(a.svc.isGroupHost, true); assert.ok(a.state.activeCall); assert.deepEqual(a.deleted, [])
+})
+
+test('Host: chỉ peer đã kết nối của cuộc gọi outbound được yêu cầu nâng nhóm; không nhận host từ B', () => {
+  const a = callClient('1000', '2000', 'outbound'); let invited = 0
+  a.svc.addParticipantsToGroupCall = async () => invited++
+  a.signal({ uuid: '3000', status: '[ADD_REQ:x:1000:4000]' })
+  a.state.activeCall.status = 'ringing'; a.signal({ uuid: '2000', status: '[ADD_REQ:x:1000:4000]' })
+  a.state.activeCall.status = 'connected'; a.signal({ uuid: '2000', status: '[GROUP:2000:1000,2000,3000]' })
+  assert.equal(invited, 0); assert.equal(a.svc.isGroupCall, false)
+  a.signal({ uuid: '2000', status: '[ADD_REQ:x:1000:3000]' }); a.signal({ uuid: '2000', status: '[ADD_REQ:x:1000:3000]' })
+  assert.equal(invited, 1)
+  const b = callClient('2000', '1000', 'inbound'); b.svc.addParticipantsToGroupCall = async () => invited++
+  b.signal({ uuid: '1000', status: '[ADD_REQ:x:2000:3000]' })
+  assert.equal(invited, 1)
+})
+
+test('Host: lỗi gửi ADD_REQ không báo thành công và không tự tạo nhóm ở máy B', async () => {
+  const b = callClient('2000', '1000', 'inbound'); b.svc.setPresence = async () => false
+  await assert.rejects(b.svc.addParticipantsToGroupCall(['3000']), /Không gửi được/)
+  assert.equal(b.svc.isGroupHost, false); assert.equal(b.svc.isGroupCall, false); assert.deepEqual(b.dialed, [])
+  assert.equal(b.events.some((e) => e.detail?.message?.includes('Đã gửi yêu cầu')), false)
+})
+
+test('Host: ACK mời C đến sau khi B cúp không hiện thông báo thành công cho cuộc gọi cũ', async () => {
+  const b = callClient('2000', '1000', 'inbound'), pending = deferred()
+  b.svc.setPresence = () => pending.promise
+  const inviting = b.svc.addParticipantsToGroupCall(['3000'])
+  b.svc.hangup(); pending.resolve(true); await inviting
+  assert.equal(b.state.activeCall, null); assert.deepEqual(b.dialed, [])
+  assert.equal(b.events.some((e) => e.detail?.message?.includes('Đã gửi yêu cầu')), false)
+})
+
+test('Host: B cúp chỉ rời nhóm của A; A và C tiếp tục và host không đổi', async () => {
+  const a = callClient('1000', '2000', 'outbound'), b = callClient('2000', '1000', 'inbound')
+  a.svc.setPresence = async (_, status) => { b.signal({ uuid: '1000', status }); return true }
+  b.svc.setPresence = async (_, status) => { a.signal({ uuid: '2000', status }); return true }
+  await b.svc.addParticipantsToGroupCall(['3000']); await drain()
+  a.svc.activeAdhocConferenceId = 'conference'; a.svc.extensionToWazoCallIdMap.set('2000', 'B-call'); a.svc.extensionToWazoCallIdMap.set('3000', 'C-call')
+  b.svc.hangup(); await drain()
+  assert.equal(b.state.activeCall, null); assert.ok(a.state.activeCall)
+  assert.deepEqual([...a.svc.groupParticipantExtensions], ['1000', '3000'])
+  assert.equal(a.svc.groupHostExtension, '1000'); assert.deepEqual(a.deleted, [])
+})
+
+test('Conference: call_ended của kênh cũ không làm C rời phòng; chỉ sự kiện đúng hội nghị mới gỡ C', async () => {
+  const a = callClient('1000', '2000', 'outbound'); await a.svc.addParticipantsToGroupCall(['3000'])
+  a.svc.activeAdhocConferenceId = 'conference'; a.svc.extensionToWazoCallIdMap.set('2000', 'B-call'); a.svc.extensionToWazoCallIdMap.set('3000', 123)
+  a.svc.mergedCallIds.add(123)
+  a.WebSocket = class { send() {} close() {} }; a.svc.openWebSocketEvents()
+  const send = (name, data) => a.svc.eventWs.onmessage({ data: JSON.stringify({ op: 'event', data: { name, data } }) })
+  send('call_ended', { call_id: 123, reason_code: 26 })
+  a.svc._onCallEndedHandler(a.svc.secondaryCallSessions.get('3000'))
+  send('adhoc_conference_participant_left', { conference_id: 'old-room', call_id: 123 })
+  send('adhoc_conference_participant_left', { call_id: 123 })
+  assert.ok(a.svc.groupParticipantExtensions.includes('3000'))
+  assert.equal(a.events.some((e) => e.detail?.message?.includes('đã rời')), false)
+  send('adhoc_conference_participant_left', { conference_id: 'conference', call_id: 123 })
+  send('adhoc_conference_participant_left', { conference_id: 'conference', call_id: 123 })
+  assert.equal(a.svc.groupParticipantExtensions.includes('3000'), false)
+  assert.equal(a.events.filter((e) => e.detail?.message?.includes('đã rời')).length, 1)
+  assert.ok(a.state.activeCall)
+})
+
+test('Conference: C kết thúc kênh lúc REST tạo phòng còn chờ không bị báo rời; A cúp vẫn dọn B và C', async () => {
+  const a = callClient('1000', '2000', 'outbound'); await a.svc.addParticipantsToGroupCall(['3000'])
+  const secondary = a.svc.secondaryCallSessions.get('3000'); a.svc._onCallAcceptedHandler(secondary)
+  const pending = deferred(), started = deferred()
+  a.svc.getMyActiveCalls = async () => [
+    { id: 'A-host', sip_call_id: '1000-primary', talking_to: { 'B-call': {} } },
+    { id: 'A-C', sip_call_id: secondary.sipCallId, talking_to: { 'C-call': {} } },
+  ]
+  a.svc.createAdhocConference = () => { started.resolve(); return pending.promise }
+  vm.runInContext('wazoService.syncActiveCallsToAdhocConference = Object.getPrototypeOf(wazoService).syncActiveCallsToAdhocConference', a)
+  a.svc.syncActiveCallsToAdhocConference()
+  const merging = a.timers.get(a.svc._syncAdhocDebounceTimer)(); await started.promise
+  a.svc._onCallEndedHandler(secondary)
+  assert.ok(a.svc.groupParticipantExtensions.includes('3000')); assert.equal(a.svc._pendingConferenceTerminations.size, 1)
+  pending.resolve('conference'); await merging
+  assert.equal(a.svc._pendingConferenceTerminations.size, 0); assert.equal(a.svc.secondaryCallSessions.has('3000'), false)
+  assert.ok(a.svc.groupParticipantExtensions.includes('3000'))
+  assert.equal(a.events.some((e) => e.detail?.message?.includes('đã rời')), false)
+  a.svc.hangup(); await drain(); assert.ok(a.hung.includes('C-call')); assert.ok(a.deleted.includes('conference'))
+})
+
+test('Conference: ghép thất bại thì kết thúc nhánh chờ được dọn; không giữ C giả trong nhóm', async () => {
+  const a = callClient('1000', '2000', 'outbound'); await a.svc.addParticipantsToGroupCall(['3000'])
+  const secondary = a.svc.secondaryCallSessions.get('3000'); a.svc._onCallAcceptedHandler(secondary)
+  const pending = deferred(), started = deferred()
+  a.svc.getMyActiveCalls = async () => [
+    { id: 'host', sip_call_id: '1000-primary', talking_to: { 'B-call': {} } },
+    { id: 'child', sip_call_id: secondary.sipCallId, talking_to: { 'C-call': {} } },
+  ]
+  a.svc.createAdhocConference = () => { started.resolve(); return pending.promise }
+  vm.runInContext('wazoService.syncActiveCallsToAdhocConference = Object.getPrototypeOf(wazoService).syncActiveCallsToAdhocConference', a)
+  a.svc.syncActiveCallsToAdhocConference(); const merging = a.timers.get(a.svc._syncAdhocDebounceTimer)(); await started.promise
+  a.svc._onCallEndedHandler(secondary); pending.resolve(null); await merging
+  assert.equal(a.svc._pendingConferenceTerminations.size, 0)
+  assert.equal(a.svc.groupParticipantExtensions.includes('3000'), false); assert.ok(a.state.activeCall)
+})
+
+test('Conference: A cúp khi ghép còn chờ xóa hàng đợi; kết quả muộn không phục hồi nhóm', async () => {
+  const a = callClient('1000', '2000', 'outbound'); await a.svc.addParticipantsToGroupCall(['3000'])
+  const secondary = a.svc.secondaryCallSessions.get('3000'); a.svc._onCallAcceptedHandler(secondary)
+  const pending = deferred(), started = deferred()
+  a.svc.getMyActiveCalls = async () => [
+    { id: 'host', sip_call_id: '1000-primary', talking_to: { 'B-call': {} } },
+    { id: 'child', sip_call_id: secondary.sipCallId, talking_to: { 'C-call': {} } },
+  ]
+  a.svc.createAdhocConference = () => { started.resolve(); return pending.promise }
+  vm.runInContext('wazoService.syncActiveCallsToAdhocConference = Object.getPrototypeOf(wazoService).syncActiveCallsToAdhocConference', a)
+  a.svc.syncActiveCallsToAdhocConference(); const merging = a.timers.get(a.svc._syncAdhocDebounceTimer)(); await started.promise
+  a.svc._onCallEndedHandler(secondary); a.svc.hangup()
+  assert.equal(a.svc._pendingConferenceTerminations.size, 0)
+  pending.resolve('late-conference'); await merging
+  assert.equal(a.state.activeCall, null); assert.equal(a.svc.isGroupCall, false); assert.equal(a.svc.activeAdhocConferenceId, '')
+  assert.ok(a.deleted.includes('late-conference'))
 })
 
 test('SIP: callback giữ lại từ listener trước bị vô hiệu ngay sau logout', async () => {

@@ -58,6 +58,10 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
 ## 3. CÁC NGUYÊN TẮC NGHIỆP VỤ & TÍNH NĂNG ĐÃ THỐNG NHẤT
 
 ### 3.1. Nghiệp vụ Cuộc gọi & Bàn phím (`CallsView.vue`)
+- **Người gọi ban đầu luôn giữ quyền chủ phòng khi nâng cuộc gọi thành nhóm**:
+  - A gọi B, B yêu cầu thêm C thì A vẫn là host. B gửi yêu cầu mời cho A; A thực hiện quay số và ghép hội nghị. Không chuyển host sang người bấm thêm thành viên.
+  - A cúp máy thì kết thúc nhóm và ngắt các nhánh B/C. B hoặc C rời thì các thành viên còn lại tiếp tục với A làm host.
+  - Không coi `call_ended` của một nhánh SIP là bằng chứng thành viên đã rời hội nghị; phải phân biệt chuyển kênh vào ConfBridge với sự kiện rời đúng hội nghị.
 - **Chặn gọi máy bận (Busy / In-call)**:
   - Khi đối phương đang trong cuộc gọi (`busy`, `talking`, `holding`), hệ thống không được phép thực hiện cuộc gọi, phải hiển thị cảnh báo người này đang bận.
 - **Chặn gọi máy ngoại tuyến (Offline)**:

@@ -1843,15 +1843,13 @@ const confirmAddParticipants = async () => {
   const toAdd = [...selectedAddExtensions.value]
   closeAddParticipantModal()
 
-  // Phân quyền Host và Ủy quyền chuẩn Android: Nếu là Host hoặc từ cuộc gọi 1-1 thì tự gọi trực tiếp
-  if (wazoService.isGroupHost || !wazoService.isGroupCall) {
+  // Service quyết định gọi trực tiếp hay nhờ host; người nhận cuộc gọi không tự giành quyền host.
+  try {
     await wazoService.addParticipantsToGroupCall(toAdd)
-  } else {
-    const hostExt =
-      wazoService.groupHostExtension ||
-      callStore.activeCall?.groupHostExtension ||
-      callStore.activeCall?.number
-    wazoService.delegateAddParticipantsToHost(hostExt, toAdd)
+  } catch (error) {
+    window.dispatchEvent(new CustomEvent('app-toast', {
+      detail: { message: error.message || 'Không thể thêm người vào cuộc gọi.', type: 'warning' },
+    }))
   }
 }
 
