@@ -1,11 +1,11 @@
 import { vi } from 'vitest'
-import { createServices } from '../../src/app/createServices.js'
-import { callState } from '../../src/features/calls/state/callState.js'
-import { recordingState } from '../../src/features/calls/state/recordingState.js'
-import { userSessionState } from '../../src/core/session/userSessionState.js'
-import { callToneService } from '../../src/core/audio/CallToneService.js'
-import { logger } from '../../src/core/logging/LoggerService.js'
-import { invalidateSession } from '../../src/core/session/sessionScope.js'
+import { createServices } from '../../src/services/createServices.js'
+import { callState } from '../../src/state/callState.js'
+import { recordingState } from '../../src/state/callState.js'
+import { userSessionState } from '../../src/state/sessionState.js'
+import { callToneService } from '../../src/services/audio/audioService.js'
+import { logger } from '../../src/services/common/loggerService.js'
+import { invalidateSession } from '../../src/services/auth/sessionScope.js'
 
 /** Chỉ dùng trong test: thay ranh giới mạng/SDK, giữ nguyên module và Vue reactivity thực. */
 export function createFixture() {
@@ -123,7 +123,7 @@ export function response(data = {}, status = 200) {
 export function disposeFixture(fixture) {
   fixture?.authService.stopSessionHealthCheck()
   fixture?.contactService.dispose()
-  fixture?.callController.detachPhoneListeners()
+  fixture?.callService.detachPhoneListeners()
   fixture?.recordingService.clearSessionCache()
   invalidateSession()
   vi.clearAllTimers()

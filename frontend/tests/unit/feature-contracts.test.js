@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { computed, effectScope } from 'vue'
 import { createFixture, disposeFixture, deferred, response } from '../helpers/createFixture.js'
-import { mapUserProfile } from '../../src/features/auth/mappers/userProfile.js'
-import { useRecordingPlayer } from '../../src/features/history/composables/useRecordingPlayer.js'
-import { useMicrophoneMeter } from '../../src/features/settings/composables/useMicrophoneMeter.js'
+import { mapUserProfile } from '../../src/utils/userProfile.js'
+import { useRecordingPlayer } from '../../src/composables/useRecordingPlayer.js'
+import { useMicrophoneMeter } from '../../src/composables/useMicrophoneMeter.js'
 
 let app
 beforeEach(() => {
@@ -224,7 +224,7 @@ it('favorite đang chờ của phiên cũ không khóa thao tác cùng contact t
   fetch.mockImplementationOnce(() => old.promise).mockImplementationOnce(() => newer.promise)
   const first = app.contactService.toggleFavorite({ id: 'peer', isFavorite: false })
   const rejected = expect(first).rejects.toMatchObject({ name: 'StaleSessionError' })
-  const { invalidateSession } = await import('../../src/core/session/sessionScope.js')
+  const { invalidateSession } = await import('../../src/services/auth/sessionScope.js')
   invalidateSession()
   app.contactService.reset()
   localStorage.setItem('smartcall_user_uuid', 'b')

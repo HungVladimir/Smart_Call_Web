@@ -57,13 +57,18 @@ for (const file of files) {
     }
     const from = relative(file),
       to = relative(target)
-    if (from.startsWith('core/') && /^(app|features)\//.test(to))
-      errors.push(from + ': core không được import ' + to)
+    const composition = new Set(['services/index.js', 'services/createServices.js'])
     if (
-      /^features\/[^/]+\/(services|domain|state|mappers|composables)\//.test(from) &&
-      to.startsWith('app/')
+      from.startsWith('services/') &&
+      !composition.has(from) &&
+      (composition.has(to) || /^(views|components|router)\//.test(to) || to === 'App.vue')
     )
-      errors.push(from + ': nghiệp vụ không được import composition root')
+      errors.push(from + ': service không được import điểm khởi tạo hoặc giao diện ' + to)
+    if (
+      /^(state|utils)\//.test(from) &&
+      (/^(services|components|views|router)\//.test(to) || to === 'App.vue')
+    )
+      errors.push(from + ': state/helper thuần không được import nghiệp vụ hoặc giao diện ' + to)
     if (/\.(js|vue)$/.test(target)) dependencies.push(target)
   }
   function visit(node) {
@@ -121,9 +126,9 @@ function checkCycles(file) {
   visited.add(file)
 }
 for (const file of files) checkCycles(file)
-for (const directory of ['services', 'views', 'components', 'router'])
+for (const directory of ['core', 'features', 'app', 'shared'])
   if (fs.existsSync(path.join(sourceRoot, directory)))
-    errors.push('Còn thư mục legacy src/' + directory)
+    errors.push('Còn cấu trúc sâu cũ src/' + directory)
 if (errors.length) {
   console.error([...new Set(errors)].join('\n'))
   process.exitCode = 1

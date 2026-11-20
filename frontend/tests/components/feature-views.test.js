@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { reactive, nextTick } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
-import { callState } from '../../src/features/calls/state/callState.js'
-import { userSessionState } from '../../src/core/session/userSessionState.js'
+import { callState } from '../../src/state/callState.js'
+import { userSessionState } from '../../src/state/sessionState.js'
 import { mountComponent, flushUi } from '../helpers/mountComponent.js'
 
 const ports = vi.hoisted(() => ({
@@ -28,14 +28,14 @@ const ports = vi.hoisted(() => ({
     sendMessage: vi.fn(),
     deleteMultipleRooms: vi.fn(),
   },
-  groupCallController: { state: {} },
+  groupCallService: { state: {} },
 }))
-vi.mock('@/app/services.js', () => ports)
+vi.mock('@/services/index.js', () => ports)
 
-import AppHeader from '../../src/app/layout/AppHeader.vue'
-import SettingsModal from '../../src/features/settings/components/SettingsModal.vue'
-import MessagesView from '../../src/features/messages/views/MessagesView.vue'
-import LoginView from '../../src/features/auth/views/LoginView.vue'
+import AppHeader from '../../src/components/layout/AppHeader.vue'
+import SettingsModal from '../../src/components/common/SettingsModal.vue'
+import MessagesView from '../../src/views/MessagesView.vue'
+import LoginView from '../../src/views/LoginView.vue'
 
 let wrapper, router
 beforeEach(async () => {
@@ -149,4 +149,25 @@ it('batch delete không báo thành công toàn bộ khi service trả lỗi t�
   expect(events.at(-1)).toMatchObject({ type: 'warning' })
   expect(events.at(-1).message).toContain('0/1')
   window.removeEventListener('app-toast', onToast)
+})
+
+it('đổi mật khẩu giữ nguyên khoảng trắng thay vì tự sửa credential', async () => {
+  ports.authService.changePassword = vi.fn(async () => ({ ok: true, status: 204 }))
+  wrapper = mountComponent(SettingsModal, { props: { isOpen: true } })
+  wrapper.state.oldPassword = ' old password '
+  wrapper.state.newPassword = ' new password '
+  wrapper.state.confirmPassword = ' new password '
+  await wrapper.state.savePassword()
+  expect(ports.authService.changePassword).toHaveBeenCalledWith(' old password ', ' new password ')
+})
+
+it('reset mật khẩu dùng tên đăng nhập thật, không dùng tên hiển thị', async () => {
+  ports.authService.resetPassword = vi.fn(async () => ({ ok: true, status: 204 }))
+  localStorage.setItem('smartcall_username', 'Tên hiển thị')
+  wrapper = mountComponent(SettingsModal, { props: { isOpen: true } })
+  await wrapper.state.sendPasswordResetEmail()
+  expect(ports.authService.resetPassword).not.toHaveBeenCalled()
+  localStorage.setItem('smartcall_login_username', 'real.login')
+  await wrapper.state.sendPasswordResetEmail()
+  expect(ports.authService.resetPassword).toHaveBeenCalledWith('real.login')
 })

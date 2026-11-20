@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { mapDirectoryContacts } from '../../src/features/contacts/mappers/contactMapper.js'
-import { mapCallHistoryRecord } from '../../src/features/history/mappers/callHistoryMapper.js'
+import { mapDirectoryContacts } from '../../src/utils/contactMapper.js'
+import { mapCallHistoryRecord } from '../../src/utils/callHistoryMapper.js'
 import { getFeatures } from '../../src/config/features.js'
 
 it('danh bạ dạng items giữ UUID, số máy lẻ và trạng thái yêu thích', () => {

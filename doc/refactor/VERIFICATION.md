@@ -1,70 +1,58 @@
-# Kiểm chứng bản refactor
+# Kiểm chứng bản refactor dễ đọc
 
-Ngày: 19/11/2026. Môi trường đã chạy: Windows, Node 22.19.0. Chỉ bản clone được chỉnh sửa.
+Cập nhật: 20/11/2026. Windows, Node 22.19.0. Đợt này sửa duy nhất D:/Project/Smart_Call_Web_Refactor sau khi đã push bản gốc lên main tại 5d5fe3e.
 
-## Kiểm tra tự động
+## Kết quả hiện hành
 
 | Kiểm tra | Kết quả |
 | --- | --- |
-| Cài dependency từ frontend/package-lock.json | Hoàn thành; npm ci |
-| npm run lint | Đạt, không có lỗi |
-| npm --prefix frontend run check:architecture | 50 module; không import thiếu/cycle, không core import ngược, không nghiệp vụ import app |
-| npm test | 76/76 kiểm thử, 7 file |
-| npm --prefix frontend run format:check | Đạt sau chuẩn hóa |
-| npm run build | Thành công; output frontend/dist |
-| npm audit | Không ghi nhận vulnerability tại thời điểm chạy |
-| Trang login trên trình duyệt local | Hiển thị đúng tiếng Việt; không console error/warning trong lần kiểm tra |
+| npm run lint | Đạt, không lỗi |
+| npm --prefix frontend run check:architecture | 52 module JS/Vue; không import thiếu/cycle, service không import giao diện/điểm lắp ghép, state/helper không import nghiệp vụ |
+| npm test | 121/121 test, 12 file; không skip/cancel |
+| npm run build | Đạt, 361 module được biến đổi; đầu ra frontend/dist |
+| npm --prefix frontend run format:check | Đạt; toàn bộ source/test/script/config khớp Prettier |
+| CSS màn hình gọi | 282 rule nguồn được đối chiếu sau tách, thiếu 0 rule |
+| Catalog handbook | 53 link file source hợp lệ, đủ toàn bộ source hiện tại |
+| Cây thư mục | 53 file, 20 thư mục dưới src, tối đa hai tầng; trước đó 44 thư mục |
+| CallsView.vue | 976 dòng, bao gồm comment giải thích; UI đã được tách theo cụm |
 
-Các dependency gián tiếp vẫn có thông báo deprecated (inflight, glob, rimraf, fstream, jsrsasign). “0 vulnerabilities” là kết quả cơ sở dữ liệu npm tại thời điểm chạy, không phải chứng minh mọi dependency đều an toàn hoặc còn được duy trì. Không dùng force upgrade SDK ngoài phạm vi.
+Baseline đầu lượt là 103 test/10 file. Lượt này thêm 18 ca cho component mới, các lỗi F04–F08, credential/logger và hai tình huống gọi/nhánh nhóm. Bộ test chạy module thật và Vue thật; SDK/network/device/clock được kiểm soát tại ranh giới. Các ca UI mới kiểm tra cả cảnh báo template Vue. Không suy ra coverage 100%.
 
-Phiên bản chính đã kiểm tra: @wazo/sdk 0.49.11, Vue 3.5.45, Vue Router 5.5.0, Vite 8.3.8, Vitest 5.1.1. Bản SDK được giữ để hạn chế thay đổi giao thức.
+## Phạm vi hành vi đã kiểm tra
 
-## Các nhóm hành vi được kiểm tra
+- Phiên: response/body cũ, login/validate timeout, SDK state/cleanup muộn, thu hồi và bỏ private view/KeepAlive.
+- Gọi: điều kiện chặn, gọi chính mình, lookup chậm, SIP registration, kết nối/cleanup và lệnh nhận máy chờ ACK.
+- Event: SIP ID của nhánh đang quản lý; accepted đến trước Promise; terminal event cũ; kết quả gọi cũ không tắt âm báo cuộc gọi mới.
+- Nhóm: host/member/UUID, ADD_REQ cũ/mới, LEFT chỉ chính người phát, ID hội nghị, merge lỗi/thử lại, nhánh muộn và cleanup.
+- UI mới: Dialer → View → service, nút điều khiển, tìm kiếm không dấu, phát đúng contact, modal loại peer/self/offline và bỏ lựa chọn không còn hợp lệ. Nhánh đã nghe không còn báo đang kết nối.
+- Chat: command quản trị, proxy sendFailed/ID server, phòng đóng không tự mở lại bởi tin thường, tombstone ngoài trang gần nhất, chặn gửi tiếp, kết quả batch từng phần.
+- Dữ liệu/media: schema danh bạ, refresh CDR đảo thứ tự, ghi âm start/stop lỗi/hủy, ObjectURL, player và mic đến muộn.
+- Credential/log: giữ khoảng trắng mật khẩu, reset dùng login identifier, che token/password và serialize snapshot có vòng tham chiếu.
 
-- Ownership phiên: response/body cũ, chuyển tài khoản, callback SDK/WebSocket, pending favorite.
-- Đăng nhập: giới hạn chờ, kết quả muộn, khôi phục token bị từ chối, không logout nhầm phiên mới.
-- Gọi: các trạng thái chặn, gọi chính mình, số không tìm thấy, audio-only, khóa lookup dài, SDK trả muộn, nghe máy chờ ACK/thất bại.
-- Hội nghị: conference trả muộn sau cúp, merge lỗi được thử lại, nhánh phụ nghe trước, Map reactive, lời mời muộn.
-- Ghi âm/media: lỗi start/stop, hủy start, cache sau đổi phiên, đúng host, player đảo thứ tự, thiết bị và mic đến muộn.
-- Chat: command quản trị, nhóm đã đóng khi cold load, HTTP lỗi, membership bị chặn, gửi xong không đổi phòng, kết quả batch từng phần.
-- UI: Header SIP, form login/điều hướng, Settings chưa tải Confd, MessageList, Composer IME, Dialer.
-- Mapper: dữ liệu danh bạ items/bảng cột/rỗng, favorite, CDR nội bộ/inbound/outbound.
+## Build và phạm vi chưa chứng minh
 
-Module và Vue component thật được thực thi. SDK, HTTP, thiết bị, đồng hồ được mock ở ranh giới. Không có bằng chứng coverage 100%; test không thay cho xác minh hệ thống ngoài.
+Chunk đầu vào khoảng 1.204 KB trước gzip, 328 KB sau gzip; Vite vẫn cảnh báo lớn hơn 500 KB. Không tăng ngưỡng để che cảnh báo và không khẳng định đợt tái cấu trúc đã tăng tốc.
 
-## Bundle
+Đối chiếu CSS xác nhận giữ selector/khai báo/điều kiện media và keyframe sau đổi namespace. Đợt này chưa kiểm thử hiển thị bằng trình duyệt thật ở mọi kích thước. Chưa đăng nhập Wazo, gọi Android, kiểm tra mic/codec/media hoặc IdP thật. Bản kiểm tra login trên trình duyệt trong lượt trước không được coi là xác minh toàn bộ UI vừa tách.
 
-Build vẫn báo chunk lớn hơn 500 KB. Chunk đầu vào khoảng 1.197 KB trước gzip, khoảng 325 KB sau gzip; các màn hình được lazy-load như cấu hình router. Việc refactor cải thiện trách nhiệm/kiểm chứng, chưa chứng minh cải thiện tốc độ. Không tăng ngưỡng cảnh báo để che vấn đề.
+## Các giới hạn tích hợp
 
-## Kiểm tra tích hợp trước khi dùng thay bản cũ
-
-Các mục dưới đây **chưa thực hiện** trên Wazo/IdP thật:
-
-| Luồng | Kết quả cần xác nhận |
-| --- | --- |
-| Login / F5 / logout | Đúng hồ sơ/máy lẻ, token hết hạn, refresh, thu hồi phiên đúng chính sách |
-| SIP / mạng ngắt rồi nối lại | ON_REGISTERED thực, không nhân listener/kết nối |
-| Gọi đi / gọi đến | Âm thanh hai chiều, answering/connected, từ chối, không trả lời, cúp ở cả hai phía |
-| Mic/loa / mute / DTMF | Thiết bị thực được áp dụng, đóng thử mic không giữ track |
-| Gọi nhóm | Mời, timeout, host/member rời, merge retry, chuyển nhánh sang hội nghị |
-| Ghi âm | API start/stop, CDR liên kết, phát/tải media, đổi tài khoản không còn cache cũ |
-| Danh bạ/yêu thích/presence | Đúng source, ACK thật, đồng bộ giữa client theo server |
-| Chat nhóm/trực tiếp | Gửi/nhận, metadata quản trị, đóng nhóm, lỗi từng phần, quyền server |
-| Settings Confd | DND/forward thực thay đổi và được tải lại đúng |
-| Static host | Truy cập URL con/F5 có fallback index.html; public assets đúng |
-| Backend/IdP | Chỉ kiểm tra khi có project mẫu, đăng ký client và contract |
-
-Cần theo dõi cả frontend lẫn log server với tài khoản thử nghiệm được cấp. Không đưa secret vào Markdown hoặc log export.
+- Đóng phòng Chatd hiện là giao thức SmartCall, không phải API xóa phòng hoặc thu hồi membership. Backend/Wazo phải thực thi ACL thật.
+- Search/phân trang tombstone và metadata admin phải được thử trên server triển khai. Không xác minh được trạng thái thì tạm ẩn nhóm có admin được xác nhận và thông báo.
+- Envelope presence phải có UUID server. Legacy ADD_REQ chưa có nonce/chữ ký cho từng cuộc gọi.
+- Conference event thiếu ID/call_id đáng tin bị bỏ qua; cần thử envelope thực tế và kết thúc nhánh SIP.
+- SDK auth không có abort được dùng ở đây. Gate giữ khóa đến khi request/cleanup xong; treo hoặc cleanup lỗi cần chờ/tải lại.
+- Backend/SSO chưa triển khai; không tự bịa giao thức hoặc API membership.
 
 ## Chạy lại
 
-Tại gốc clone:
-
 ```powershell
-npm --prefix frontend ci
 npm run check
 npm --prefix frontend run format:check
-npm --prefix frontend audit
 ```
 
-Giữ bản gốc hoặc commit trước refactor để đối chiếu. Không áp dụng bản clone vào production chỉ dựa vào build/test tự động.
+Trước khi dùng thay bản gốc, thử login/restore/revoke hai thiết bị; gọi/nhận/cúp; host/nhánh phụ; ghi âm và CDR; Chatd tombstone; thiết bị mic/loa và chứng chỉ trên tổng đài thật.
+
+## Bổ sung khi gom service và giải thích code
+
+Services có 6 nhóm auth/calls/audio/realtime/data/common, một cấp nhóm; index.js/createServices.js ở gốc. Toàn frontend vẫn 53 file với 20 thư mục con. Bộ 121 test được giữ nguyên, không thêm test chỉ để kiểm tra nội dung comment. Comment được kiểm chứng bằng đối chiếu AST và template/style với snapshot trước khi chú thích; kết quả cuối: 461/461 mục có giải thích, AST của 52 module không đổi, template/style không đổi; 121/121 test, lint, architecture, build và format:check đều đạt.

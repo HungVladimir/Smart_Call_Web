@@ -1,0 +1,576 @@
+<template>
+  <div
+    class="contact-item-card"
+    :class="{
+      favorite: contact.isFavorite,
+      'group-selectable': groupSelectionMode,
+      'group-selected': groupSelectionMode && selected,
+    }"
+    @click="groupSelectionMode ? emit('select', contact) : null"
+  >
+    <!-- Checkbox khi ở tab Gọi nhóm -->
+    <div
+      v-if="groupSelectionMode"
+      class="group-select-checkbox-wrap"
+      @click.stop="emit('select', contact)"
+    >
+      <div
+        class="custom-check-box"
+        :class="{
+          checked: selected,
+          disabled: isSelf || !canInvite,
+        }"
+      >
+        <svg
+          v-if="selected"
+          class="check-svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+      </div>
+    </div>
+    <!-- Ghim yêu thích ⭐ khi ở contactácontact tab thông thường -->
+    <button
+      v-else
+      class="btn-star"
+      :class="{ active: contact.isFavorite }"
+      :title="contact.isFavorite ? 'Bỏ khỏi yêu thích' : 'Thêm vào yêu thích'"
+      :aria-label="contact.isFavorite ? 'Bỏ khỏi yêu thích' : 'Thêm vào yêu thích'"
+      @click.stop="emit('favorite', contact)"
+    >
+      {{ contact.isFavorite ? '⭐' : '☆' }}
+    </button>
+
+    <!-- Avatar tròn chữ contactái -->
+    <div class="avatar-wrap">
+      <div class="contact-avatar" :style="{ backgroundColor: getAvatarColor(contact.name) }">
+        {{ getInitials(contact.name) }}
+      </div>
+    </div>
+
+    <!-- Thông tin nhân viên (Chấm màu đặt ngay trướcontact Tên nhân viên) -->
+    <div class="contact-meta">
+      <div class="meta-row-top">
+        <div class="name-status-group">
+          <span
+            class="status-dot-inline"
+            :class="`dot-${contact.status || 'offline'}`"
+            :title="`${contact.name}: ${contact.statusLabel || 'Ngoại tuyến'}`"
+          ></span>
+          <strong class="contact-name" :title="contact.name">
+            {{ contact.name }}
+            <span v-if="isSelf" class="self-badge">(Bạn)</span>
+            <span
+              v-if="
+                contact.isMobileApp &&
+                contact.status !== 'offline' &&
+                contact.status !== 'unavailable'
+              "
+              class="mobile-phone-badge"
+              title="Đang trựcontact tuyến bằng ứng dụng di động"
+            >
+              <svg
+                class="phone-svg-icon"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+                <line x1="12" y1="18" x2="12.01" y2="18"></line>
+              </svg>
+            </span>
+          </strong>
+        </div>
+      </div>
+      <div class="meta-row-sub">
+        <span class="ext-badge">Máy lẻ {{ contact.number || '---' }}</span>
+        <span v-if="contact.dept" class="dept-text" :title="contact.dept"
+          >• {{ contact.dept }}</span
+        >
+      </div>
+    </div>
+
+    <!-- Thao tácontact / Chỉ báo: Trong tab Gọi nhóm hiển thị nhãn đã chọn / trạng thái; ở tab thường hiển thị nút Gọi & Nhắn tin -->
+    <div v-if="groupSelectionMode" class="group-select-indicator">
+      <span v-if="selected" class="badge-group-selected"> ✓ Đã chọn </span>
+      <span v-else class="badge-status-pill" :class="contact.status || 'offline'">
+        {{ contact.statusLabel || 'Ngoại tuyến' }}
+      </span>
+    </div>
+
+    <!-- Nút thao tácontact nhanh khi ở contactácontact tab 1-1: Gọi thoại & Nhắn tin -->
+    <div v-else class="contact-actions">
+      <button
+        class="btn-action-icon call"
+        :title="
+          !contact.number || !contact.number.trim()
+            ? 'Chưa contactó số máy lẻ'
+            : busy
+              ? 'Đang bận cuộcontact gọi'
+              : `Gọi máy lẻ ${contact.number}`
+        "
+        :aria-label="`Gọi cho ${contact.name}`"
+        :disabled="busy || !contact.number || !contact.number.trim()"
+        @click.stop="emit('call', contact)"
+      >
+        <svg
+          class="action-svg"
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+          />
+        </svg>
+      </button>
+      <button
+        class="btn-action-icon chat"
+        :title="`Nhắn tin với ${contact.name}`"
+        :aria-label="`Nhắn tin cho ${contact.name}`"
+        @click.stop="emit('message', contact)"
+      >
+        <svg
+          class="action-svg"
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
+/** Một liên hệ: chỉ hiển thị và phát hành động, không sở hữu danh sách hoặc gọi API. */
+defineProps({
+  contact: { type: Object, required: true },
+  groupSelectionMode: Boolean,
+  selected: Boolean,
+  isSelf: Boolean,
+  canInvite: Boolean,
+  busy: Boolean,
+})
+const emit = defineEmits(['select', 'call', 'message', 'favorite'])
+</script>
+
+<style>
+.calls-view .status-dot-inline {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.calls-view .status-dot-inline.online {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+}
+
+.calls-view .status-dot-inline.busy,
+.calls-view .status-dot-inline.talking,
+.calls-view .status-dot-inline.holding {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+}
+
+.calls-view .status-dot-inline.away {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
+}
+
+.calls-view .status-dot-inline.dnd {
+  background: #8b5cf6;
+  box-shadow: 0 0 6px rgba(139, 92, 246, 0.7);
+}
+
+.calls-view .status-dot-inline.ringing {
+  background: #3b82f6;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.7);
+}
+
+.calls-view .status-dot-inline.offline {
+  background: #94a3b8;
+}
+
+.calls-view .contact-item-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  padding: 10px 14px;
+  gap: 12px;
+  transition: all 0.15s ease;
+}
+
+.calls-view .contact-item-card:hover {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.calls-view .btn-star {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #cbd5e1;
+  transition:
+    transform 0.15s,
+    color 0.15s;
+  padding: 4px;
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.calls-view .btn-star:hover {
+  transform: scale(1.2);
+  color: #f59e0b;
+}
+
+.calls-view .btn-star.active {
+  color: #f59e0b;
+}
+
+.calls-view .avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.calls-view .contact-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.calls-view .contact-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calls-view .meta-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.calls-view .name-status-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.calls-view .status-dot-inline {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.calls-view .status-dot-inline.dot-online {
+  background: #22c55e;
+}
+.calls-view .status-dot-inline.dot-busy {
+  background: #ef4444;
+}
+.calls-view .status-dot-inline.dot-ringing {
+  background: #3b82f6;
+  animation: calls-view-pulse-ring 1s infinite;
+}
+.calls-view .status-dot-inline.dot-dnd {
+  background: #f97316;
+}
+.calls-view .status-dot-inline.dot-away {
+  background: #eab308;
+}
+.calls-view .status-dot-inline.dot-offline {
+  background: #94a3b8;
+}
+
+.calls-view .contact-name {
+  font-size: 0.92rem;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calls-view .self-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #059669;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.calls-view .mobile-phone-badge {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 5px;
+  color: #10b981;
+}
+
+.calls-view .phone-svg-icon {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.calls-view .meta-row-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
+.calls-view .ext-badge {
+  background: #e0f2fe;
+  color: #0284c7;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.calls-view .dept-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calls-view .contact-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.calls-view .btn-action-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.92rem;
+  transition: all 0.15s;
+  position: relative;
+}
+
+.calls-view .btn-action-icon .action-svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  transition:
+    transform 0.15s ease,
+    color 0.15s ease;
+}
+
+.calls-view .btn-action-icon:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.calls-view .btn-action-icon:hover:not(:disabled) .action-svg {
+  transform: scale(1.12);
+}
+
+.calls-view .btn-action-icon.call {
+  color: #10b981;
+}
+
+.calls-view .btn-action-icon.call:hover:not(:disabled) {
+  background: #ecfdf5;
+  border-color: #10b981;
+  color: #059669;
+}
+
+.calls-view .btn-action-icon.chat {
+  color: #3b82f6;
+}
+
+.calls-view .btn-action-icon.chat:hover:not(:disabled) {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #2563eb;
+}
+
+.calls-view .btn-action-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.calls-view .btn-action-icon:disabled * {
+  pointer-events: none;
+}
+.calls-view .group-select-checkbox-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.calls-view .custom-check-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 2px solid #cbd5e1;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.calls-view .custom-check-box.checked {
+  background: #2563eb;
+  border-color: #2563eb;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
+}
+
+.calls-view .custom-check-box.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f1f5f9;
+}
+
+.calls-view .check-svg {
+  width: 13px;
+  height: 13px;
+  stroke: #ffffff;
+}
+
+.calls-view .contact-item-card.group-selectable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.calls-view .contact-item-card.group-selected {
+  background: #f8faff;
+  border: 1.5px solid #93c5fd !important;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.08);
+}
+
+.calls-view .group-select-indicator {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.calls-view .badge-group-selected {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background: #dbeafe;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.calls-view .badge-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.calls-view .badge-status-pill.online {
+  background: #ecfdf5;
+  color: #059669;
+  border-color: #a7f3d0;
+}
+
+.calls-view .badge-status-pill.busy {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.calls-view .badge-status-pill.dnd {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
+.calls-view .badge-status-pill.away {
+  background: #fefce8;
+  color: #a16207;
+  border-color: #fef08a;
+}
+
+.calls-view .badge-status-pill.ringing {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.calls-view .badge-status-pill.offline {
+  background: #f8fafc;
+  color: #94a3b8;
+  border-color: #e2e8f0;
+}
+</style>

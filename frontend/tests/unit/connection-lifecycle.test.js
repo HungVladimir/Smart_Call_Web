@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, it, expect, vi } from 'vitest'
 import { createFixture, disposeFixture, deferred } from '../helpers/createFixture.js'
-import { invalidateSession } from '../../src/core/session/sessionScope.js'
+import { invalidateSession } from '../../src/services/auth/sessionScope.js'
 let app
 beforeEach(() => {
   app = createFixture()
@@ -10,30 +10,30 @@ afterEach(() => disposeFixture(app))
 it('gộp các lệnh kết nối đồng thời và không bỏ lỡ registered phát ngay', async () => {
   const pending = deferred()
   app.sdk.Phone.connect.mockImplementation(() => {
-    app.callController._onRegisteredHandler()
+    app.callService._onRegisteredHandler()
     return pending.promise
   })
-  const first = app.callController.connect(),
-    second = app.callController.connect()
+  const first = app.callService.connect(),
+    second = app.callService.connect()
   expect(app.sdk.Phone.connect).toHaveBeenCalledTimes(1)
   expect(app.callState.isRegistered).toBe(true)
   pending.resolve()
   await Promise.all([first, second])
-  await app.callController.connect()
+  await app.callService.connect()
   expect(app.sdk.Phone.connect).toHaveBeenCalledTimes(1)
 })
 
 it('callback SDK đã xếp hàng không đăng ký lại SIP sau disconnect', () => {
-  app.callController.attachPhoneListeners()
-  const lateHandler = app.callController._onRegisteredHandler
-  app.callController.disconnect()
+  app.callService.attachPhoneListeners()
+  const lateHandler = app.callService._onRegisteredHandler
+  app.callService.disconnect()
   lateHandler()
   expect(app.callState.isRegistered).toBe(false)
 })
 
 it('callback của phiên A không sửa trạng thái đăng ký của phiên B', () => {
-  app.callController.attachPhoneListeners()
-  const lateHandler = app.callController._onUnregisteredHandler
+  app.callService.attachPhoneListeners()
+  const lateHandler = app.callService._onUnregisteredHandler
   invalidateSession()
   localStorage.setItem('smartcall_user_uuid', 'b')
   app.callState.isRegistered = true
@@ -44,12 +44,12 @@ it('callback của phiên A không sửa trạng thái đăng ký của phiên B
 it('kết nối hoàn tất sau disconnect không gắn lại listener', async () => {
   const pending = deferred()
   app.sdk.Phone.connect.mockImplementation(() => pending.promise)
-  const connecting = app.callController.connect()
+  const connecting = app.callService.connect()
   const rejected = expect(connecting).rejects.toThrow('hủy')
-  app.callController.disconnect()
+  app.callService.disconnect()
   pending.resolve()
   await rejected
-  expect(app.callController.listenersAttached).toBe(false)
+  expect(app.callService.listenersAttached).toBe(false)
 })
 
 it('đăng nhập SDK treo được giải phóng sau 15 giây, kết quả muộn không commit token', async () => {
@@ -104,7 +104,7 @@ it('đăng nhập mới chờ SDK logout cũ hoàn tất trước khi gọi Auth
   app.authService.synchronizeUserProfile = vi.fn(async () => {})
   app.historyService.reload = vi.fn(async () => [])
   app.eventConnection.connect = vi.fn()
-  app.callController.connect = vi.fn(async () => true)
+  app.callService.connect = vi.fn(async () => true)
   const loggingIn = app.authService.login('fixture', 'fixture-password')
   await Promise.resolve()
   expect(app.sdk.Auth.logIn).not.toHaveBeenCalled()
@@ -116,8 +116,8 @@ it('đăng nhập mới chờ SDK logout cũ hoàn tất trước khi gọi Auth
 it('kết nối mới chờ SDK disconnect cũ trước khi mở phone', async () => {
   const cleanup = deferred()
   app.sdk.Phone.disconnect.mockImplementation(() => cleanup.promise)
-  app.callController.disconnect()
-  const connecting = app.callController.connect()
+  app.callService.disconnect()
+  const connecting = app.callService.connect()
   expect(app.sdk.Phone.connect).not.toHaveBeenCalled()
   cleanup.resolve()
   await connecting

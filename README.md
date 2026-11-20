@@ -1,6 +1,6 @@
 # SmartCall Web — bản refactor
 
-Mã ứng dụng Web nằm trong **frontend/**. Đây là bản clone để refactor; bản gốc ở thư mục cùng cấp được giữ nguyên.
+Mã ứng dụng Web nằm trong **frontend/**. Đây là bản clone để refactor; bản gốc ở thư mục cùng cấp đã được push bản vá riêng lên main (5d5fe3e).
 
 ```text
 Smart_Call_Web_Refactor/
@@ -32,8 +32,10 @@ Các lệnh dev/build/test/lint/check ở gốc chuyển tiếp tới frontend. 
 
 ## Tài liệu
 
+- [Hướng dẫn frontend chi tiết cho người mới](doc/HUONG_DAN_FRONTEND_CHO_NGUOI_MOI.md)
 - [Sơ đồ kiến trúc và cây thư mục](doc/refactor/ARCHITECTURE.md)
 - [Luồng đọc code, quy ước và cách mở rộng](doc/refactor/DEVELOPMENT_GUIDE.md)
+- [Audit sau refactor: bằng chứng và trạng thái xử lý](doc/refactor/FOLLOWUP_AUDIT_2026-11-19.md)
 - [Kết quả kiểm chứng và kiểm tra tích hợp](doc/refactor/VERIFICATION.md)
 - [Nhật ký toàn bộ đợt refactor](doc/refactor/PROGRESS.md)
 - [Prompt triển khai chi tiết](doc/refactor/IMPLEMENTATION_PROMPT.md)
@@ -42,3 +44,9 @@ Các lệnh dev/build/test/lint/check ở gốc chuyển tiếp tới frontend. 
 Các báo cáo trong `doc/audit/` và những bước triển khai cũ phản ánh phiên bản trước. Đường dẫn source hiện hành nằm dưới `frontend/src/`.
 
 Ứng dụng tiếp tục dùng Wazo SDK/API hiện hành. Chưa triển khai SSO mới hoặc backend. Cần thử SIP, media, hội nghị và ghi âm trên tổng đài thật trước khi thay bản đang sử dụng.
+
+## Cấu trúc dành cho người mới
+
+Source dùng views/components/services/state/composables/utils/router/config/assets. Không còn app/core/features/shared bên trong src. Màn hình gọi được chia thành DialerPanel, ActiveCallPanel, ContactsPanel/ContactCard và AddParticipantModal. Đọc chương 3 và 20 trong tài liệu nhập môn trước khi mở toàn bộ service.
+
+Service hiện được gom một cấp theo auth/calls/audio/realtime/data/common. Xem chương 3 của handbook để chọn nhóm theo việc cần sửa.

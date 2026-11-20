@@ -85,3 +85,68 @@ Các lỗi và biện pháp của lượt audit trước vẫn được giữ: c
 - Các service/page lớn vẫn còn nhiều nghiệp vụ và CSS. Việc tách tiếp cần dựa vào thay đổi cụ thể và kiểm chứng tích hợp, không chỉ số dòng.
 
 Thông tin commit/push được báo trong kết quả bàn giao của lượt làm việc; không ghi hash tự tham chiếu vào commit này.
+
+## 8. Audit độc lập sau refactor — 19/11/2026
+
+- Rà lại commit a85d6dc theo yêu cầu đánh giá bảo mật, độ sạch, cấu trúc và các trường hợp chưa cover.
+- Bộ chính vẫn 76/76 đạt; lint, architecture check, format và build đạt; npm audit báo 0 vulnerability tại thời điểm chạy.
+- Bộ audit riêng trong cache có 11 ca: 9 không đạt, 2 đối chứng đạt, gom thành 8 nhóm vấn đề chính.
+- Phát hiện: xác thực người phát group presence, SDK auth hoàn tất sau timeout, cleanup khi thu hồi phiên, accepted của sai cuộc gọi, event xóa conference không liên quan, reactivity nhãn gửi thất bại, mở lại phòng sau tombstone và vòng lặp router khi tắt hết phân hệ.
+- Đo AST: ChatService 1.229 dòng; finalizeCallTermination 349 dòng; hai trang Calls/Messages vẫn hơn 800 dòng script mỗi trang. Cấu trúc feature phù hợp nhưng chưa hoàn tất làm sạch trách nhiệm.
+- Ghi báo cáo và bản sao ca tái hiện: [FOLLOWUP_AUDIT_2026-11-19.md](FOLLOWUP_AUDIT_2026-11-19.md), [AUDIT_REPRO_CASES.md](AUDIT_REPRO_CASES.md).
+- Không sửa mã nghiệp vụ, không gọi Wazo/IdP thật. Các phát hiện đang mở; cần sửa theo thứ tự trong báo cáo.
+
+## 9. Rà soát file cần lưu Git — 19/11/2026
+
+- Xác nhận node_modules ở gốc clone chỉ chứa cache công cụ; node_modules ở mọi cấp đã được loại bằng quy tắc node_modules/.
+- Bổ sung .vite-temp/ và .vitest-cache/ để loại cache cả khi sinh ngoài node_modules.
+- Giữ frontend/scripts, frontend/tests, eslint.config.js và vitest.config.js trong Git vì các lệnh check/lint/test cần chúng.
+- Không xóa thư mục trên máy, không bỏ theo dõi source/config, không sửa mã nghiệp vụ hoặc bản gốc.
+- Xác minh bằng git check-ignore và git diff --check; thay đổi ignore không cần chạy lại test ứng dụng.
+
+## 10. Tài liệu nhập môn frontend — 19/11/2026
+
+- Tạo doc/HUONG_DAN_FRONTEND_CHO_NGUOI_MOI.md gồm 20 chương cho người mới, giải thích khái niệm, cấu trúc, khởi động, từng tính năng và luồng từ UI tới SDK/HTTP rồi state.
+- Giải thích đầy đủ 51 file source, cấu hình/test, các nhóm endpoint, response minh họa và bài thực hành lần code.
+- Đối chiếu WazoApiService của Android với WazoApiClient/CallControlApi và các request còn phân tán; tách rõ code hiện tại với đề xuất chuẩn hóa API.
+- Người dùng đính chính định dạng sang Markdown; bàn giao .md trực tiếp trong doc, không giữ bản Word mới tạo.
+- Không sửa mã nghiệp vụ. Kiểm tra mục lục, liên kết file và độ bao phủ danh mục source; không cần chạy lại test ứng dụng cho thay đổi tài liệu.
+
+## 11. Vá ba vấn đề ưu tiên F01 F02 F03 — 19/11/2026
+
+- Group presence được tách vào groupPresenceSignals: xác định sender bằng UUID/danh bạ, đối chiếu peer/host/member hiện tại, yêu cầu mời chỉ từ người đã kết nối, LEFT chỉ cho chính người gửi; gộp yêu cầu lặp và giữ schema Android cũ.
+- Thêm SdkAuthenticationGate dùng chung theo SDK Auth: initialize/login/validate/logout cùng hàng đợi, giữ khóa qua timeout cho đến khi SDK và cleanup kết thúc. Cleanup lỗi chặn tiếp và yêu cầu tải lại trang; request treo không cho retry chạy song song.
+- Thu hồi phiên dùng logout revoked=true: invalidate scope, xóa token/profile/cache/URL media/định danh SIP cũ, dừng socket/retry/timer. Socket.close lỗi không ngăn dọn credential.
+- App đóng Settings, bỏ view/cache riêng tư ngay trước khi router chuyển login và giữ modal lý do. Test UI đã bắt được trường hợp route riêng tư có thể render lại trong khoảng chờ, đã bổ sung guard.
+- Thêm 27 ca hồi quy vào suite chính; tổng 103 test, 10 file. Không chỉnh sửa SDK trong node_modules, không tạo API/IdP mới.
+- Cập nhật handbook, kiến trúc, báo cáo audit và kiểm chứng. F04–F08 vẫn mở ngoài phạm vi yêu cầu ba lỗi này.
+- Giới hạn: chưa thử Wazo/Android thật. Contract presence cũ không có call nonce/chữ ký server; dữ liệu sender phải do server xác nhận. Bản vá client không thay ACL hoặc chứng minh chống mọi replay của cùng người dùng giữa các cuộc gọi.
+
+## 12. Đơn giản hóa cấu trúc theo phản hồi người dùng — 20/11/2026
+
+- Đã push bản gốc lên origin/main tại 5d5fe3e, xác nhận hash remote và working tree sạch. Sau đó chỉ sửa clone.
+- Chạy baseline clone: 103 test đạt. Snapshot và mapping trước di chuyển nằm trong .refactor-tmp (Git ignore).
+- Bỏ tầng app/core/features/shared, cập nhật import/test/index.html và ranh giới architecture checker. Không giữ alias shim hoặc bản sao source cũ.
+- Đổi CallController/GroupCallController thành CallService/GroupCallService. Gộp state gọi/ghi âm/nhóm, ApiError và helper presence vào module sở hữu.
+- Tách ActiveCallPanel, ContactsPanel, ContactCard và AddParticipantModal. View giữ lệnh/router; component giữ hiển thị/lựa chọn. Đối chiếu 282 rule CSS trước/sau, không mất rule; namespace bảo vệ các trang khác.
+- Bổ sung kiểm thử UI thật và các ca F04–F08. Sửa event SIP cũ, ID hội nghị, proxy sendFailed, nhóm đóng không tự mở lại, và self-redirect. F07 vẫn cần API server để thực thi membership/ACL thật.
+- Đồng bộ mật khẩu có khoảng trắng, định danh reset, dữ liệu người gọi và logger an toàn từ bản gốc.
+- Viết lại cây thư mục/nhập môn/file catalog/luồng UI trong tài liệu hướng dẫn và kiến trúc. Các mục trước của nhật ký là lịch sử, không phải cây hiện hành.
+- Kết quả cuối: 121/121 test (12 file), lint/architecture/build đạt. CallsView từ 3.748 xuống 923 dòng; 53 file và 14 thư mục source. Chi tiết và giới hạn nằm trong VERIFICATION.md.
+
+- Hai lỗi UI/lifecycle phát hiện thêm: kết quả gọi cũ dừng nhầm ringback của cuộc gọi mới; danh sách đang kết nối gồm cả nhánh đã nghe. Đã sửa và có hai ca hồi quy riêng.
+
+## 13. Gom nhóm service theo phản hồi — 20/11/2026
+
+- Gom 19 service vào auth/calls/audio/realtime/data/common, chỉ một cấp nhóm; giữ index.js/createServices.js ở gốc.
+- Source vẫn có 53 file; số thư mục con tăng từ 14 lên 20 để phục vụ phân loại có ý nghĩa. Không tái tạo các tầng app/core/features/shared.
+- Có snapshot trước di chuyển; cập nhật import trực tiếp trong source và test, không để shim hoặc bản sao file cũ.
+- Cập nhật cây thư mục, catalog, hướng dẫn chọn nhóm, kiến trúc và quy tắc phát triển. Bộ 121 test tiếp tục đạt sau di chuyển.
+
+## 14. Giải thích hàm và điều kiện quan trọng — 20/11/2026
+
+- Bổ sung 300 comment trước hàm/method/computed còn thiếu, 28 comment ở watch/lifecycle và 174 comment guard quan trọng. Nâng cấp thêm mô tả bộ lọc CDR để rõ hơn.
+- Nội dung giải thích theo vai trò thực tế: View điều phối, component phát event, service sở hữu API/state/tài nguyên; không chỉ lặp tên hàm.
+- Comment dài được xuống dòng để đọc trong editor; dùng JSDoc cho hàm và // cho nhánh xử lý.
+- Bổ sung chương 21 của handbook để giải thích cách đọc guard về phiên, SIP ID, quyền và HTTP.
+- Đã chốt: 461/461 hàm có tên/method/getter/computed có giải thích; đối chiếu AST của 52 module không đổi logic, template/style không đổi. 121 test, lint, architecture, build và format:check đều đạt.

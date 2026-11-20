@@ -3,6 +3,7 @@
 # =================================================================
 
 # 1. Thư viện phụ thuộc (Dependencies - cài đặt tự động qua npm install)
+# Áp dụng cho thư mục gốc và mọi thư mục con, bao gồm frontend/backend.
 node_modules/
 .pnp/
 .pnp.js
@@ -45,6 +46,8 @@ Thumbs.db
 .cache/
 .eslintcache
 .vite/
+.vite-temp/
+.vitest-cache/
 
 # 7. Tài liệu kỹ thuật nội bộ & Tệp tham chiếu tạm thời (không đưa lên Git)
 FileQuest/fileLogin*

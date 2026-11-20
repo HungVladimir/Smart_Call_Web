@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import DialerPanel from '../../src/features/calls/components/DialerPanel.vue'
-import MessageComposer from '../../src/features/messages/components/MessageComposer.vue'
-import MessageList from '../../src/features/messages/components/MessageList.vue'
+import DialerPanel from '../../src/components/call/DialerPanel.vue'
+import MessageComposer from '../../src/components/messages/MessageComposer.vue'
+import MessageList from '../../src/components/messages/MessageList.vue'
 import { mountComponent } from '../helpers/mountComponent.js'
 
 let wrapper

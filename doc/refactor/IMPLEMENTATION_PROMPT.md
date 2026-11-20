@@ -1,5 +1,7 @@
 # Prompt triển khai refactor SmartCall Web
 
+Cập nhật 20/11/2026 theo phản hồi: ưu tiên người mới dễ đọc, giảm tầng thư mục và tách UI thành các cụm có ý nghĩa.
+
 ## Vai trò và mục tiêu
 
 Bạn là kiến trúc sư phần mềm đồng thời trực tiếp triển khai. Phân tích mã thực tế, thiết kế kiến trúc Web dễ đọc, rồi thực hiện refactor có kiểm chứng. Cải thiện khả năng bảo trì/mở rộng và sửa lỗi có bằng chứng trong phạm vi liên quan.
@@ -17,8 +19,8 @@ Bạn là kiến trúc sư phần mềm đồng thời trực tiếp triển kha
 
 1. Trình bày sơ đồ kiến trúc, cây thư mục và luồng trước khi sửa.
 2. Xác minh bố cục thực tế thay vì mặc định mô tả của người dùng đã trùng filesystem.
-3. Gom theo feature: auth, calls, contacts, messages, history, settings.
-4. Điểm lắp ghép dịch vụ thuộc app; core chứa session, HTTP, sự kiện và adapter hạ tầng. Không để service import ngược app hoặc tạo vòng import.
+3. Dùng cấu trúc phẳng quen thuộc: views/components/services/state/composables/utils/router/config/assets. Không tái tạo features/core/app/shared.
+4. Điểm lắp ghép ở services/createServices.js và services/index.js. Service nghiệp vụ không import ngược hai file đó hoặc giao diện; state/helper thuần không import service. Không tạo vòng import.
 5. Component nhận state/phát ý định; service/controller thực hiện nghiệp vụ. Mapper chuẩn hóa DTO là hàm thuần. Composable quản lý vòng đời UI.
 6. Mỗi state có chủ sở hữu rõ ràng. Không lưu snapshot mất reactivity khi service thay mảng.
 7. Cô lập các can thiệp nội bộ SDK, giữ protocol/endpoint hiện hành khi chưa có bằng chứng cần đổi.

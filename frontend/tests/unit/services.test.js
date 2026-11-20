@@ -5,8 +5,8 @@ import {
   captureSessionContext,
   createSessionFetch,
   invalidateSession,
-} from '../../src/core/session/sessionScope.js'
-import { EventConnection } from '../../src/core/wazo/EventConnection.js'
+} from '../../src/services/auth/sessionScope.js'
+import { EventConnection } from '../../src/services/realtime/wazoEvents.js'
 
 let app
 beforeEach(() => {
@@ -126,16 +126,16 @@ describe('Cuộc gọi và hội nghị', () => {
   it('nghe máy bị từ chối không đặt connected hoặc chạy đồng hồ', async () => {
     app.sdk.Phone.accept.mockRejectedValue(new Error('rejected'))
     app.callState.incomingCall = { number: '4321', rawSession: { sipCallId: 'incoming' } }
-    expect(await app.callController.acceptIncomingCall()).toBe(false)
+    expect(await app.callService.acceptIncomingCall()).toBe(false)
     expect(app.callState.activeCall).toBeNull()
-    expect(app.callController._durationInterval).toBeNull()
+    expect(app.callService._durationInterval).toBeNull()
   })
 
   it('đang chờ accept có trạng thái answering', async () => {
     const pending = deferred()
     app.sdk.Phone.accept.mockImplementation(() => pending.promise)
     app.callState.incomingCall = { number: '4321', rawSession: { sipCallId: 'incoming' } }
-    const request = app.callController.acceptIncomingCall()
+    const request = app.callService.acceptIncomingCall()
     expect(app.callState.activeCall.status).toBe('answering')
     expect(app.callState.activeCall.startTime).toBeNull()
     pending.resolve('accepted')
@@ -146,11 +146,11 @@ describe('Cuộc gọi và hội nghị', () => {
   it('conference tạo muộn không hồi sinh sau khi cúp', async () => {
     const pending = deferred(),
       started = deferred()
-    app.groupCallController.state.isGroupCall = app.groupCallController.state.isGroupHost = true
-    app.callController.currentCallSession = { sipCallId: 's' }
+    app.groupCallService.state.isGroupCall = app.groupCallService.state.isGroupHost = true
+    app.callService.currentCallSession = { sipCallId: 's' }
     app.callState.activeCall = { callId: 'old', number: 'peer', status: 'connected' }
-    app.groupCallController.state.extensionToWazoCallIdMap.set('x', 'px')
-    app.groupCallController.state.extensionToWazoCallIdMap.set('y', 'py')
+    app.groupCallService.state.extensionToWazoCallIdMap.set('x', 'px')
+    app.groupCallService.state.extensionToWazoCallIdMap.set('y', 'py')
     app.callControlApi.listActiveCalls = vi.fn(async () => [
       { id: 'host', sip_call_id: 's', talking_to: {} },
     ])
@@ -159,24 +159,24 @@ describe('Cuộc gọi và hội nghị', () => {
       return pending.promise
     })
     app.callControlApi.deleteConference = vi.fn(async () => true)
-    const request = app.groupCallController.synchronizeActiveCalls()
+    const request = app.groupCallService.synchronizeActiveCalls()
     await started.promise
-    app.callController.finalizeCallTermination('ended', null, true)
+    app.callService.finalizeCallTermination('ended', null, true)
     pending.resolve('late-conf')
     await request
-    expect(app.groupCallController.state.activeAdhocConferenceId).toBe('')
+    expect(app.groupCallService.state.activeAdhocConferenceId).toBe('')
     expect(app.callControlApi.deleteConference).toHaveBeenCalledWith('late-conf')
   })
 
   it('merge lỗi vẫn được thử lại, chỉ commit sau ACK', async () => {
-    Object.assign(app.groupCallController.state, {
+    Object.assign(app.groupCallService.state, {
       isGroupCall: true,
       isGroupHost: true,
       activeAdhocConferenceId: 'conf',
     })
-    app.callController.currentCallSession = { sipCallId: 's' }
+    app.callService.currentCallSession = { sipCallId: 's' }
     app.callState.activeCall = { number: 'peer', status: 'connected' }
-    app.groupCallController.state.extensionToWazoCallIdMap.set('member', 'p')
+    app.groupCallService.state.extensionToWazoCallIdMap.set('member', 'p')
     app.callControlApi.listActiveCalls = vi.fn(async () => [
       { id: 'host', sip_call_id: 's', talking_to: {} },
     ])
@@ -184,20 +184,20 @@ describe('Cuộc gọi và hội nghị', () => {
       .fn()
       .mockResolvedValueOnce(false)
       .mockResolvedValue(true)
-    await app.groupCallController.synchronizeActiveCalls()
-    expect(app.groupCallController.state.mergedCallIds.has('p')).toBe(false)
-    await app.groupCallController.synchronizeActiveCalls()
-    expect(app.groupCallController.state.mergedCallIds.has('p')).toBe(true)
+    await app.groupCallService.synchronizeActiveCalls()
+    expect(app.groupCallService.state.mergedCallIds.has('p')).toBe(false)
+    await app.groupCallService.synchronizeActiveCalls()
+    expect(app.groupCallService.state.mergedCallIds.has('p')).toBe(true)
   })
 
   it('nhánh phụ nghe trước bắt đầu đồng hồ và progress không hạ connected', () => {
-    app.callController.attachPhoneListeners()
-    Object.assign(app.groupCallController.state, { isGroupCall: true, isGroupHost: true })
+    app.callService.attachPhoneListeners()
+    Object.assign(app.groupCallService.state, { isGroupCall: true, isGroupHost: true })
     const primary = { sipCallId: 'p' },
       secondary = { sipCallId: 's' }
-    app.callController.currentCallSession = primary
-    app.groupCallController.state.secondaryCallSessions.set('member', secondary)
-    app.groupCallController.syncActiveCallsToAdhocConference = vi.fn()
+    app.callService.currentCallSession = primary
+    app.groupCallService.state.secondaryCallSessions.set('member', secondary)
+    app.groupCallService.syncActiveCallsToAdhocConference = vi.fn()
     app.callState.activeCall = {
       session: primary,
       number: 'peer',
@@ -205,38 +205,38 @@ describe('Cuộc gọi và hội nghị', () => {
       startTime: null,
       duration: 0,
     }
-    app.callController._onCallAcceptedHandler(secondary)
-    app.callController._onProgressHandler(primary)
+    app.callService._onCallAcceptedHandler(secondary)
+    app.callService._onProgressHandler(primary)
     expect(app.callState.activeCall.status).toBe('connected')
     expect(app.callState.activeCall.startTime).toBeTruthy()
-    expect(app.callController._durationInterval).toBeTruthy()
+    expect(app.callService._durationInterval).toBeTruthy()
   })
 
   it('dialing và Map nhánh phụ cập nhật computed thực', () => {
-    const dialing = computed(() => app.callController.isDialing)
+    const dialing = computed(() => app.callService.isDialing)
     expect(dialing.value).toBe(false)
-    app.callController.isDialing = true
+    app.callService.isDialing = true
     expect(dialing.value).toBe(true)
-    const count = computed(() => app.groupCallController.state.secondaryCallSessions.size)
-    app.groupCallController.state.secondaryCallSessions.set('4321', {})
+    const count = computed(() => app.groupCallService.state.secondaryCallSessions.size)
+    app.groupCallService.state.secondaryCallSessions.set('4321', {})
     expect(count.value).toBe(1)
   })
 
   it('nhánh SDK trả sau hangup bị cúp và không đưa trở lại nhóm', async () => {
     const pending = deferred()
     app.callState.activeCall = { callId: 'old', number: 'peer', status: 'connected' }
-    Object.assign(app.groupCallController.state, { isGroupCall: true, isGroupHost: true })
+    Object.assign(app.groupCallService.state, { isGroupCall: true, isGroupHost: true })
     app.contactService.isContactAvailableForCall = vi.fn(() => true)
-    app.groupCallController.broadcastGroupStateViaPresence = vi.fn()
-    app.groupCallController.broadcastNoticeToGroup = vi.fn()
+    app.groupCallService.broadcastGroupStateViaPresence = vi.fn()
+    app.groupCallService.broadcastNoticeToGroup = vi.fn()
     app.sdk.Phone.call.mockImplementation(() => pending.promise)
-    const request = app.groupCallController.addParticipantsToGroupCall(['4321'])
-    app.callController.finalizeCallTermination('ended', null, true)
+    const request = app.groupCallService.addParticipantsToGroupCall(['4321'])
+    app.callService.finalizeCallTermination('ended', null, true)
     const late = { sipCallId: 'late' }
     pending.resolve(late)
     await request
     expect(app.sdk.Phone.hangup).toHaveBeenCalledWith(late)
-    expect(app.groupCallController.state.secondaryCallSessions.size).toBe(0)
+    expect(app.groupCallService.state.secondaryCallSessions.size).toBe(0)
     expect(app.callState.activeCall).toBeNull()
   })
 })

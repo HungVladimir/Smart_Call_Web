@@ -10,6 +10,10 @@ function normalizeFeatures(value = {}) {
     ]),
   )
 }
+/**
+ * Đọc và chuẩn hóa cờ màn hình đã lưu; dữ liệu cũ hoặc sai định dạng được thay bằng cấu hình hợp
+ * lệ.
+ */
 export function getFeatures() {
   try {
     return normalizeFeatures(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'))
@@ -24,9 +28,11 @@ export function saveFeatures(features) {
   window.dispatchEvent(new CustomEvent('smartcall-features-changed', { detail: normalized }))
   return normalized
 }
+/** Kiểm tra một màn hình có được bật trong cấu hình hiện tại hay không. */
 export function isFeatureEnabled(key) {
   return Boolean(getFeatures()[key])
 }
+/** Khôi phục bộ cờ màn hình mặc định qua cùng luồng lưu và thông báo thay đổi. */
 export function resetFeatures() {
   return saveFeatures(DEFAULT_FEATURES)
 }
