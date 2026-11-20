@@ -75,3 +75,60 @@ it('cúp lúc SDK pending cúp cả session đến muộn', async () => {
   expect(app.sdk.Phone.hangup).toHaveBeenCalledWith(late)
   expect(app.callState.activeCall).toBeNull()
 })
+
+it('gọi từ nhóm lọc presence thật, còn một người gọi 1-1, không còn ai thì không quay số', async () => {
+  const states = ['available', 'talking', 'holding', 'ringing', 'progressing', 'unavailable']
+  app.contactService.currentContacts = states.map((state, index) => ({
+    uuid: 'peer-' + index,
+    number: String(2000 + index),
+    status: 'online',
+  }))
+  states.forEach((state, index) => {
+    app.contactService.presences['peer-' + index] = { state: 'available', lines: [{ state }] }
+  })
+  app.contactService.currentContacts.push(
+    { uuid: 'dnd', number: '3000' },
+    { uuid: 'offline', number: '3001' },
+  )
+  app.contactService.presences.dnd = {
+    state: 'available',
+    do_not_disturb: true,
+    lines: [{ state: 'available' }],
+  }
+  app.contactService.presences.offline = { state: 'offline', lines: [{ state: 'available' }] }
+  const start = vi.spyOn(app.callService, 'startCall').mockResolvedValue({ success: true })
+  expect(
+    (
+      await app.groupCallService.startGroupCall([
+        '1000',
+        ...app.contactService.currentContacts.map((c) => c.number),
+        'unknown',
+        '2000',
+      ])
+    ).success,
+  ).toBe(true)
+  expect(start).toHaveBeenCalledExactlyOnceWith('2000', {})
+  expect(app.groupCallService.state.isGroupCall).toBe(false)
+  app.contactService.presences['peer-0'] = { state: 'offline' }
+  expect((await app.groupCallService.startGroupCall(['2000', '2001'])).reason).toBe(
+    'NO_AVAILABLE_TARGETS',
+  )
+  expect(start).toHaveBeenCalledTimes(1)
+})
+
+it('còn hai người rảnh thì giữ luồng nhóm và danh sách mời chỉ gồm người khả dụng', async () => {
+  vi.spyOn(app.contactService, 'isContactAvailableForCall').mockImplementation((ext) =>
+    ['2000', '2001'].includes(ext),
+  )
+  const start = vi.spyOn(app.callService, 'startCall').mockResolvedValue({ success: true })
+  vi.spyOn(app.groupCallService, 'broadcastGroupStateViaPresence').mockImplementation(() => {})
+  expect(
+    (await app.groupCallService.startGroupCall(['2000', '2001', '3000', '2000', '1000'])).success,
+  ).toBe(true)
+  expect(app.groupCallService.state.groupParticipantExtensions).toEqual(['1000', '2000', '2001'])
+  expect(app.groupCallService.state.isGroupHost).toBe(true)
+  expect(start).toHaveBeenCalledWith(
+    '2000',
+    expect.objectContaining({ isGroupCall: true, isGroupHost: true }),
+  )
+})

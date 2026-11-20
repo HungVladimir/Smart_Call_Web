@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { reactive, nextTick } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import { invalidateSession } from '../../src/services/auth/sessionScope.js'
 import { callState } from '../../src/state/callState.js'
 import { userSessionState } from '../../src/state/sessionState.js'
 import { mountComponent, flushUi } from '../helpers/mountComponent.js'
@@ -30,7 +31,7 @@ const ports = vi.hoisted(() => ({
     sendMessage: vi.fn(),
     deleteMultipleRooms: vi.fn(),
   },
-  groupCallService: { state: {} },
+  groupCallService: { state: {}, startGroupCall: vi.fn() },
 }))
 vi.mock('@/services/index.js', () => ports)
 
@@ -172,4 +173,120 @@ it('reset mật khẩu dùng tên đăng nhập thật, không dùng tên hiển
   localStorage.setItem('smartcall_login_username', 'real.login')
   await wrapper.state.sendPasswordResetEmail()
   expect(ports.authService.resetPassword).toHaveBeenCalledWith('real.login')
+})
+
+it('gọi từ chat 1-1 giữ query tự gọi trên router thật', async () => {
+  wrapper = mountComponent(MessagesView, { plugins: [router] })
+  await flushUi()
+  wrapper.state.currentRoom = { id: 'direct', isDirect: true, ext: '2000', messages: [] }
+  // App là bên duy nhất nhận dial và điều hướng; MessagesView không được ghi đè bằng /calls.
+  const onAction = (event) =>
+    router.push({ path: '/calls', query: { number: event.detail.value, autocall: 'true' } })
+  window.addEventListener('app-action', onAction)
+  try {
+    await wrapper.state.startVoiceCall()
+    await flushUi()
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({ number: '2000', autocall: 'true' }),
+    )
+  } finally {
+    window.removeEventListener('app-action', onAction)
+  }
+})
+
+/** Mở hội thoại nhóm nhỏ để kiểm tra cả nhánh chỉ còn một người khác. */
+async function openGroupCallRoom() {
+  vi.stubGlobal(
+    'confirm',
+    vi.fn(() => true),
+  )
+  ports.chatService.sendMessage.mockResolvedValue({ id: 'notice' })
+  ports.groupCallService.startGroupCall.mockReset()
+  wrapper = mountComponent(MessagesView, { plugins: [router] })
+  await flushUi()
+  wrapper.state.currentRoom = {
+    id: 'group',
+    title: 'Team',
+    isDirect: false,
+    messages: [],
+    members: [
+      { id: 'a', ext: '1000' },
+      { id: 'peer', ext: '2000' },
+    ],
+  }
+}
+
+it('chat nhóm một người cũng được lọc; không mở Calls hoặc gửi thông báo khi không gọi được', async () => {
+  await openGroupCallRoom()
+  ports.chatService.sendMessage.mockClear()
+  ports.groupCallService.startGroupCall.mockResolvedValue({
+    success: false,
+    reason: 'NO_AVAILABLE_TARGETS',
+  })
+  await wrapper.state.startVoiceCall()
+  expect(ports.groupCallService.startGroupCall).toHaveBeenCalledWith(['2000'], {
+    roomId: 'group',
+    groupTitle: 'Team',
+  })
+  expect(router.currentRoute.value.path).toBe('/messages')
+  expect(ports.chatService.sendMessage).not.toHaveBeenCalled()
+  expect(wrapper.state.isStartingVoiceCall).toBe(false)
+})
+
+it('chat nhóm chờ kết quả, chặn bấm lặp và giữ room ID lúc bắt đầu', async () => {
+  await openGroupCallRoom()
+  let finish
+  ports.groupCallService.startGroupCall.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  ports.chatService.sendMessage.mockClear()
+  const first = wrapper.state.startVoiceCall()
+  await wrapper.state.startVoiceCall()
+  expect(ports.groupCallService.startGroupCall).toHaveBeenCalledTimes(1)
+  expect(ports.chatService.sendMessage).not.toHaveBeenCalled()
+  expect(router.currentRoute.value.path).toBe('/messages')
+  wrapper.state.currentRoom = { id: 'other', isDirect: true, messages: [] }
+  finish({ success: true })
+  await first
+  await flushUi()
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/calls'))
+  expect(ports.chatService.sendMessage).toHaveBeenCalledWith(
+    'group',
+    expect.any(String),
+    expect.any(String),
+  )
+  expect(wrapper.state.isStartingVoiceCall).toBe(false)
+})
+
+it('logout khi chat-call đang chờ bỏ kết quả muộn', async () => {
+  await openGroupCallRoom()
+  let finish
+  ports.groupCallService.startGroupCall.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  ports.chatService.sendMessage.mockClear()
+  const first = wrapper.state.startVoiceCall()
+  invalidateSession()
+  finish({ success: true })
+  await first
+  expect(router.currentRoute.value.path).toBe('/messages')
+  expect(ports.chatService.sendMessage).not.toHaveBeenCalled()
+})
+
+it('hủy xác nhận không gọi; lỗi dịch vụ trả khóa để thử lại', async () => {
+  await openGroupCallRoom()
+  confirm.mockReturnValue(false)
+  await wrapper.state.startVoiceCall()
+  expect(ports.groupCallService.startGroupCall).not.toHaveBeenCalled()
+  confirm.mockReturnValue(true)
+  ports.groupCallService.startGroupCall.mockRejectedValue(new Error('network'))
+  await wrapper.state.startVoiceCall()
+  expect(wrapper.state.isStartingVoiceCall).toBe(false)
+  expect(router.currentRoute.value.path).toBe('/messages')
 })
