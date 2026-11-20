@@ -88,6 +88,9 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
 - **Không dùng cache trạng thái danh bạ cục bộ**: Luôn gọi API/WebSocket thời gian thực và hiển thị trạng thái loading nếu dữ liệu chưa tải xong.
 
 ### 3.4. Giao diện Sidebar & Huy hiệu số (Badges)
+- **Cập nhật 20/11/2026 — khôi phục bộ đếm tin đến**: hiển thị tổng tin chưa mở tại menu Tin nhắn và số tương ứng ở từng hội thoại. Đây là yêu cầu mới, thay phần bỏ unread badge trước đó; không khôi phục ghim hoặc trạng thái gửi/đã xem của người nhận.
+  - Đếm event tin đến từ Web/Mobile theo UUID server, không đếm trùng, tin của chính mình hoặc lệnh quản trị đã xác minh. Chỉ xóa số khi người dùng mở đúng hội thoại trong màn hình/cửa sổ đang hiển thị.
+  - Khi chưa có API read cursor được xác nhận, chỉ giữ số trong RAM của phiên Web; không tự lưu nghiệp vụ vào localStorage và không khẳng định đồng bộ số chưa đọc qua F5/đăng xuất/thiết bị khác.
 - **Sidebar**: Loại bỏ hoàn toàn số đếm đỏ trên tab *Danh bạ* và tab *Lịch sử cuộc gọi* (chỉ giữ huy hiệu số tin nhắn chưa đọc trên tab *Tin nhắn*).
 - **Bộ lọc Lịch sử cuộc gọi**: Giữ nguyên số đếm trên 4 tab bộ lọc (`ALL`, `INCOMINGS`, `OUTGOINGS`, `MISSED`).
 

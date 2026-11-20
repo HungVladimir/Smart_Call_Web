@@ -5,7 +5,7 @@ import { websocketService } from './websocketService'
 import { logger } from './loggerService'
 import { reactive } from 'vue'
 
-const chatState = reactive({ rooms: [] })
+const chatState = reactive({ rooms: [], unreadByRoom: Object.create(null) })
 
 /**
  * Định dạng thời gian tin nhắn chuẩn xác theo giờ Việt Nam / Trình duyệt cục bộ (HH:mm DD/MM/YYYY)
@@ -48,10 +48,14 @@ export const formatMessageDateTime = (isoOrTimestamp) => {
 class ChatService {
   get rooms() { return chatState.rooms }
   set rooms(value) { chatState.rooms = value }
+  /** Tổng tin đến chưa mở trong các phòng đang hiển thị, dùng chung cho badge menu và danh sách. */
+  get totalUnread() { return this.rooms.reduce((total, room) => total + this.getUnreadCount(room.id), 0) }
   constructor() {
     this.rooms = []
     this._fetchingRoomsPromise = null
     this._closedRoomIds = new Set()
+    this._seenIncomingMessageIds = new Map()
+    this._visibleRoomId = null
     if (typeof window !== 'undefined') {
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
       websocketService.on('chatd_user_room_message_created', (data) => this.handleIncomingMessage(data))
@@ -60,6 +64,39 @@ class ChatService {
         this.getRooms().catch(() => {})
       })
     }
+  }
+
+  /** Lấy số tin đến chưa mở của một phòng; bộ đếm chỉ sống trong phiên Web hiện tại. */
+  getUnreadCount(roomId) {
+    return chatState.unreadByRoom[roomId]?.size || 0
+  }
+
+  /** Chỉ coi hội thoại đang được xem khi màn hình đó hoạt động và cửa sổ thực sự ở phía trước. */
+  _isRoomVisible(roomId) {
+    return this._visibleRoomId === roomId && document.visibilityState !== 'hidden' &&
+      (typeof document.hasFocus !== 'function' || document.hasFocus())
+  }
+
+  /** View gọi khi chọn phòng, kích hoạt lại hoặc rời màn hình; không gửi read receipt lên Wazo. */
+  setVisibleRoom(roomId) {
+    this._visibleRoomId = roomId || null
+    if (roomId && this._isRoomVisible(roomId)) delete chatState.unreadByRoom[roomId]
+  }
+
+  /** Khử trùng theo UUID server, kể cả event đã xuất hiện trong lịch sử REST hoặc vừa được mở xem. */
+  _trackIncomingUnread(roomId, messageId, senderUuid, isControlMessage) {
+    if (!messageId) return // Không tự tạo ID để đếm một event không có định danh server.
+    if (!this._seenIncomingMessageIds.has(roomId)) this._seenIncomingMessageIds.set(roomId, new Set())
+    const seen = this._seenIncomingMessageIds.get(roomId)
+    if (seen.has(messageId)) return
+    seen.add(messageId)
+    if (!senderUuid || senderUuid === wazoService.getMyUserUuid() || isControlMessage) return
+    if (this._isRoomVisible(roomId)) {
+      delete chatState.unreadByRoom[roomId]
+      return
+    }
+    if (!chatState.unreadByRoom[roomId]) chatState.unreadByRoom[roomId] = new Set()
+    chatState.unreadByRoom[roomId].add(messageId)
   }
 
   // Tải dữ liệu phòng chat: thuần 100% API thật từ Wazo server (Issue 8 & Rule 2 GEMINI.md)
@@ -100,6 +137,9 @@ class ChatService {
 
   /** Đóng phòng trên giao thức SmartCall; không thay thế quyền membership của Wazo. */
   _markRoomClosed(roomId, room = this.rooms.find((item) => item.id === roomId)) {
+    delete chatState.unreadByRoom[roomId]
+    this._seenIncomingMessageIds.delete(roomId)
+    if (this._visibleRoomId === roomId) this._visibleRoomId = null
     this._closedRoomIds.add(roomId)
     if (room) room.isClosed = true
     this.rooms = this.rooms.filter((item) => item.id !== roomId)
@@ -136,12 +176,17 @@ class ChatService {
   // Xử lý tin nhắn đến thời gian thực qua WebSocket (Tập trung toàn hệ thống - SSOT)
   handleIncomingMessage(data) {
     if (!data) return
-    const roomUuid = data.room_uuid || data.room?.uuid || data.message?.room_uuid
-    const content = data.content || data.message?.content || data.msg || ''
-    const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
-    const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}-${Math.random()}`
-    const msgTimestamp = data.created_at ? new Date(data.created_at).getTime() : Date.now()
-    const timeStr = formatMessageDateTime(data.created_at || msgTimestamp)
+    // Web/Mobile có thể phát message trực tiếp hoặc bọc trong message; dùng cùng một định danh server.
+    const message = data.message || data
+    const roomUuid = data.room_uuid || data.room?.uuid || message.room_uuid || message.room?.uuid
+    const content = message.content || data.content || data.msg || ''
+    const alias = message.alias || data.alias || data.sender_name || 'Đồng nghiệp'
+    const serverMessageId = message.uuid || message.id || data.uuid || data.id
+    const msgId = serverMessageId || `msg-${Date.now()}-${Math.random()}`
+    const createdAt = message.created_at || data.created_at
+    const msgTimestamp = createdAt ? new Date(createdAt).getTime() : Date.now()
+    const timeStr = formatMessageDateTime(createdAt || msgTimestamp)
+    const authenticatedSender = message.user_uuid || message.sender_uuid || message.user?.uuid || data.user_uuid || data.sender_uuid || ''
 
     if (!roomUuid || !content) return
     if (this._closedRoomIds.has(roomUuid)) return
@@ -175,6 +220,7 @@ class ChatService {
       const delMatch = content.match(/\[SYSTEM:MSG_DELETED:ids="([^"]+)"/)
       if (delMatch && delMatch[1]) {
         const deletedIds = delMatch[1].split(',').map((s) => s.trim()).filter(Boolean)
+        for (const id of deletedIds) chatState.unreadByRoom[roomUuid]?.delete(id)
         const targetRoom = (this.rooms || []).find((r) => r.id === roomUuid)
         if (targetRoom && targetRoom.messages) {
           targetRoom.messages = targetRoom.messages.filter((m) => !deletedIds.includes(m.id))
@@ -228,13 +274,14 @@ class ChatService {
 
     if (!targetRoom.messages) targetRoom.messages = []
 
+    this._trackIncomingUnread(roomUuid, serverMessageId, authenticatedSender, trustedCommand)
     // 1. Khử trùng tuyệt đối nếu UUID thật đã tồn tại
     const alreadyExists = targetRoom.messages.some((m) => m.id === msgId)
     if (alreadyExists) return
 
     const myUserUuid = wazoService.getMyUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
     const currentUserName = (wazoService.getMyUserName() || localStorage.getItem('smartcall_username') || '').trim()
-    let senderUuid = data.user_uuid || data.message?.user_uuid || ''
+    let senderUuid = authenticatedSender
     let senderAlias = alias
     let finalContent = content
     let finalTimeStr = timeStr
@@ -1285,6 +1332,9 @@ async deleteGroupRoom(roomId) {
    */
   reset() {
     invalidateSession()
+    chatState.unreadByRoom = Object.create(null)
+    this._seenIncomingMessageIds.clear()
+    this._visibleRoomId = null
     this.rooms = []
     this._fetchingRoomsPromise = null
     this._closedRoomIds.clear()

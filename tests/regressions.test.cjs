@@ -28,8 +28,8 @@ function fixture() {
     historyService: { addRecord: noop, reset: noop, reload: noop, getLocalHistory: () => [] },
     recordService: { isRecording: () => false, cancelPendingStart: noop, clearSessionCache: noop },
     contactService: { currentContacts: [{}], findContactByExtension: () => null, findContactByUuid: () => null, reset: noop },
-    chatService: { reset: noop }, websocketService: { on: noop, emit: noop }, Wazo: { Phone: phone, Auth: { init: noop, setClientId: noop, setHost: noop, logout: async () => {} } },
-    document: { getElementById: () => null, querySelectorAll: () => [] }, navigator: {},
+    chatService: { reset: noop, setVisibleRoom: noop, getUnreadCount: () => 0, totalUnread: 0 }, websocketService: { on: noop, emit: noop }, Wazo: { Phone: phone, Auth: { init: noop, setClientId: noop, setHost: noop, logout: async () => {} } },
+    document: { getElementById: () => null, querySelectorAll: () => [], visibilityState: 'visible', hasFocus: () => true, addEventListener: noop, removeEventListener: noop }, navigator: {},
     window: {
       dispatchEvent: (e) => { events.push(e); for (const listener of listeners.get(e.type) || []) listener(e); return true },
       addEventListener: (type, listener) => { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(listener) },
@@ -64,6 +64,157 @@ function view(c, file, expose) {
 }
 const chat = () => service(fixture(), 'chatService', 'globalThis.svc = chatService')
 const wazo = () => service(fixture(), 'wazo', 'globalThis.svc = wazoService; globalThis.state = callStore')
+
+test('Keypad: lần đầu không mở AudioContext; âm phát bất đồng bộ, cache WAV và cleanup được', async () => {
+  const c = fixture(), pending = deferred(); let audioContexts = 0, audioElements = 0, urls = 0, pauses = 0
+  c.window.AudioContext = class { constructor() { audioContexts++; throw new Error('Cold audio driver') } }
+  c.Blob = Blob; c.URL.createObjectURL = () => 'blob:tone-' + ++urls
+  c.Audio = class { constructor() { audioElements++ } pause() { pauses++ } play() { return pending.promise } }
+  service(c, 'audioService', 'globalThis.svc = audioService')
+  c.svc.playDtmfTone('1'); c.svc.playDtmfTone('1'); c.svc.playDtmfTone('2')
+  assert.equal(audioContexts, 0); assert.equal(audioElements, 1); assert.equal(urls, 2)
+  c.svc.stopAllTones(); assert.equal(c.svc.dtmfAudio.currentTime, 0); assert.ok(pauses >= 4)
+  pending.reject(new Error('Autoplay blocked')); await drain()
+})
+
+test('Keypad: số và DTMF tổng đài được cập nhật trước âm phản hồi cục bộ', () => {
+  const c = fixture(), observed = []
+  c.wazoService.sendDTMF = (key) => observed.push('sip:' + key)
+  c.audioService = { playDtmfTone: (key) => observed.push('tone:' + key + ':' + c.number.value) }
+  view(c, 'src/views/CallsView.vue', 'globalThis.press = pressKey; globalThis.number = extension; globalThis.dtmf = dtmfLog')
+  c.press('1'); assert.equal(c.number.value, '1'); assert.deepEqual(observed, ['tone:1:1'])
+  c.callStore.activeCall = { number: 'peer' }; c.press('2')
+  assert.equal(c.number.value, '1'); assert.equal(c.dtmf.value, '2')
+  assert.deepEqual(observed.slice(1), ['sip:2', 'tone:2:1'])
+})
+
+test('Keypad: phát âm bị lỗi không chặn nhập số và không chạm AudioContext', () => {
+  const c = fixture(); c.Blob = Blob; c.Audio = class { constructor() { throw new Error('No audio output') } }
+  service(c, 'audioService', 'globalThis.svc = audioService')
+  view(c, 'src/views/CallsView.vue', 'globalThis.press = pressKey; globalThis.number = extension')
+  c.press('1'); c.press('2'); assert.equal(c.number.value, '12')
+})
+
+/** Phòng được server xác minh; event kiểm thử dùng cùng schema WebSocket của Web/Mobile. */
+function unreadFixture() {
+  const c = chat()
+  c.svc.rooms = [{ id: 'r', title: 'Hội thoại', isDirect: true, members: [], messages: [] }, { id: 'other', title: 'Hội thoại khác', isDirect: true, members: [], messages: [] }]
+  c.receive = (id, room = 'r', sender = 'peer') => c.svc.handleIncomingMessage({ uuid: id, room_uuid: room, user_uuid: sender, content: 'Tin ' + id, created_at: '2026-11-20T02:00:00Z' })
+  return c
+}
+
+test('Badge: tin Web/Mobile cùng UUID chỉ đếm một lần, tổng bằng tổng từng hội thoại', () => {
+  const c = unreadFixture(), total = computed(() => c.svc.totalUnread)
+  assert.equal(total.value, 0); c.receive('web')
+  c.svc.handleIncomingMessage({ uuid: 'envelope', message: { uuid: 'mobile', room: { uuid: 'r' }, sender_uuid: 'peer', content: 'Mobile', created_at: '2026-11-20T02:01:00Z' } })
+  c.svc.handleIncomingMessage({ uuid: 'mobile', room: { uuid: 'r' }, user_uuid: 'peer', content: 'Mobile' })
+  c.receive('third', 'other')
+  assert.equal(c.svc.getUnreadCount('r'), 2); assert.equal(c.svc.getUnreadCount('other'), 1); assert.equal(total.value, 3)
+  c.svc.setVisibleRoom('r'); assert.equal(total.value, 1)
+  c.receive('web'); assert.equal(c.svc.getUnreadCount('r'), 0)
+})
+
+test('Badge: tự gửi/echo từ tài khoản của mình và lệnh quản trị không tăng số', () => {
+  const c = unreadFixture()
+  c.receive('self', 'r', 'a')
+  c.svc.rooms.push({ id: 'group', isDirect: false, adminUuid: 'admin', adminVerified: true, messages: [] })
+  c.svc.handleIncomingMessage({ uuid: 'rename', room_uuid: 'group', user_uuid: 'admin', content: '[SYSTEM:ROOM_RENAME:title="Mới"]' })
+  c.svc.handleIncomingMessage({ uuid: 'unknown', room_uuid: 'r', content: 'Không có sender UUID' })
+  assert.equal(c.svc.totalUnread, 0)
+})
+
+test('Badge: phòng đang xem không đếm; tab ẩn hoặc cửa sổ mất focus vẫn nhận số', () => {
+  const c = unreadFixture(); c.svc.setVisibleRoom('r'); c.receive('visible')
+  assert.equal(c.svc.getUnreadCount('r'), 0)
+  c.document.visibilityState = 'hidden'; c.receive('hidden'); assert.equal(c.svc.getUnreadCount('r'), 1)
+  c.document.visibilityState = 'visible'; c.document.hasFocus = () => false
+  c.svc.setVisibleRoom('r'); c.receive('blurred'); assert.equal(c.svc.getUnreadCount('r'), 2)
+  c.document.hasFocus = () => true; c.svc.setVisibleRoom('r'); assert.equal(c.svc.getUnreadCount('r'), 0)
+  c.svc.setVisibleRoom(null); c.receive('away'); assert.equal(c.svc.getUnreadCount('r'), 1)
+})
+
+test('Badge: REST đã tải tin trước callback WebSocket vẫn đếm đúng, refresh không làm mất số', async () => {
+  const c = unreadFixture()
+  c.svc.rooms[0].messages.push({ id: 'already-fetched', text: 'Đã nằm trong REST' })
+  c.receive('already-fetched'); assert.equal(c.svc.getUnreadCount('r'), 1)
+  c.fetch = async () => response({ items: [{ uuid: 'r', users: ['a', 'peer'] }, { uuid: 'other', users: ['a', 'peer'] }] })
+  await c.svc.getRooms(); assert.equal(c.svc.getUnreadCount('r'), 1)
+  c.receive('already-fetched'); assert.equal(c.svc.getUnreadCount('r'), 1)
+})
+
+test('Badge: phòng mới được REST tải kèm tin trước khi phát lại event vẫn có badge', async () => {
+  const c = chat()
+  c.fetch = async (url) => url.endsWith('/rooms')
+    ? response({ items: [{ uuid: 'new', users: ['a', 'peer'] }] })
+    : response({ items: [{ uuid: 'incoming', user_uuid: 'peer', content: 'Tin mới', created_at: '2026-11-20T02:00:00Z' }] })
+  c.svc.handleIncomingMessage({ uuid: 'incoming', room_uuid: 'new', user_uuid: 'peer', content: 'Tin mới' })
+  await drain(); assert.equal(c.svc.getUnreadCount('new'), 1); assert.equal(c.svc.totalUnread, 1)
+})
+
+test('Badge: xóa tin/đóng phòng/reset dọn số; không lẫn tài khoản sau logout', () => {
+  const c = unreadFixture()
+  c.svc.rooms[0].isDirect = false; c.svc.rooms[0].adminUuid = 'admin'; c.svc.rooms[0].adminVerified = true
+  c.receive('one'); c.receive('two')
+  c.svc.handleIncomingMessage({ uuid: 'delete', room_uuid: 'r', user_uuid: 'admin', content: '[SYSTEM:MSG_DELETED:ids="one"]' })
+  assert.equal(c.svc.getUnreadCount('r'), 1)
+  c.svc.handleIncomingMessage({ uuid: 'close', room_uuid: 'r', user_uuid: 'admin', content: '[SYSTEM:ROOM_CLOSED]' })
+  assert.equal(c.svc.totalUnread, 0)
+  c.receive('three', 'other'); assert.equal(c.svc.totalUnread, 1)
+  c.svc.reset(); assert.equal(c.svc.totalUnread, 0)
+  c.svc.rooms = [{ id: 'other', isDirect: true, messages: [] }]
+  c.localStorage.setItem('smartcall_user_uuid', 'b'); c.receive('three', 'other')
+  assert.equal(c.svc.getUnreadCount('other'), 1)
+})
+
+test('Badge: callback nạp phòng đến sau logout không khôi phục bộ đếm', async () => {
+  const c = chat(), pending = deferred()
+  c.fetch = () => pending.promise
+  c.svc.handleIncomingMessage({ uuid: 'old', room_uuid: 'private', user_uuid: 'peer', content: 'Phiên cũ' })
+  c.svc.reset(); pending.resolve(response({ items: [{ uuid: 'private', users: ['a', 'peer'] }] }))
+  await drain(); assert.equal(c.svc.totalUnread, 0); assert.equal(c.svc.getUnreadCount('private'), 0)
+})
+
+test('Badge Vue thật: menu và hội thoại cùng đếm; chọn phòng, KeepAlive và focus xóa đúng số', async () => {
+  const Vue = require('vue'), { parse, compileScript } = require('@vue/compiler-sfc'), c = unreadFixture()
+  c.Vue = Vue; c.getFeatures = () => ({ calls: true, messages: true, history: true })
+  c.routeState = Vue.reactive({ path: '/messages', query: {} }); c.useRoute = () => c.routeState
+  c.svc.getRooms = async () => [...c.svc.rooms]; c.svc.getRoomMessages = async (id) => c.svc.rooms.find((r) => r.id === id)?.messages || []
+  // Compile nguyên component và template; chỉ thay ranh giới router/DOM, không thay logic badge/lifecycle.
+  const compile = (file) => {
+    const { descriptor } = parse(read(file))
+    const script = compileScript(descriptor, { id: 'badge-test', inlineTemplate: true }).content
+      .replace(/import \{([^}]+)\} from ['"]vue['"]/g, (_, names) => `const {${names.replace(/\bas\b/g, ':')}} = Vue`)
+      .replace(/^import .*$/gm, '').replace('export default', 'return')
+    return vm.runInContext('(function(){' + script + '\n})()', c)
+  }
+  const Sidebar = compile('src/components/layout/AppSidebar.vue'), Messages = compile('src/views/MessagesView.vue')
+  const make = (type, text = '') => ({ type, tagName: type.toUpperCase(), text, props: {}, style: {}, children: [], parent: null, addEventListener: noop, removeEventListener: noop, getRootNode() { let n = this; while (n.parent) n = n.parent; return n } })
+  const renderer = Vue.createRenderer({
+    createElement: (type) => make(type), createText: (text) => make('text', text), createComment: (text) => make('comment', text),
+    setText: (node, text) => { node.text = text }, setElementText: (node, text) => { node.text = text; node.children = [] },
+    parentNode: (node) => node.parent, nextSibling: (node) => node.parent?.children[node.parent.children.indexOf(node) + 1] || null,
+    insert(node, parent, anchor = null) { if (node.parent) { const i = node.parent.children.indexOf(node); if (i >= 0) node.parent.children.splice(i, 1) }; const i = anchor ? parent.children.indexOf(anchor) : -1; parent.children.splice(i < 0 ? parent.children.length : i, 0, node); node.parent = parent },
+    remove(node) { const i = node.parent?.children.indexOf(node); if (i >= 0) node.parent.children.splice(i, 1); node.parent = null },
+    patchProp: (node, key, _, value) => { node.props[key] = value },
+  })
+  const Root = { render: () => Vue.h('main', [Vue.h(Sidebar), Vue.h(Vue.KeepAlive, null, { default: () => c.routeState.path === '/messages' ? Vue.h(Messages) : Vue.h('empty') })]) }
+  const root = make('root'), app = renderer.createApp(Root)
+  app.component('RouterLink', { setup: (_, { slots }) => () => Vue.h('a', slots.default?.()) })
+  app.mount(root); await drain(); await Vue.nextTick()
+  const nodes = (node) => [node, ...node.children.flatMap(nodes)]
+  const badges = () => nodes(root).filter((node) => /(?:^|\s)(?:unread-badge|room-unread-badge)(?:\s|$)/.test(node.props.class || '')).map((node) => String(node.text))
+  try {
+    c.receive('first'); await Vue.nextTick(); assert.deepEqual(badges(), ['1', '1'])
+    const room = nodes(root).find((node) => /(?:^|\s)room-item(?:\s|$)/.test(node.props.class || ''))
+    await room.props.onClick(); await Vue.nextTick(); assert.deepEqual(badges(), [])
+    c.routeState.path = '/calls'; await Vue.nextTick(); c.receive('while-away'); await Vue.nextTick()
+    assert.deepEqual(badges(), ['1'])
+    c.routeState.path = '/messages'; await drain(); await Vue.nextTick(); assert.deepEqual(badges(), [])
+    c.document.visibilityState = 'hidden'; c.receive('hidden'); await Vue.nextTick(); assert.deepEqual(badges(), ['1', '1'])
+    c.document.visibilityState = 'visible'; c.window.dispatchEvent({ type: 'focus' }); await Vue.nextTick(); assert.deepEqual(badges(), [])
+    c.receive('currently-visible'); await Vue.nextTick(); assert.deepEqual(badges(), [])
+  } finally { app.unmount() }
+})
 
 test('SEC-002: response from A cannot repopulate rooms after reset/login B', async () => {
   const c = chat(), pending = deferred()

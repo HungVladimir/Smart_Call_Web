@@ -4023,6 +4023,16 @@ Kiểm chứng: **82/82 test đạt**, `npm run build` thành công; còn cảnh
 
 Chi tiết luồng, các ca lỗi, giới hạn tương thích và bảng thử tổng đài: [bản sửa host và sự kiện hội nghị](audit/17-original-caller-host-and-conference-events-2026-11-20.md).
 
+## BƯỚC 80: PHÍM SỐ KHÔNG MỞ AUDIOCONTEXT VÀ KHÔI PHỤC BADGE TIN ĐẾN (20/11/2026)
+
+Loại khởi tạo AudioContext đồng bộ khỏi lần bấm phím đầu; tiếng phím dùng WAV ngắn qua HTMLAudio, không chờ thiết bị trước khi nhập số/gửi DTMF. Lỗi âm phản hồi không được chặn thao tác quay số.
+
+Theo yêu cầu mới, khôi phục tổng tin đến chưa mở ở menu Tin nhắn và từng hội thoại. Dùng chung state trong chatService, khử trùng UUID Web/Mobile, không đếm tin của mình; xử lý chọn phòng, KeepAlive, tab ẩn/focus và logout. Không khôi phục ghim/read receipt. Bộ đếm chỉ trong RAM của phiên hiện tại vì chưa có API mốc đọc bền vững được xác nhận; không hứa giữ số qua F5/đăng xuất hoặc đồng bộ với thiết bị khác.
+
+Kiểm chứng: **93/93 test đạt**, có ca compile/mount Sidebar và MessagesView thật; build thành công, còn cảnh báo bundle lớn. Chưa đo trên máy từng bị khựng và chưa thử tổng đài/điện thoại thật.
+
+Chi tiết và giới hạn: [phím số lần đầu và badge tin nhắn](audit/18-first-keypad-latency-and-message-badges-2026-11-20.md).
+
 
 
 

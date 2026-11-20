@@ -12,6 +12,7 @@
         <router-link to="/messages" class="nav-btn" active-class="active" @click="onMessagesNavClick">
           <span class="icon">💬</span>
           <span>Tin nhắn</span>
+          <span v-if="totalUnread > 0" class="unread-badge" :aria-label="`${totalUnread} tin nhắn chưa mở`">{{ totalUnread }}</span>
         </router-link>
       </li>
 
@@ -32,10 +33,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getFeatures } from '@/config/features'
+import { chatService } from '@/services/chatService'
 
 const features = ref(getFeatures())
+const totalUnread = computed(() => chatService.totalUnread)
 const onFeaturesChanged = (e) => {
   features.value = e.detail || getFeatures()
 }
@@ -108,6 +111,17 @@ onUnmounted(() => {
 .nav-btn .icon {
   font-size: 1.15rem;
   width: 22px;
+  text-align: center;
+}
+
+.unread-badge {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 12px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.75rem;
   text-align: center;
 }
 

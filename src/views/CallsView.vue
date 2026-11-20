@@ -1390,7 +1390,7 @@ const filteredContacts = computed(() => {
 })
 
 const pressKey = (key) => {
-  audioService.playDtmfTone(key)
+  // Cập nhật số/gửi DTMF trước; âm phản hồi cục bộ không được giữ thao tác nhập.
   if (!callStore.activeCall) {
     if (extension.value.length < 8) {
       extension.value += key
@@ -1404,6 +1404,7 @@ const pressKey = (key) => {
       `Phát tín hiệu DTMF [${key}] trong cuộc gọi tới máy lẻ: ${callStore.activeCall.number}`,
     )
   }
+  audioService.playDtmfTone(key)
 }
 
 const clearDigit = () => {
