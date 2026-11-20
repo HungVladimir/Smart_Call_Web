@@ -167,7 +167,7 @@
           </button>
 
           <!-- Gợi ý xác nhận chứng chỉ SSL -->
-          <div class="ssl-cert-hint">
+          <div v-if="showCertificateHint" class="ssl-cert-hint">
             <svg
               class="hint-icon"
               viewBox="0 0 24 24"
@@ -180,8 +180,12 @@
               <line x1="12" y1="8" x2="12.01" y2="8" />
             </svg>
             <span
-              >Lần đầu truy cập: mở
-              <a :href="`https://${serverHost}/`" target="_blank" class="hint-link"
+              >Nếu chưa tin cậy chứng chỉ máy chủ, mở
+              <a
+                :href="`https://${serverHost}/`"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="hint-link"
                 >https://{{ serverHost }}/</a
               >
               để xác nhận tin cậy chứng chỉ máy chủ.</span
@@ -307,6 +311,7 @@ const showPassword = ref(false)
 const rememberMe = ref(true)
 const loading = ref(false)
 const errorMessage = ref('')
+const showCertificateHint = ref(false)
 const serverHost = ref(
   (authService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').replace(/\/+$/, ''),
 )
@@ -315,11 +320,20 @@ const serverHost = ref(
  * Gửi credential tới AuthService, lưu lựa chọn nhớ tên và điều hướng sau xác thực; không tự tạo
  * token/máy lẻ giả.
  */
+/** Chỉ gợi ý kiểm tra chứng chỉ khi request lỗi mạng/TLS; không suy diễn từ lỗi tài khoản hoặc HTTP. */
+const shouldShowCertificateHint = (error) => {
+  const status = Number(error?.status || error?.response?.status || error?.statusCode)
+  const message = String(error?.message || '')
+  if (status >= 400 || /\b(?:401|403)\b|unauthorized|credentials/i.test(message)) return false
+  return /failed to fetch|fetch failed|network|load failed|certificate|ssl|tls|cert_/i.test(message)
+}
+
 const handleLogin = async () => {
   const submittedUsername = username.value.trim()
   if (loading.value || !submittedUsername || !password.value) return
   loading.value = true
   errorMessage.value = ''
+  showCertificateHint.value = false
   try {
     await authService.login(submittedUsername, password.value)
     if (rememberMe.value) localStorage.setItem('smartcall_remembered_username', submittedUsername)
@@ -333,6 +347,7 @@ const handleLogin = async () => {
     )
     await router.push('/calls')
   } catch (error) {
+    showCertificateHint.value = shouldShowCertificateHint(error)
     errorMessage.value = getAuthenticationErrorMessage(error)
   } finally {
     loading.value = false

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { reactive, nextTick } from 'vue'
+import { reactive, nextTick, ref } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { invalidateSession } from '../../src/services/auth/sessionScope.js'
 import { callState } from '../../src/state/callState.js'
@@ -289,4 +289,91 @@ it('hủy xác nhận không gọi; lỗi dịch vụ trả khóa để thử l�
   await wrapper.state.startVoiceCall()
   expect(wrapper.state.isStartingVoiceCall).toBe(false)
   expect(router.currentRoute.value.path).toBe('/messages')
+})
+
+it('quay lại KeepAlive giữ danh sách phòng trong khi REST đang cập nhật nền', async () => {
+  const host = {
+    components: { MessagesView },
+    setup() {
+      return { visible: ref(true) }
+    },
+    template: '<KeepAlive><MessagesView v-if="visible" /></KeepAlive>',
+  }
+  wrapper = mountComponent(host, { plugins: [router] })
+  await flushUi()
+  expect(wrapper.element.querySelector('.rooms-loading')).toBeNull()
+  let finish
+  ports.chatService.getRooms.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  wrapper.state.visible = false
+  await nextTick()
+  wrapper.state.visible = true
+  await nextTick()
+  expect(wrapper.element.querySelector('.rooms-loading')).toBeNull()
+  expect(wrapper.element.querySelectorAll('.room-item').length).toBe(2)
+  finish(ports.chatService.rooms)
+  await flushUi()
+})
+
+it('lịch sử chat có trong RAM vẫn hiển thị trong lúc refresh phòng', async () => {
+  wrapper = mountComponent(MessagesView, { plugins: [router] })
+  await flushUi()
+  let finish
+  ports.chatService.getRoomMessages.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  const room = {
+    id: 'existing',
+    isDirect: true,
+    title: 'Có sẵn',
+    messages: [{ id: 'm', text: 'Nội dung đã tải', sender: 'other' }],
+  }
+  const request = wrapper.state.selectRoom(room)
+  await nextTick()
+  expect(wrapper.state.isLoadingMessages).toBe(false)
+  expect(wrapper.element.textContent).toContain('Nội dung đã tải')
+  finish(room.messages)
+  await request
+})
+
+it('login chỉ hiện hướng dẫn chứng chỉ sau lỗi mạng, không hiện với 401/HTTP/runtime và xóa khi thử lại', async () => {
+  wrapper = mountComponent(LoginView, { plugins: [router] })
+  wrapper.state.username = 'fixture'
+  wrapper.state.password = 'password'
+  expect(wrapper.element.querySelector('.ssl-cert-hint')).toBeNull()
+  for (const [error, expected] of [
+    [new TypeError('Failed to fetch'), true],
+    [new Error('certificate verify failed'), true],
+    [Object.assign(new Error('Network error'), { status: 401 }), false],
+    [Object.assign(new Error('server'), { response: { status: 503 } }), false],
+    [new Error('Invalid credentials'), false],
+    [new Error('Timeout'), false],
+    [new TypeError('Cannot read properties of undefined'), false],
+  ]) {
+    ports.authService.login.mockRejectedValue(error)
+    await wrapper.state.handleLogin()
+    await nextTick()
+    expect(Boolean(wrapper.element.querySelector('.ssl-cert-hint'))).toBe(expected)
+  }
+  ports.authService.login.mockRejectedValue(new TypeError('Failed to fetch'))
+  await wrapper.state.handleLogin()
+  let finish
+  ports.authService.login.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  const retry = wrapper.state.handleLogin()
+  await nextTick()
+  expect(wrapper.element.querySelector('.ssl-cert-hint')).toBeNull()
+  finish({ token: 'fixture' })
+  await retry
 })

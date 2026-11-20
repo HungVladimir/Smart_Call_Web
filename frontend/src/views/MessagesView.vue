@@ -939,15 +939,18 @@ const availableContactsForGroup = computed(() => {
   })
 })
 
-/** Đồng bộ danh sách phòng từ ChatService và giữ việc chọn phòng phù hợp với phiên/UI hiện tại. */
+let hasLoadedRooms = false
+
+/** Nạp lần đầu có loading; những lần sau giữ dữ liệu trong RAM khi đồng bộ nền. */
 const loadRooms = async () => {
   const context = captureSessionContext()
-  isLoadingRooms.value = true
+  isLoadingRooms.value = !hasLoadedRooms && rooms.value.length === 0
   try {
     await chatService.getRooms()
     // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
     // muộn sau hủy/đổi phiên.
     if (!isSessionContextCurrent(context)) return
+    hasLoadedRooms = true
     // Giữ nguyên phòng đang mở nếu có, KHÔNG tự ý chọn rooms[0] để bảo toàn badge (Issue 6)
     if (currentRoom.value) {
       const found = rooms.value.find((r) => r.id === currentRoom.value.id)
@@ -970,7 +973,8 @@ const selectRoom = async (room) => {
   }
   // Tự động kéo lịch sử tin nhắn từ Wazo chatd nếu là phòng trên server thật
   if (room && room.id && !room.id.startsWith('room-') && !room.id.startsWith('direct-')) {
-    isLoadingMessages.value = true
+    // Giữ lịch sử đã hiển thị trong lúc lấy bản mới, tránh nháy trắng khi mở lại phòng.
+    isLoadingMessages.value = !room.messages?.length
     try {
       const msgs = await chatService.getRoomMessages(room.id)
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
@@ -1863,6 +1867,23 @@ const getRoomStatusClass = (room) => {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.btn-action {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+.btn-action:hover {
+  background: #f1f5f9;
 }
 
 .header-action-svg {
