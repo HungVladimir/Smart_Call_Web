@@ -1488,3 +1488,108 @@ test('Cleanup SDK thất bại: khóa đăng nhập an toàn và yêu cầu tả
   assert.throws(() => gate.assertCanAuthenticate(), /tải lại trang/)
   assert.equal(c.getSdkAuthenticationGate(sdk), gate)
 })
+
+
+// Kiểm tra đường gọi từ hội thoại với router thật và dịch vụ nhóm hiện hành.
+function messageCallView(c = fixture()) {
+  c.confirm = () => true
+  c.chatService.sendMessage = async () => ({ id: 'notice' })
+  c.callStore.myExtension = '1000'
+  const navigations = []
+  c.useRouter = () => ({ push: (route) => { navigations.push(route); return Promise.resolve() } })
+  view(c, 'src/views/MessagesView.vue', 'globalThis.messageCall = { startVoiceCall, currentRoom, isStartingVoiceCall }')
+  c.navigations = navigations
+  c.messageCall.currentRoom.value = { id: 'room', title: 'Team', isDirect: false, members: [{ id: 'a', ext: '1000' }, { id: 'b', ext: '2000' }] }
+  return c
+}
+
+test('Chat call: điều hướng thật giữ nguyên number/autocall thay vì bị /calls ghi đè', async () => {
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  const router = createRouter({ history: createMemoryHistory(), routes: ['/messages', '/calls'].map(path => ({ path, component: {} })) })
+  await router.push('/messages')
+  const c = fixture()
+  c.useRouter = () => router
+  // Dùng đúng hàm onDial của App, không dựng lại quy tắc tạo query trong test.
+  const appSource = read('src/App.vue')
+  vm.runInContext('const router = useRouter();' + appSource.slice(appSource.indexOf('const onDial ='), appSource.indexOf('// --- Helper Toast')), c)
+  c.window.addEventListener('app-action', event => vm.runInContext('onDial(' + JSON.stringify(event.detail.value) + ')', c))
+  // MessagesView có router riêng trong scope module giống component thật.
+  const source = read('src/views/MessagesView.vue').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
+  vm.runInContext('{'+source+';globalThis.messageCall = {startVoiceCall,currentRoom}}', c)
+  c.messageCall.currentRoom.value = { isDirect: true, ext: '2000' }
+  await c.messageCall.startVoiceCall(); await drain()
+  assert.equal(router.currentRoute.value.path, '/calls')
+  assert.equal(router.currentRoute.value.query.number, '2000')
+  assert.equal(router.currentRoute.value.query.autocall, 'true')
+})
+
+test('Chat group: một thành viên cũng đi qua bộ lọc nhóm; thất bại không chuyển trang/gửi tin', async () => {
+  const c = messageCallView(); let sent = 0, checked = []
+  c.chatService.sendMessage = async () => { sent++ }
+  c.wazoService.startGroupCall = async targets => { checked = [...targets]; return { success: false, reason: 'NO_AVAILABLE_TARGETS' } }
+  await c.messageCall.startVoiceCall()
+  assert.deepEqual(checked, ['2000']); assert.equal(sent, 0); assert.equal(c.navigations.length, 0)
+  assert.equal(c.messageCall.isStartingVoiceCall.value, false)
+})
+
+test('Chat group: chờ thành công, khóa bấm lặp và thông báo đúng phòng ban đầu', async () => {
+  const c = messageCallView(), pending = deferred(), sent = []; let count = 0
+  c.wazoService.startGroupCall = () => { count++; return pending.promise }
+  c.chatService.sendMessage = async id => { sent.push(id) }
+  const first = c.messageCall.startVoiceCall(); await c.messageCall.startVoiceCall()
+  assert.equal(count, 1); assert.equal(sent.length, 0); assert.equal(c.navigations.length, 0)
+  c.messageCall.currentRoom.value = { id: 'different', isDirect: true }
+  pending.resolve({ success: true }); await first
+  assert.deepEqual(sent, ['room']); assert.deepEqual(c.navigations, ['/calls'])
+  assert.equal(c.messageCall.isStartingVoiceCall.value, false)
+})
+
+test('Chat group: logout trong lúc chờ không điều hướng/gửi thông báo muộn', async () => {
+  const c = messageCallView(), pending = deferred(); let sent = 0
+  c.wazoService.startGroupCall = () => pending.promise
+  c.chatService.sendMessage = async () => { sent++ }
+  const first = c.messageCall.startVoiceCall()
+  vm.runInContext('invalidateSession()', c)
+  pending.resolve({ success: true }); await first
+  assert.equal(sent, 0); assert.equal(c.navigations.length, 0)
+})
+
+test('Chat group: exception giải phóng khóa; hủy xác nhận không gọi dịch vụ', async () => {
+  const c = messageCallView(); let calls = 0
+  c.wazoService.startGroupCall = async () => { calls++; throw new Error('network') }
+  await c.messageCall.startVoiceCall()
+  assert.equal(c.messageCall.isStartingVoiceCall.value, false); assert.equal(c.navigations.length, 0)
+  c.confirm = () => false
+  await c.messageCall.startVoiceCall(); assert.equal(calls, 1)
+})
+
+test('Group filter: bỏ talking/holding/ringing/progressing/DND/offline và máy không rõ', async () => {
+  const c = service(fixture(), 'contactService', 'globalThis.contacts = contactService')
+  service(c, 'wazo', 'globalThis.svc = wazoService')
+  const states = ['available', 'talking', 'holding', 'ringing', 'progressing', 'unavailable']
+  c.contacts.currentContacts = states.map((state, index) => ({ uuid: 'peer-' + index, number: String(2000 + index), status: 'online' }))
+  states.forEach((state, index) => { c.contacts.presences['peer-' + index] = { state: 'available', lines: [{state}] } })
+  c.contacts.currentContacts.push({ uuid: 'dnd', number: '3000' }, { uuid: 'offline', number: '3001' })
+  c.contacts.presences.dnd = { state: 'available', do_not_disturb: true, lines: [{ state: 'available' }] }
+  c.contacts.presences.offline = { state: 'offline', lines: [{ state: 'available' }] }
+  const dialed = []
+  c.svc.validateAndMakeCall = async number => { dialed.push(number); return { success: true } }
+  const result = await c.svc.startGroupCall(['1000', ...c.contacts.currentContacts.map(c => c.number), 'unknown', '2000'])
+  assert.equal(result.success, true); assert.deepEqual(dialed, ['2000']); assert.equal(c.svc.isGroupCall, false)
+  c.contacts.presences['peer-0'] = { state: 'offline' }
+  assert.equal((await c.svc.startGroupCall(['2000', '2001'])).reason, 'NO_AVAILABLE_TARGETS')
+  assert.deepEqual(dialed, ['2000'])
+})
+
+
+test('Group filter: còn hai người khả dụng thì tạo nhóm, không đưa người bị loại vào danh sách mời', async () => {
+  const c = wazo(), dialed = []
+  c.svc.getMyExtension = () => '1000'
+  c.contactService.isContactAvailableForCall = ext => ['2000', '2001'].includes(ext)
+  c.svc.validateAndMakeCall = async (number, meta) => { dialed.push({ number, meta }); return { success: true } }
+  c.svc.broadcastGroupStateViaPresence = noop
+  const result = await c.svc.startGroupCall(['2000', '2001', '3000', '2000', '1000'])
+  assert.equal(result.success, true); assert.equal(c.svc.isGroupHost, true)
+  assert.deepEqual([...c.svc.groupParticipantExtensions], ['1000', '2000', '2001'])
+  assert.equal(dialed[0].number, '2000'); assert.equal(dialed[0].meta.isGroupCall, true)
+})

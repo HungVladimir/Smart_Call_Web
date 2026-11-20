@@ -4049,3 +4049,18 @@ Tách người đang mời và đã kết nối, bỏ số trong tiêu đề cũ
 
 
 
+
+## BƯỚC 83: GỌI TỪ TIN NHẮN VÀ DÙNG CHUNG BỘ LỌC THÀNH VIÊN (20/11/2026)
+
+- Sửa MessagesView.startVoiceCall: chat 1-1 chỉ phát app-action/dial. App.onDial chuyển sang /calls với number và autocall=true; CallsView nhận query rồi gọi qua validateAndMakeCall. Bỏ router.push('/calls') lần hai vốn ghi đè query và khiến màn hình mở nhưng không quay số.
+- Chat nhóm luôn đi qua wazoService.startGroupCall, kể cả nhóm chỉ có một người khác. Dịch vụ hiện có loại talking/holding/ringing/progressing, DND, offline/unavailable và liên hệ không xác định khả dụng; loại chính mình/trùng máy lẻ. Không còn ai thì dừng; còn một người thì gọi 1-1; còn nhiều người thì gọi nhóm. Không đổi quy tắc người gọi đầu làm host.
+- Chờ kết quả success trước khi chuyển màn hình và gửi thông báo vào chat. Không báo đã có đủ người nghe máy. Khóa bấm lặp trong lúc chờ, giải phóng khóa khi lỗi/hủy; giữ room ID ban đầu và chặn kết quả sau đăng xuất. Bộ lọc dùng presence hiện có; trạng thái có thể đổi giữa lúc kiểm tra và lúc SIP quay số, phải xử lý từ chối từ tổng đài như bình thường.
+- Giữ nguyên admin. Chưa sửa refresh chat, hướng dẫn chứng chỉ, icon hoặc phân trang danh bạ.
+- Kiểm chứng: 117/117 test đạt; build thành công, còn cảnh báo bundle lớn. Có test router thật giữ query, nhóm một/nhiều/không còn người khả dụng, hủy, lỗi, bấm lặp và logout. Chưa kiểm chứng tổng đài thật.
+- Thử thực tế: mở chat 1-1 và bấm gọi; nhóm gồm người rảnh/bận/đổ chuông/offline/DND; chỉ một người rảnh; tất cả không khả dụng; bấm gọi lặp. Kiểm tra người bị loại không nhận lời gọi và thành viên đang đổ chuông không được tính đã vào phòng.
+
+### Thảo luận danh bạ lớn — CHƯA TRIỂN KHAI
+
+Có thể phân trang API thực sự 50 người/lần và chỉ tải presence cho trang đang xem, số vừa nhập hoặc các thành viên cần mời. Không bắt buộc polling 2.000 người. Tài liệu FileQuest/wazo_api_reference.md mô tả nguồn Wazo Dird hỗ trợ limit/offset/search/order/direction/uuid; cần xác minh đáp ứng trên máy chủ thực tế trước triển khai. Tìm tên phải tìm trên server rồi phân trang kết quả, không chỉ lọc 50 người trên máy khách. Presence có thể chia lô nhỏ theo giới hạn server (dev_guide gợi ý khoảng 30 UUID/lần).
+
+Hiện getContacts tải limit=1000 rồi presence/polling cho currentContacts; chỉ cắt mảng hiển thị 50 người sẽ giảm phần tử giao diện nhưng không giảm request tải danh bạ/presence. Muốn giảm cả mạng phải thay luồng fetch/polling, giữ bộ tra cứu UUID/máy lẻ độc lập cho chat, lời mời và kiểm tra quyền. Khi quay số cần refresh đúng người cần gọi, xử lý lỗi lookup/presence và phản hồi SIP; không coi kiểm tra online trước đó là bảo đảm sẽ nhận máy. Chỉnh số cột chỉ đổi bố cục.

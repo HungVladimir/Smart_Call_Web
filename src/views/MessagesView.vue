@@ -1155,107 +1155,121 @@ const openAddMoreToGroup = () => {
   }
 }
 
-const startVoiceCall = () => {
-  if (!currentRoom.value) return
-  if (currentRoom.value.isDirect) {
-    const targetExt = String(currentRoom.value.ext || '').trim()
-    if (!targetExt) {
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: {
-            message: 'Phòng chat này chưa được gán số máy lẻ nội bộ để thực hiện cuộc gọi',
-            type: 'warning',
-          },
-        }),
-      )
-      return
-    }
-    window.dispatchEvent(
-      new CustomEvent('app-action', {
-        detail: { type: 'dial', value: targetExt },
-      }),
-    )
-    router.push('/calls')
-  } else {
-    // CUỘC GỌI NHÓM TỨC THỜI (AD-HOC CONFERENCE - THAY THẾ HOÀN TOÀN PHÒNG HỌP TĨNH 8001)
-    const myExt = String(wazoService.getMyExtension() || callStore?.myExtension || localStorage.getItem('smartcall_extension') || '').trim()
-    const myUuid = String(callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || '').trim()
-    const memberExts = []
-    for (const m of currentRoomMembers.value) {
-      const mId = m.id || m.uuid
-      if (myUuid && mId === myUuid) continue
+const isStartingVoiceCall = ref(false)
 
-      let ext = m.ext || m.extension || m.number || (m.extra && m.extra.extension)
-      if (!ext && mId) {
-        const c = contactService.findContactByUuid(mId)
-        ext = c?.number || c?.exten || ''
+/** Gọi từ hội thoại; chỉ điều hướng một lần và để dịch vụ lọc thành viên khả dụng. */
+const startVoiceCall = async () => {
+  if (!currentRoom.value || isStartingVoiceCall.value) return
+  const room = currentRoom.value
+  const context = captureSessionContext()
+  isStartingVoiceCall.value = true
+  try {
+    if (currentRoom.value.isDirect) {
+      const targetExt = String(currentRoom.value.ext || '').trim()
+      if (!targetExt) {
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: {
+              message: 'Phòng chat này chưa được gán số máy lẻ nội bộ để thực hiện cuộc gọi',
+              type: 'warning',
+            },
+          }),
+        )
+        return
       }
-
-      const clean = String(ext || '').trim()
-      if (clean && clean !== myExt && !memberExts.includes(clean)) {
-        memberExts.push(clean)
-      }
-    }
-
-    if (memberExts.length === 0) {
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: {
-            message: '⚠️ Các thành viên trong nhóm chưa được gán số máy lẻ để thực hiện cuộc gọi nhóm',
-            type: 'warning',
-          },
-        }),
-      )
-      return
-    }
-
-    if (memberExts.length === 1) {
-      // Nếu chỉ có 1 thành viên khác trong nhóm -> Gọi trực tiếp 1-1
       window.dispatchEvent(
         new CustomEvent('app-action', {
-          detail: { type: 'dial', value: memberExts[0] },
+          detail: { type: 'dial', value: targetExt },
         }),
       )
-      router.push('/calls')
-      return
-    }
+      // App mở /calls kèm number/autocall; điều hướng lần hai sẽ làm mất lệnh tự gọi.
+    } else {
+      // CUỘC GỌI NHÓM TỨC THỜI (AD-HOC CONFERENCE - THAY THẾ HOÀN TOÀN PHÒNG HỌP TĨNH 8001)
+      const myExt = String(
+        wazoService.getMyExtension() ||
+          callStore?.myExtension ||
+          localStorage.getItem('smartcall_extension') ||
+          '',
+      ).trim()
+      const myUuid = String(
+        callStore?.myUserUuid || localStorage.getItem('smartcall_user_uuid') || '',
+      ).trim()
+      const memberExts = []
+      for (const m of currentRoomMembers.value) {
+        const mId = m.id || m.uuid
+        if (myUuid && mId === myUuid) continue
 
-    const roomTitle = currentRoom.value.title || 'Nhóm'
-    const totalCount = memberExts.length + 1
-    if (
-      confirm(
-        `Khởi tạo cuộc gọi nhóm tức thời tới [${roomTitle}] (${totalCount} thành viên)?\n\nHệ thống sẽ tự động gọi đồng thời và kết nối các thành viên vào cuộc gọi nhóm (Ad-hoc Conference).`
-      )
-    ) {
-      chatService.sendMessage(
-        currentRoom.value.id,
-        `📞 [${currentUserName.value}] đã bắt đầu cuộc gọi nhóm tức thời tới các thành viên trong nhóm.`,
-        'Hệ thống Tổng đài'
-      ).catch(() => {})
-      const target = rooms.value.find((r) => r.id === currentRoom.value.id)
-      if (target) {
-        target.updatedAt = Date.now()
+        let ext = m.ext || m.extension || m.number || (m.extra && m.extra.extension)
+        if (!ext && mId) {
+          const c = contactService.findContactByUuid(mId)
+          ext = c?.number || c?.exten || ''
+        }
+
+        const clean = String(ext || '').trim()
+        if (clean && clean !== myExt && !memberExts.includes(clean)) {
+          memberExts.push(clean)
+        }
       }
-      rooms.value = [...rooms.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 
-      // Khởi tạo cuộc gọi nhóm qua Wazo Calld Ad-hoc Conference
-      wazoService.startGroupCall(memberExts, {
-        groupTitle: roomTitle,
-        roomId: currentRoom.value.id,
-      })
+      if (memberExts.length === 0) {
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: {
+              message:
+                '⚠️ Các thành viên trong nhóm chưa được gán số máy lẻ để thực hiện cuộc gọi nhóm',
+              type: 'warning',
+            },
+          }),
+        )
+        return
+      }
 
-      // Điều hướng ngay sang màn hình Gọi điện để theo dõi và điều khiển cuộc gọi
-      router.push('/calls')
-
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: {
-            message: `👥 Đang khởi tạo cuộc gọi nhóm (${totalCount} người)...`,
-            type: 'info',
-          },
-        }),
-      )
+      const roomTitle = currentRoom.value.title || 'Nhóm'
+      const totalCount = memberExts.length + 1
+      if (
+        confirm(
+          `Khởi tạo cuộc gọi nhóm tức thời tới [${roomTitle}] (${totalCount} thành viên)?\n\nHệ thống sẽ tự động gọi đồng thời và kết nối các thành viên vào cuộc gọi nhóm (Ad-hoc Conference).`,
+        )
+      ) {
+        // Dịch vụ bỏ máy bận/offline/DND; còn một người thì tự chuyển sang gọi 1-1.
+        const result = await wazoService.startGroupCall(memberExts, {
+          groupTitle: roomTitle,
+          roomId: room.id,
+        })
+        // Kết quả của phiên đã đăng xuất không được mở màn hình gọi hoặc gửi tin vào chat.
+        if (!isSessionContextCurrent(context)) return
+        if (!result?.success) {
+          window.dispatchEvent(
+            new CustomEvent('app-toast', {
+              detail: {
+                message:
+                  'Không thể bắt đầu cuộc gọi. Hãy kiểm tra trạng thái thành viên và cuộc gọi hiện tại.',
+                type: 'warning',
+              },
+            }),
+          )
+          return
+        }
+        router.push('/calls')
+        // Gửi lời gọi thành công chưa có nghĩa tất cả thành viên đã nghe máy.
+        chatService
+          .sendMessage(
+            room.id,
+            `📞 [${currentUserName.value}] đã khởi tạo cuộc gọi từ nhóm.`,
+            'Hệ thống Tổng đài',
+          )
+          .catch(() => {})
+      }
     }
+  } catch (error) {
+    if (!isSessionContextCurrent(context)) return
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: 'Không thể bắt đầu cuộc gọi. Vui lòng thử lại.', type: 'error' },
+      }),
+    )
+  } finally {
+    isStartingVoiceCall.value = false
   }
 }
 
