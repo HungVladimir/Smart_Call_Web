@@ -150,3 +150,20 @@ Thông tin commit/push được báo trong kết quả bàn giao của lượt l
 - Comment dài được xuống dòng để đọc trong editor; dùng JSDoc cho hàm và // cho nhánh xử lý.
 - Bổ sung chương 21 của handbook để giải thích cách đọc guard về phiên, SIP ID, quyền và HTTP.
 - Đã chốt: 461/461 hàm có tên/method/getter/computed có giải thích; đối chiếu AST của 52 module không đổi logic, template/style không đổi. 121 test, lint, architecture, build và format:check đều đạt.
+
+## 15. Đồng bộ lỗi vừa sửa ở bản gốc — 20/11/2026
+
+- Đối chiếu ff191f4, 86b2011 và 7485481; chuyển logic theo dependency hiện có, không copy wazo.js hoặc đổi cấu trúc thư mục.
+- Giữ A là host khi B yêu cầu thêm C; tách call_ended khỏi rời hội nghị; giữ queue kết thúc nhánh lúc REST ghép còn chờ và dọn theo thế hệ.
+- Gắn lại listener sau SDK connect/unbind; kiểm chứng bằng emitter/_transferEvents thật của SDK đã cài.
+- Phím số cập nhật trước tiếng phím, không mở AudioContext; badge menu/từng phòng dùng cùng state, lưu metadata tạm theo host/UUID và khôi phục ngoài trang chat.
+- Cập nhật AGENTS/architecture checker đúng yêu cầu mới, giữ cấm pin/read receipt. Comment và handbook được cập nhật cùng hành vi.
+- 143/143 test (14 file), lint, architecture và build đạt. Thêm 22 ca; source vẫn 53 file/20 thư mục. Chưa thử tổng đài/Android thật.
+- Chi tiết, đường đọc code và checklist: [bản sửa mới](LATEST_FIXES_2026-11-20.md).
+
+
+## Đồng bộ bổ sung hiển thị nhóm Web — 20/11/2026
+
+Đã chuyển tiếp bản main d0dc85d vào refactor theo yêu cầu mới: tách groupConnectedExtensions/groupPendingExtensions, snapshot GROUP_STATE có revision, GROUP_SYNC khi incoming/accepted/reconnect. ActiveCallPanel chỉ đếm người đã kết nối, bỏ tiêu đề số cũ. Giữ ánh xạ ID B/C sau merge và dọn lời mời khi SDK lỗi/null/timeout. EventConnection báo mở socket qua callback được lắp tại createServices, không import ngược nghiệp vụ.
+
+Kết quả hiện hành: 148/148 test (14 file), lint/architecture/build đạt; các số 143 ở mục trước là mốc trước bổ sung này. Đã gồm toàn bộ bản sửa trước về host, listener SDK, tiếng phím và badge lưu tạm. Chưa thử tổng đài thật; cả ba máy Web cần cập nhật cùng bản.

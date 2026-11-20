@@ -142,3 +142,11 @@ services/auth (phiên), calls (thoại/hội nghị), audio (âm thanh/thiết b
 ## Comment phục vụ người mới
 
 Hàm/method/getter/computed có phần giải thích công việc trước khai báo. Kiểm tra quan trọng có comment ngắn trong thân hàm: context/thế hệ, ID cuộc gọi/hội nghị, quyền, ACK HTTP và cleanup. Không thay đổi hành vi khi thêm comment; đối chiếu AST và template/style riêng với snapshot.
+
+## Đồng bộ hành vi mới — 20/11/2026
+
+GroupCallService giữ host là người gọi ban đầu; người nhận gửi ADD_REQ. CallService xử lý SDK/lifecycle nhánh, wazoEventHandler phân biệt chuyển kênh với rời hội nghị. Hàng đợi sự kiện lúc ghép thuộc GroupCallService và được dọn theo thế hệ cuộc gọi.
+
+ChatService sở hữu bộ đếm reactive và cache metadata tạm theo host/UUID; Sidebar/MessagesView chỉ đọc state và báo phòng đang xem. Đây là ngoại lệ localStorage do người dùng yêu cầu, không phải read receipt hoặc lưu nội dung chat. Tiếng phím HTMLAudio được giữ trong CallToneService, không tạo AudioContext trong handler nhập.
+
+Xem [bản sửa và giới hạn](LATEST_FIXES_2026-11-20.md). Cây thư mục và ranh giới import giữ nguyên.

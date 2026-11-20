@@ -57,6 +57,10 @@ export function createServices(sdk) {
   const eventConnection = new EventConnection({
     authService,
     onEnvelope: (envelope) => handleWazoEvent(eventContext, envelope),
+    onConnected: () =>
+      groupCallService
+        ._requestGroupStateSync('socket-' + groupCallService._createGroupSignalId())
+        .catch(() => {}),
   })
   eventContext.eventConnection = eventConnection
   authService.attachLifecycle({

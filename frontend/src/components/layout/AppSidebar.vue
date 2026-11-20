@@ -17,6 +17,12 @@
         >
           <span class="icon">💬</span>
           <span>Tin nhắn</span>
+          <span
+            v-if="totalUnread > 0"
+            class="unread-badge"
+            :aria-label="`${totalUnread} tin nhắn chưa mở`"
+            >{{ totalUnread }}</span
+          >
         </router-link>
       </li>
 
@@ -37,13 +43,19 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { chatService } from '@/services/index.js'
 import { getFeatures } from '@/config/features.js'
 
 const features = ref(getFeatures())
+/** Tổng badge lấy từ một nguồn state của ChatService. */
+const totalUnread = computed(() => chatService.totalUnread)
 /** Nhận cấu hình màn hình mới để Sidebar cập nhật danh sách mục điều hướng. */
 const onFeaturesChanged = (e) => {
+  const messagesWereEnabled = features.value.messages
   features.value = e.detail || getFeatures()
+  if (!messagesWereEnabled && features.value.messages)
+    chatService.restoreUnreadNotifications().catch(() => {})
 }
 
 /** Điều hướng tới màn hình gọi và phát yêu cầu cập nhật danh bạ theo luồng hiện tại. */
@@ -59,6 +71,7 @@ const onMessagesNavClick = () => {
 // Khi component được gắn vào DOM, nạp dữ liệu và đăng ký các listener/tài nguyên cần cho giao diện
 // này.
 onMounted(() => {
+  if (features.value.messages) chatService.restoreUnreadNotifications().catch(() => {})
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 
@@ -70,6 +83,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.unread-badge {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 12px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 .app-sidebar {
   width: 220px;
   background: #262c34;

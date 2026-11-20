@@ -156,6 +156,12 @@
               </div>
               <div class="room-bottom">
                 <span class="room-preview">{{ room.preview }}</span>
+                <span
+                  v-if="chatService.getUnreadCount(room.id) > 0"
+                  class="room-unread-badge"
+                  :aria-label="`${chatService.getUnreadCount(room.id)} tin nhắn chưa mở`"
+                  >{{ chatService.getUnreadCount(room.id) }}</span
+                >
               </div>
             </div>
 
@@ -1116,6 +1122,15 @@ watch(
   { immediate: true },
 )
 
+// Đồng bộ phòng đang xem, kể cả KeepAlive/chuyển route và cửa sổ bị ẩn hoặc mất focus.
+/** Báo phòng đang hiển thị để không xóa số khi View/tab bị ẩn. */
+const syncVisibleRoom = () => {
+  chatService.setVisibleRoom(
+    viewActive && route.path === '/messages' ? currentRoom.value?.id : null,
+  )
+}
+watch(() => [currentRoom.value?.id, route.path], syncVisibleRoom, { flush: 'sync' })
+
 // Lắng nghe sự kiện tin nhắn thời gian thực và cập nhật danh sách phòng từ chatService (SSOT)
 const onMessageReceived = (ev) => {
   const { roomId } = ev.detail || {}
@@ -1145,22 +1160,25 @@ const onRoomClosed = (ev) => {
 // Khi component được gắn vào DOM, nạp dữ liệu và đăng ký các listener/tài nguyên cần cho giao diện
 // này.
 onMounted(async () => {
-  await loadRooms()
-  checkDirectChatRoute()
   window.addEventListener('smartcall-message-received', onMessageReceived)
   window.addEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.addEventListener('smartcall-refresh-rooms', loadRooms)
   window.addEventListener('smartcall-room-closed', onRoomClosed)
+  window.addEventListener('focus', syncVisibleRoom)
+  document.addEventListener('visibilitychange', syncVisibleRoom)
+  syncVisibleRoom()
+  await loadRooms()
+  if (!viewActive) return
+  checkDirectChatRoute()
 })
 
 // Khi View được KeepAlive mở lại, đồng bộ dữ liệu/tài nguyên với phiên hiện tại thay vì dùng trạng
 // thái cũ.
 onActivated(async () => {
   viewActive = true
+  syncVisibleRoom()
   const context = captureSessionContext()
   await loadRooms()
-  // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến muộn
-  // sau hủy/đổi phiên.
   if (!viewActive || !isSessionContextCurrent(context)) return
   if (route.query && route.query.ext) {
     checkDirectChatRoute()
@@ -1171,6 +1189,7 @@ onActivated(async () => {
 // bị hủy.
 onDeactivated(() => {
   viewActive = false
+  syncVisibleRoom()
   roomSelectionVersion += 1
 })
 
@@ -1178,11 +1197,14 @@ onDeactivated(() => {
 // tục tác động UI.
 onUnmounted(() => {
   viewActive = false
+  syncVisibleRoom()
   roomSelectionVersion += 1
   window.removeEventListener('smartcall-message-received', onMessageReceived)
   window.removeEventListener('smartcall-rooms-updated', onRoomsUpdated)
   window.removeEventListener('smartcall-refresh-rooms', loadRooms)
   window.removeEventListener('smartcall-room-closed', onRoomClosed)
+  window.removeEventListener('focus', syncVisibleRoom)
+  document.removeEventListener('visibilitychange', syncVisibleRoom)
 })
 
 // Các hàm tương tác Modal Tạo nhóm & Quản lý thành viên (Pure Wazo Chatd API First)
@@ -1536,6 +1558,17 @@ const getRoomStatusClass = (room) => {
 </script>
 
 <style scoped>
+.room-unread-badge {
+  flex-shrink: 0;
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 12px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 .messages-view {
   height: calc(100vh - 56px);
   margin: -24px;

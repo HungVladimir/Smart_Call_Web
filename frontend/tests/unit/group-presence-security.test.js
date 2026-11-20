@@ -15,6 +15,7 @@ beforeEach(() => {
     number: '2000',
     session: app.callService.currentCallSession,
     status: 'connected',
+    direction: 'inbound',
   }
   vi.spyOn(app.groupCallService, 'addParticipantsToGroupCall').mockResolvedValue()
   vi.spyOn(app.groupCallService, 'handleParticipantLeftGroupCall').mockImplementation(() => {})
@@ -136,9 +137,9 @@ it('member không phát lại GROUP để tự nhận quyền host', () => {
 it('người mới được mời nhưng chưa kết nối không được yêu cầu mời thêm', () => {
   host()
   app.callState.activeCall.number = '2000'
-  emit('member', '[ADD_REQ:pending:1000:2000]')
+  emit('member', '[ADD_REQ:pending:1000:4000]')
   expect(app.groupCallService.addParticipantsToGroupCall).not.toHaveBeenCalled()
   app.groupCallService.state.extensionToWazoCallIdMap.set('3000', 'server-member')
-  emit('member', '[ADD_REQ:connected:1000:2000]')
+  emit('member', '[ADD_REQ:connected:1000:4000]')
   expect(app.groupCallService.addParticipantsToGroupCall).toHaveBeenCalledTimes(1)
 })

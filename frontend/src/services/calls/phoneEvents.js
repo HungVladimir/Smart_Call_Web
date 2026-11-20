@@ -172,6 +172,7 @@ function createCallIncomingHandler(callService) {
     }
 
     window.dispatchEvent(new CustomEvent('wazo-incoming', { detail: callSession }))
+    callService.groupCallService._requestGroupStateSync('incoming').catch(() => {})
   }
 }
 
@@ -272,6 +273,7 @@ function createCallAcceptedHandler(callService) {
       }
 
       // Tự động kết nối nhánh phụ vừa nghe máy vào Ad-hoc Conference qua Asterisk ConfBridge
+      callService.groupCallService._markGroupParticipantConnected(matchedSecExt)
       callService.groupCallService.syncActiveCallsToAdhocConference()
 
       // Khi đã có ConfBridge, giữ nguyên đường âm thanh của hội nghị.
@@ -320,6 +322,9 @@ function createCallAcceptedHandler(callService) {
 
     callService.startCallDurationTimer()
     callService.groupCallService.clearPrimaryInviteTimeout()
+    if (callService.groupCallService.state.isGroupHost)
+      callService.groupCallService._markGroupParticipantConnected(callState.activeCall?.number)
+    else callService.groupCallService._requestGroupStateSync('accepted').catch(() => {})
 
     // Xóa timer timeout 30s của nhánh phụ nếu đây là nhánh phụ vừa nghe máy
     for (const [

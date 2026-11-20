@@ -17,9 +17,12 @@ export class ChatService {
    */
   constructor({ authService, contactService, eventHub }) {
     Object.assign(this, { authService, contactService, eventHub })
-    this.state = reactive({ rooms: [] })
+    this.state = reactive({ rooms: [], unreadByRoom: Object.create(null) })
     this._fetchingRoomsPromise = null
     this._closedRoomIds = new Set()
+    this._seenIncomingMessageIds = new Map()
+    this._visibleRoomId = null
+    this._unreadStorageKey = null
     if (typeof window !== 'undefined') {
       // Lắng nghe sự kiện tin nhắn thời gian thực tập trung tại tầng dịch vụ (SSOT)
       this.eventHub.on('chatd_user_room_message_created', (data) =>
@@ -42,6 +45,118 @@ export class ChatService {
    */
   set rooms(value) {
     this.state.rooms = value
+  }
+
+  /** Tổng tin đến chưa mở trong các phòng đang hiển thị, dùng chung cho badge menu và danh sách. */
+  get totalUnread() {
+    return this.rooms.reduce((total, room) => total + this.getUnreadCount(room.id), 0)
+  }
+
+  /** Lấy số tin đến chưa mở của một phòng; dữ liệu được khôi phục từ cache riêng của tài khoản. */
+  getUnreadCount(roomId) {
+    return this.state.unreadByRoom[roomId]?.size || 0
+  }
+
+  /** Khóa cache chỉ dùng cho bộ đếm, tách theo máy chủ và UUID; không dùng tài khoản mặc định dùng chung. */
+  _getUnreadStorageKey() {
+    const userUuid = this.authService.getCurrentUserUuid()
+    if (!userUuid) return null
+    const host = this.authService.getHostUrl().replace(/\/+$/, '').toLowerCase()
+    return `smartcall_unread_v1:${encodeURIComponent(host)}:${encodeURIComponent(userUuid)}`
+  }
+
+  /** Nạp cache khi đã xác định đúng tài khoản; đổi owner sẽ dọn bộ đếm cũ trước khi khôi phục. */
+  _restoreUnreadState() {
+    const key = this._getUnreadStorageKey()
+    if (key === this._unreadStorageKey) return
+    this._unreadStorageKey = key
+    this.state.unreadByRoom = Object.create(null)
+    this._seenIncomingMessageIds.clear()
+    this._visibleRoomId = null
+    if (!key) return
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || 'null')
+      if (saved?.version !== 1 || !saved.rooms || typeof saved.rooms !== 'object') return
+      for (const [roomId, state] of Object.entries(saved.rooms)) {
+        if (!state || !Array.isArray(state.unread) || !Array.isArray(state.seen)) continue
+        // Chỉ nhận ID ngắn hợp lệ từ cache; bỏ metadata hỏng thay vì để lỗi lan sang nhận tin.
+        const validId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 256
+        const unread = state.unread.filter(validId)
+        if (unread.length) this.state.unreadByRoom[roomId] = new Set(unread)
+        this._seenIncomingMessageIds.set(
+          roomId,
+          new Set([...state.seen.filter(validId).slice(-1000), ...unread]),
+        )
+      }
+    } catch {
+      // Cache hỏng/bị chặn không được làm hỏng đăng nhập hoặc nhận tin thời gian thực.
+      logger.warn('CHAT', 'Không khôi phục được bộ đếm tin nhắn trên trình duyệt.')
+    }
+  }
+
+  /** Lưu ID chưa mở và tối đa 1000 ID gần nhất/phòng; không lưu nội dung, token hoặc hồ sơ. */
+  _persistUnreadState() {
+    const key = this._unreadStorageKey
+    if (!key || key !== this._getUnreadStorageKey()) return // Không ghi cache A bằng state đã chuyển sang B.
+    try {
+      const rooms = Object.create(null)
+      for (const [roomId, seen] of this._seenIncomingMessageIds) {
+        rooms[roomId] = {
+          unread: [...(this.state.unreadByRoom[roomId] || [])],
+          seen: [...seen].slice(-1000),
+        }
+      }
+      localStorage.setItem(key, JSON.stringify({ version: 1, rooms }))
+    } catch {
+      // Hết quota hoặc chế độ chặn storage: vẫn nhận tin/đếm trong RAM, không báo lưu thành công giả.
+      logger.warn('CHAT', 'Không lưu được bộ đếm tin nhắn trên trình duyệt.')
+    }
+  }
+
+  /** Sidebar khôi phục số sau login/F5, rồi đối chiếu phòng thật trên server trước khi hiển thị tổng. */
+  async restoreUnreadNotifications() {
+    this._restoreUnreadState()
+    if (Object.values(this.state.unreadByRoom).some((ids) => ids.size > 0)) await this.getRooms()
+  }
+
+  /** Chỉ coi hội thoại đang được xem khi màn hình đó hoạt động và cửa sổ thực sự ở phía trước. */
+  _isRoomVisible(roomId) {
+    return (
+      this._visibleRoomId === roomId &&
+      document.visibilityState !== 'hidden' &&
+      (typeof document.hasFocus !== 'function' || document.hasFocus())
+    )
+  }
+
+  /** View gọi khi chọn phòng, kích hoạt lại hoặc rời màn hình; không gửi read receipt lên Wazo. */
+  setVisibleRoom(roomId) {
+    this._restoreUnreadState()
+    this._visibleRoomId = roomId || null
+    if (roomId && this._isRoomVisible(roomId) && this.state.unreadByRoom[roomId]) {
+      delete this.state.unreadByRoom[roomId]
+      this._persistUnreadState()
+    }
+  }
+
+  /** Khử trùng theo UUID server, kể cả event đã xuất hiện trong lịch sử REST hoặc vừa được mở xem. */
+  _trackIncomingUnread(roomId, messageId, senderUuid, isControlMessage) {
+    this._restoreUnreadState()
+    if (!messageId) return // Không tự tạo ID để đếm một event không có định danh server.
+    if (!this._seenIncomingMessageIds.has(roomId))
+      this._seenIncomingMessageIds.set(roomId, new Set())
+    const seen = this._seenIncomingMessageIds.get(roomId)
+    if (seen.has(messageId)) return
+    seen.add(messageId)
+    if (!senderUuid || senderUuid === this.authService.getCurrentUserUuid() || isControlMessage)
+      return
+    if (this._isRoomVisible(roomId)) {
+      delete this.state.unreadByRoom[roomId]
+      this._persistUnreadState()
+      return
+    }
+    if (!this.state.unreadByRoom[roomId]) this.state.unreadByRoom[roomId] = new Set()
+    this.state.unreadByRoom[roomId].add(messageId)
+    this._persistUnreadState()
   }
 
   /** Sắp phòng theo hoạt động mới nhất để danh sách hội thoại hiển thị đúng thứ tự. */
@@ -88,6 +203,10 @@ export class ChatService {
 
   /** Đóng phòng trên giao thức SmartCall; không thay thế quyền membership của Wazo. */
   _markRoomClosed(roomId, room = this.rooms.find((item) => item.id === roomId)) {
+    delete this.state.unreadByRoom[roomId]
+    this._seenIncomingMessageIds.delete(roomId)
+    this._persistUnreadState()
+    if (this._visibleRoomId === roomId) this._visibleRoomId = null
     this._closedRoomIds.add(roomId)
     if (room) room.isClosed = true
     this.rooms = this.rooms.filter((item) => item.id !== roomId)
@@ -138,29 +257,34 @@ export class ChatService {
     throw new Error('Chưa xác minh hết trạng thái nhóm. Vui lòng thử lại.')
   }
 
-  /**
-   * Nhận tin realtime, kiểm tra command/room đóng, khử trùng rồi cập nhật đúng hội thoại trong
-   * state.
-   */
+  // Xử lý tin nhắn đến thời gian thực qua WebSocket (Tập trung toàn hệ thống - SSOT)
   handleIncomingMessage(data) {
     if (!data) return
-    const roomUuid = data.room_uuid || data.room?.uuid || data.message?.room_uuid
-    const content = data.content || data.message?.content || data.msg || ''
-    const alias = data.alias || data.message?.alias || data.sender_name || 'Đồng nghiệp'
-    const msgId = data.uuid || data.message?.uuid || `msg-${Date.now()}-${Math.random()}`
-    const msgTimestamp = data.created_at ? new Date(data.created_at).getTime() : Date.now()
-    const timeStr = formatMessageDateTime(data.created_at || msgTimestamp)
+    // Web/Mobile có thể phát message trực tiếp hoặc bọc trong message; dùng cùng một định danh server.
+    const message = data.message || data
+    const roomUuid = data.room_uuid || data.room?.uuid || message.room_uuid || message.room?.uuid
+    const content = message.content || data.content || data.msg || ''
+    const alias = message.alias || data.alias || data.sender_name || 'Đồng nghiệp'
+    const serverMessageId = message.uuid || message.id || data.uuid || data.id
+    const msgId = serverMessageId || `msg-${Date.now()}-${Math.random()}`
+    const createdAt = message.created_at || data.created_at
+    const msgTimestamp = createdAt ? new Date(createdAt).getTime() : Date.now()
+    const timeStr = formatMessageDateTime(createdAt || msgTimestamp)
+    const authenticatedSender =
+      message.user_uuid ||
+      message.sender_uuid ||
+      message.user?.uuid ||
+      data.user_uuid ||
+      data.sender_uuid ||
+      ''
 
     if (!roomUuid || !content) return
-    // Giữ trạng thái đóng phòng: không cho tin mới hoặc kết quả tải lại tự đưa nhóm đã đóng/chưa
-    // xác minh về luồng đang mở.
     if (this._closedRoomIds.has(roomUuid)) return
     if (!this.rooms.some((room) => room.id === roomUuid)) {
+      // Nạp metadata/quyền và kiểm tra tombstone trước khi hiển thị một phòng chưa biết.
       const context = captureSessionContext()
       this.getRooms()
         .then(() => {
-          // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-          // đến muộn sau hủy/đổi phiên.
           if (
             isSessionContextCurrent(context) &&
             this.rooms.some((room) => room.id === roomUuid) &&
@@ -171,7 +295,6 @@ export class ChatService {
         .catch(() => {})
       return
     }
-
     const trustedCommand = this.isTrustedRoomCommand(
       this.rooms.find((room) => room.id === roomUuid),
       data,
@@ -205,6 +328,8 @@ export class ChatService {
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean)
+        for (const id of deletedIds) this.state.unreadByRoom[roomUuid]?.delete(id)
+        this._persistUnreadState()
         const targetRoom = (this.rooms || []).find((r) => r.id === roomUuid)
         if (targetRoom && targetRoom.messages) {
           targetRoom.messages = targetRoom.messages.filter((m) => !deletedIds.includes(m.id))
@@ -227,10 +352,6 @@ export class ChatService {
         }
       }
       return
-    }
-
-    if (!this.rooms || this.rooms.length === 0) {
-      this.rooms = []
     }
 
     let targetRoom = this.rooms.find((r) => r.id === roomUuid)
@@ -258,15 +379,14 @@ export class ChatService {
 
     if (!targetRoom.messages) targetRoom.messages = []
 
+    this._trackIncomingUnread(roomUuid, serverMessageId, authenticatedSender, trustedCommand)
     // 1. Khử trùng tuyệt đối nếu UUID thật đã tồn tại
     const alreadyExists = targetRoom.messages.some((m) => m.id === msgId)
-    // Bỏ tín hiệu/tin nhắn đã xử lý để event lặp không tạo thêm lời mời hoặc bản sao dữ liệu.
     if (alreadyExists) return
 
     const myUserUuid =
       this.authService.getCurrentUserUuid() || localStorage.getItem('smartcall_user_uuid') || ''
-
-    let senderUuid = data.user_uuid || data.message?.user_uuid || ''
+    let senderUuid = authenticatedSender
     let senderAlias = alias
     let finalContent = content
     let finalTimeStr = timeStr
@@ -301,8 +421,7 @@ export class ChatService {
       isMine = true
     }
 
-    // 2. Nếu là tin nhắn của chính mình, kiểm tra xem có tin tạm (prefix cmsg-) cùng nội dung hay
-    // không
+    // 2. Nếu là tin nhắn của chính mình, kiểm tra xem có tin tạm (prefix cmsg-) cùng nội dung hay không
     if (isMine) {
       const tempMsg = targetRoom.messages.find(
         (m) => typeof m.id === 'string' && m.id.startsWith('cmsg-') && m.text === finalContent,
@@ -360,6 +479,7 @@ export class ChatService {
    * sách.
    */
   async getRooms() {
+    this._restoreUnreadState()
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     // Dùng tác vụ đang chờ hoặc chặn thao tác trùng để tránh tạo nhiều request/SDK session song
@@ -1399,6 +1519,10 @@ export class ChatService {
    * server.
    */
   reset() {
+    this.state.unreadByRoom = Object.create(null)
+    this._seenIncomingMessageIds.clear()
+    this._visibleRoomId = null
+    this._unreadStorageKey = null // Chỉ dọn RAM; giữ cache riêng cho lần đăng nhập lại.
     this.rooms = []
     this._closedRoomIds.clear()
     this._fetchingRoomsPromise = null

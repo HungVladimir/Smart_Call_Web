@@ -27,9 +27,10 @@ export class EventConnection {
    * Giữ AuthService và callback xử lý envelope, chuẩn bị thế hệ socket/reconnect để callback cũ bị
    * vô hiệu.
    */
-  constructor({ authService, onEnvelope }) {
+  constructor({ authService, onEnvelope, onConnected = () => {} }) {
     this.authService = authService
     this.onEnvelope = onEnvelope
+    this.onConnected = onConnected
     this.socket = null
     this.connectedAt = 0
     this.retryTimer = null
@@ -69,6 +70,7 @@ export class EventConnection {
         for (const name of SUBSCRIBED_EVENTS)
           socket.send(JSON.stringify({ op: 'subscribe', data: { event_name: name } }))
         socket.send(JSON.stringify({ op: 'start' }))
+        this.onConnected()
       }
       socket.onmessage = (message) => {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu

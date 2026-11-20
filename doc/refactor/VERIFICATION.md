@@ -1,6 +1,6 @@
 # Kiểm chứng bản refactor dễ đọc
 
-Cập nhật: 20/11/2026. Windows, Node 22.19.0. Đợt này sửa duy nhất D:/Project/Smart_Call_Web_Refactor sau khi đã push bản gốc lên main tại 5d5fe3e.
+Cập nhật: 20/11/2026. Windows, Node 22.19.0. Đợt đồng bộ mới chỉ sửa D:/Project/Smart_Call_Web_Refactor; đối chiếu các bản sửa main đến 7485481. Bản gốc không thay đổi trong lượt này.
 
 ## Kết quả hiện hành
 
@@ -8,7 +8,7 @@ Cập nhật: 20/11/2026. Windows, Node 22.19.0. Đợt này sửa duy nhất D:
 | --- | --- |
 | npm run lint | Đạt, không lỗi |
 | npm --prefix frontend run check:architecture | 52 module JS/Vue; không import thiếu/cycle, service không import giao diện/điểm lắp ghép, state/helper không import nghiệp vụ |
-| npm test | 121/121 test, 12 file; không skip/cancel |
+| npm test | 143/143 test, 14 file; không skip/cancel |
 | npm run build | Đạt, 361 module được biến đổi; đầu ra frontend/dist |
 | npm --prefix frontend run format:check | Đạt; toàn bộ source/test/script/config khớp Prettier |
 | CSS màn hình gọi | 282 rule nguồn được đối chiếu sau tách, thiếu 0 rule |
@@ -31,7 +31,7 @@ Baseline đầu lượt là 103 test/10 file. Lượt này thêm 18 ca cho compo
 
 ## Build và phạm vi chưa chứng minh
 
-Chunk đầu vào khoảng 1.204 KB trước gzip, 328 KB sau gzip; Vite vẫn cảnh báo lớn hơn 500 KB. Không tăng ngưỡng để che cảnh báo và không khẳng định đợt tái cấu trúc đã tăng tốc.
+Chunk đầu vào khoảng 1.210 KB trước gzip, 329,49 KB sau gzip; Vite vẫn cảnh báo lớn hơn 500 KB. Không tăng ngưỡng để che cảnh báo và không khẳng định đợt tái cấu trúc đã tăng tốc.
 
 Đối chiếu CSS xác nhận giữ selector/khai báo/điều kiện media và keyframe sau đổi namespace. Đợt này chưa kiểm thử hiển thị bằng trình duyệt thật ở mọi kích thước. Chưa đăng nhập Wazo, gọi Android, kiểm tra mic/codec/media hoặc IdP thật. Bản kiểm tra login trên trình duyệt trong lượt trước không được coi là xác minh toàn bộ UI vừa tách.
 
@@ -56,3 +56,16 @@ Trước khi dùng thay bản gốc, thử login/restore/revoke hai thiết bị
 ## Bổ sung khi gom service và giải thích code
 
 Services có 6 nhóm auth/calls/audio/realtime/data/common, một cấp nhóm; index.js/createServices.js ở gốc. Toàn frontend vẫn 53 file với 20 thư mục con. Bộ 121 test được giữ nguyên, không thêm test chỉ để kiểm tra nội dung comment. Comment được kiểm chứng bằng đối chiếu AST và template/style với snapshot trước khi chú thích; kết quả cuối: 461/461 mục có giải thích, AST của 52 module không đổi, template/style không đổi; 121/121 test, lint, architecture, build và format:check đều đạt.
+
+## Bổ sung đồng bộ lỗi từ main — 20/11/2026
+
+Baseline trước lượt này: 121 test/12 file. Hiện tại: 143 test/14 file, thêm 22 ca cho host, merge/cleanup muộn, listener SDK thật, âm phím và badge/cache/Vue lifecycle. Các số 121 và kết quả comment/AST ở phần lịch sử phía trên thuộc lượt trước, không mô tả phạm vi thay đổi hành vi mới.
+
+Đã chạy npm --prefix frontend run check (lint → architecture → test → build) thành công. Không tăng ngưỡng bundle hoặc tắt toàn bộ rule kiến trúc; chỉ cập nhật quy tắc cấm unread theo yêu cầu khôi phục badge. Chưa thử tổng đài, Android hoặc đo latency trên máy bị khựng. Xem [bảng thử](LATEST_FIXES_2026-11-20.md).
+
+
+## Đồng bộ bổ sung hiển thị nhóm Web — 20/11/2026
+
+Đã chuyển tiếp bản main d0dc85d vào refactor theo yêu cầu mới: tách groupConnectedExtensions/groupPendingExtensions, snapshot GROUP_STATE có revision, GROUP_SYNC khi incoming/accepted/reconnect. ActiveCallPanel chỉ đếm người đã kết nối, bỏ tiêu đề số cũ. Giữ ánh xạ ID B/C sau merge và dọn lời mời khi SDK lỗi/null/timeout. EventConnection báo mở socket qua callback được lắp tại createServices, không import ngược nghiệp vụ.
+
+Kết quả hiện hành: 148/148 test (14 file), lint/architecture/build đạt; các số 143 ở mục trước là mốc trước bổ sung này. Đã gồm toàn bộ bản sửa trước về host, listener SDK, tiếng phím và badge lưu tạm. Chưa thử tổng đài thật; cả ba máy Web cần cập nhật cùng bản.

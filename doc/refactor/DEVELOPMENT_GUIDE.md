@@ -46,7 +46,7 @@ Không copy workflow lifecycle của Android vào component Vue. Chỉ đối ch
 
 - Đọc danh bạ/phòng từ computed tham chiếu state service, không sao chép mảng để cập nhật thủ công.
 - Không đưa bản sao session SDK vào deep reactive. groupCallState dùng shallowReactive cho Map chứa session.
-- localStorage chỉ giữ thông tin khôi phục phiên/cấu hình kỹ thuật đang dùng. Không lưu danh bạ/phòng/tin nhắn/CDR để giả đồng bộ server.
+- localStorage giữ thông tin khôi phục phiên/cấu hình kỹ thuật. Ngoại lệ tạm theo yêu cầu mới: metadata badge theo host/UUID (ID phòng/tin, không text) để giữ số qua F5/đăng nhập lại. Không lưu danh bạ/phòng/tin nhắn/CDR để giả đồng bộ server; badge này chưa đồng bộ read cursor với thiết bị khác.
 - Các danh sách và media cache trong RAM phải dọn khi đổi phiên.
 - createServices phục vụ dependency injection; các state module vẫn là singleton cho SPA một phiên. Test phải reset state theo fixture.
 

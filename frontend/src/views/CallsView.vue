@@ -147,18 +147,18 @@ const openAddParticipantModal = () => {
 const closeAddParticipantModal = () => {
   showAddParticipantModal.value = false
 }
-/** Nhận máy lẻ đã chọn; host/cuộc gọi một-một mời trực tiếp, thành viên gửi ủy quyền đến host. */
+/** Service quyết định host/ủy quyền; View chỉ hiển thị lỗi khi không gửi được yêu cầu. */
 const confirmAddParticipants = async (extensions) => {
   closeAddParticipantModal()
-  if (groupCallService.state.isGroupHost || !groupCallService.state.isGroupCall)
+  try {
     await groupCallService.addParticipantsToGroupCall(extensions)
-  else
-    groupCallService.delegateAddParticipantsToHost(
-      groupCallService.state.groupHostExtension ||
-        callState.activeCall?.groupHostExtension ||
-        callState.activeCall?.number,
-      extensions,
+  } catch (error) {
+    window.dispatchEvent(
+      new CustomEvent('app-toast', {
+        detail: { message: error.message || 'Không thể thêm người vào cuộc gọi.', type: 'warning' },
+      }),
     )
+  }
 }
 
 const route = useRoute()
@@ -292,9 +292,8 @@ const handleStartGroupCallFromContacts = async (extensions) => {
   })
 }
 
-/** Phát âm phím; khi chưa gọi thì nhập số, khi đang gọi thì gửi DTMF cho nhánh hiện tại. */
+/** Nhập số/gửi DTMF trước tiếng phản hồi; phím số không khởi tạo AudioContext đồng bộ. */
 const pressKey = (key) => {
-  callToneService.playDtmfTone(key)
   if (!callState.activeCall) {
     if (extension.value.length < 8) {
       extension.value += key
@@ -308,6 +307,7 @@ const pressKey = (key) => {
       `Phát tín hiệu DTMF [${key}] trong cuộc gọi tới máy lẻ: ${callState.activeCall.number}`,
     )
   }
+  callToneService.playDtmfTone(key)
 }
 
 /** Xóa ký tự cuối của số đang nhập; không thay đổi số của cuộc gọi đã hoạt động. */

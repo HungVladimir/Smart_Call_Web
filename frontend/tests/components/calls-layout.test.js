@@ -1,3 +1,4 @@
+import { callToneService } from '../../src/services/audio/audioService.js'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { reactive, nextTick } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
@@ -227,6 +228,8 @@ it('khung gọi nhóm không báo đang kết nối cho nhánh đã nghe máy', 
   state.isGroupCall = true
   state.secondaryCallSessions.set('3000', { answered: true })
   state.secondaryCallSessions.set('5000', { answered: false })
+  state.groupConnectedExtensions = ['1000', '2000', '3000']
+  state.groupPendingExtensions = ['5000']
   wrapper = mountComponent(ActiveCallPanel, {
     props: {
       call: { number: '2000', status: 'connected', isGroupCall: true },
@@ -238,4 +241,22 @@ it('khung gọi nhóm không báo đang kết nối cho nhánh đã nghe máy', 
   const pending = wrapper.element.querySelector('.group-pending-summary-text').textContent
   expect(pending).toContain('5000')
   expect(pending).not.toContain('3000')
+})
+
+it('bấm phím cập nhật số trước tiếng phản hồi cục bộ, không chờ âm thanh', async () => {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/calls', component: { template: '<div />' } }],
+  })
+  await router.push('/calls')
+  await router.isReady()
+  wrapper = mountComponent(CallsView, { plugins: [router] })
+  await flushUi()
+  callToneService.playDtmfTone.mockImplementation(() => {
+    expect(wrapper.state.extension).toBe('1')
+  })
+  wrapper.element.querySelector('.key-btn').click()
+  await nextTick()
+  expect(wrapper.state.extension).toBe('1')
+  expect(callToneService.playDtmfTone).toHaveBeenCalledWith('1')
 })

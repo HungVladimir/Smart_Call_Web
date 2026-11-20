@@ -24,14 +24,8 @@ const callStateFields = new Set([
   'incomingCall',
   'callNotice',
 ])
-const removedFields = new Set([
-  'pinned',
-  'readStatus',
-  'readers',
-  'unread',
-  'unreadCount',
-  'updatePinnedMessage',
-])
+// Badge đã được khôi phục theo yêu cầu mới; vẫn cấm ghim và read receipt.
+const removedFields = new Set(['pinned', 'readStatus', 'readers', 'updatePinnedMessage'])
 for (const file of files) {
   const source = fs.readFileSync(file, 'utf8')
   const code = file.endsWith('.vue')

@@ -17,6 +17,8 @@ export function createGroupCallState() {
     isGroupHost: false,
     groupHostExtension: '',
     groupParticipantExtensions: [],
+    groupConnectedExtensions: [],
+    groupPendingExtensions: [],
     extensionToWazoCallIdMap: new Map(),
     mergedCallIds: new Set(),
     secondaryCallSessions: shallowReactive(new Map()),

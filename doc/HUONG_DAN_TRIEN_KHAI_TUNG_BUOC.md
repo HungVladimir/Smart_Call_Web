@@ -4029,3 +4029,9 @@ Mã Web được chuyển vào frontend/, backend/ chuẩn bị cho API/IdP. Tá
 Thay bộ hồi quy phụ thuộc vị trí source bằng Vitest chạy module/Vue thật; thêm lint và kiểm tra ranh giới import. Đồng thời sửa các lỗi ACK, response/callback muộn, kết nối trùng, token khôi phục và host ghi âm. Kiểm thử tự động hiện 76/76 đạt, build thành công; vẫn cần kiểm chứng SIP/media trên tổng đài thật.
 
 Kiến trúc hiện hành: [ARCHITECTURE](refactor/ARCHITECTURE.md). Toàn bộ thay đổi, bằng chứng và giới hạn: [PROGRESS](refactor/PROGRESS.md), [VERIFICATION](refactor/VERIFICATION.md). Các bước trước giữ nguyên làm lịch sử.
+
+## ĐỒNG BỘ BẢN REFACTOR — 20/11/2026
+
+Theo yêu cầu người dùng, chuyển các bản sửa main ff191f4, 86b2011, 7485481 sang codex/refactor-architecture: host người gọi ban đầu, event hội nghị/listener, phím số và badge lưu tạm. Chỉ sửa bản clone. Mã được ghép vào các nhóm service hiện có, không thay kiến trúc bằng wazo.js.
+
+143/143 test, lint, architecture và build đạt; cập nhật hướng dẫn nhập môn, quy tắc và progress. Checklist tích hợp và giới hạn: [bản sửa refactor](refactor/LATEST_FIXES_2026-11-20.md).

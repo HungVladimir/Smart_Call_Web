@@ -1,3 +1,4 @@
+import { sdkPhoneEmitter } from '../helpers/sdkPhoneEmitter.js'
 import { beforeEach, afterEach, it, expect, vi } from 'vitest'
 import { createFixture, disposeFixture, deferred } from '../helpers/createFixture.js'
 import { invalidateSession } from '../../src/services/auth/sessionScope.js'
@@ -7,20 +8,28 @@ beforeEach(() => {
 })
 afterEach(() => disposeFixture(app))
 
-it('gộp các lệnh kết nối đồng thời và không bỏ lỡ registered phát ngay', async () => {
-  const pending = deferred()
-  app.sdk.Phone.connect.mockImplementation(() => {
-    app.callService._onRegisteredHandler()
+it('SDK xóa listener trong connect: gộp kết nối và vẫn nhận REGISTERED/cuộc gọi đến', async () => {
+  const pending = deferred(),
+    phone = sdkPhoneEmitter(app.sdk.Phone)
+  app.sdk.Phone = phone
+  phone.connect.mockImplementation(() => {
+    phone._transferEvents()
+    phone.registered = true
+    phone.phone.eventEmitter.emit(phone.ON_REGISTERED)
     return pending.promise
   })
   const first = app.callService.connect(),
     second = app.callService.connect()
-  expect(app.sdk.Phone.connect).toHaveBeenCalledTimes(1)
-  expect(app.callState.isRegistered).toBe(true)
+  expect(phone.connect).toHaveBeenCalledTimes(1)
+  expect(app.callState.isRegistered).toBe(false)
   pending.resolve()
   await Promise.all([first, second])
+  expect(app.callState.isRegistered).toBe(true)
+  expect(phone.eventEmitter.listenerCount(phone.ON_REGISTERED)).toBe(1)
+  phone.phone.eventEmitter.emit(phone.ON_CALL_INCOMING, { sipCallId: 'incoming', number: '2000' })
+  expect(app.callState.incomingCall.number).toBe('2000')
   await app.callService.connect()
-  expect(app.sdk.Phone.connect).toHaveBeenCalledTimes(1)
+  expect(phone.connect).toHaveBeenCalledTimes(1)
 })
 
 it('callback SDK đã xếp hàng không đăng ký lại SIP sau disconnect', () => {

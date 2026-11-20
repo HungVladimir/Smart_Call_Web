@@ -22,6 +22,8 @@ const ports = vi.hoisted(() => ({
   },
   chatService: {
     rooms: [],
+    setVisibleRoom: vi.fn(),
+    getUnreadCount: vi.fn(() => 0),
     getRooms: vi.fn(),
     getRoomMessages: vi.fn(),
     publishRoomsChanged: vi.fn(),

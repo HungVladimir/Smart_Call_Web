@@ -215,8 +215,7 @@ const isGroupCall = computed(() => Boolean(props.call?.isGroupCall || props.grou
 
 /** Ghép tên/máy lẻ thành viên thành mô tả nhóm, đánh dấu người dùng hiện tại là Bạn. */
 const groupMembersSummary = computed(() => {
-  const exts =
-    props.call?.groupParticipantExtensions || props.group.groupParticipantExtensions || []
+  const exts = props.call?.groupConnectedExtensions || props.group.groupConnectedExtensions || []
   if (!exts || exts.length === 0) return ''
   const myExt = props.myExtension || ''
   const names = exts.map((ext) => {
@@ -231,15 +230,11 @@ const groupMembersSummary = computed(() => {
 
 /** Liệt kê các nhánh phụ chưa nghe máy; bỏ nhánh answered để không báo đang kết nối sai. */
 const pendingRingingMembers = computed(() => {
-  if (!props.group.secondaryCallSessions || props.group.secondaryCallSessions.size === 0) return []
   const list = []
-  for (const [secExt, session] of props.group.secondaryCallSessions.entries()) {
-    if (session?.answered) continue
-    const c =
-      contacts.value.find((ct) => String(ct.number || '').trim() === String(secExt).trim()) ||
-      findContact(secExt)
-    const name = c?.name || `Máy lẻ ${secExt}`
-    list.push(`${name} (${secExt})`)
+  const pending = props.call?.groupPendingExtensions || props.group.groupPendingExtensions || []
+  for (const secExt of pending) {
+    const contact = findContact(secExt)
+    list.push(contact?.name ? contact.name + ' (' + secExt + ')' : 'Máy lẻ ' + secExt)
   }
   return list
 })
@@ -249,11 +244,11 @@ const activeCallTitle = computed(() => {
   if (!props.call) return ''
   if (isGroupCall.value) {
     const count = (
-      props.call.groupParticipantExtensions ||
-      props.group.groupParticipantExtensions ||
+      props.call.groupConnectedExtensions ||
+      props.group.groupConnectedExtensions ||
       []
     ).length
-    return props.call.groupTitle || `Cuộc gọi nhóm (${count} người)`
+    return `Cuộc gọi nhóm (${count} người)`
   }
   const ext = props.call.number || props.call?.number || ''
   if (props.call.status === 'ringing') {

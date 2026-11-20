@@ -26,6 +26,7 @@ export function handleWazoEvent(context, envelope) {
         // Bỏ qua nếu đây là thẻ tín hiệu hệ thống nội bộ gọi nhóm
         const isGroupCallTag =
           statusStr.includes('[GROUP:') ||
+          statusStr.includes('[GROUP_SYNC:') ||
           statusStr.includes('[ADD_REQ:') ||
           statusStr.includes('[NOTICE:') ||
           statusStr.includes('[LEFT:')
@@ -72,22 +73,7 @@ export function handleWazoEvent(context, envelope) {
 
     handleConferenceEvent(context, name, data)
 
-    // Xử lý sự kiện thành viên rời phòng Ad-hoc Conference hoặc gác máy
-    if (
-      name === 'adhoc_conference_participant_left' ||
-      name === 'conference_user_participant_left' ||
-      name === 'call_ended'
-    ) {
-      const leftCallId = data?.call_id || data?.participant_id || data?.id
-      // Chọn đúng nhánh host/thành viên trước khi điều phối hội nghị hoặc gửi tín hiệu nhóm.
-      if (
-        context.groupCallService.state.isGroupCall &&
-        context.groupCallService.state.isGroupHost &&
-        leftCallId
-      ) {
-        context.groupCallService.handleParticipantLeftGroupCall(leftCallId)
-      }
-    }
+    // call_ended có thể chỉ là chuyển kênh vào ConfBridge; việc rời nhóm do event hội nghị xác nhận.
 
     // Chuyển tiếp tới các subscriber của websocketService (chat, call)
     context.eventHub.emit(name, data)
@@ -134,10 +120,11 @@ function extensions(value) {
  * host.
  */
 export function handleGroupPresenceSignal(context, data) {
+  if (!context.authService.isAuthenticated()) return
   const currentCall = callState.activeCall || callState.incomingCall
   if (!currentCall || !context.callService.hasActiveCall() || typeof data.status !== 'string')
     return
-  const matches = [...data.status.matchAll(/\[(GROUP|ADD_REQ|NOTICE|LEFT):([^\]]+)\]/g)]
+  const matches = [...data.status.matchAll(/\[(GROUP|GROUP_SYNC|ADD_REQ|NOTICE|LEFT):([^\]]+)\]/g)]
   if (matches.length !== 1) return
   const sender = resolveSender(context, data)
   if (!sender) return
@@ -162,32 +149,84 @@ export function handleGroupPresenceSignal(context, data) {
       !participants.includes(declaredHost)
     )
       return
-    // Chọn đúng nhánh host/thành viên trước khi điều phối hội nghị hoặc gửi tín hiệu nhóm.
-    if (established ? host !== sender.extension || state.isGroupHost : peer !== sender.extension)
+    // Trong cuộc gọi 1-1, chỉ người gọi ban đầu được công bố mình là host.
+    const receivedCall =
+      currentCall.direction === 'inbound' || currentCall === callState.incomingCall
+    if (established) {
+      if (host !== sender.extension || state.isGroupHost) return
+    } else if (!receivedCall || peer !== sender.extension) {
       return
+    }
+    // Snapshot phân biệt đã nghe/đang mời; revision chặn event đảo thứ tự giữa các máy.
+    const snapshots = [...data.status.matchAll(/\[GROUP_STATE:([^\]]+)\]/g)]
+    let connected = participants
+    if (data.status.includes('[GROUP_STATE:') && snapshots.length !== 1) return
+    if (snapshots.length === 1) {
+      const [groupId, revisionText, connectedCsv, acknowledgement, ...unknown] =
+        snapshots[0][1].split(':')
+      const revision = Number(revisionText)
+      connected = connectedCsv && extensions(connectedCsv)
+      if (
+        unknown.length ||
+        !/^[A-Za-z0-9_-]{1,64}$/.test(groupId) ||
+        !/^\d+$/.test(revisionText) ||
+        !Number.isSafeInteger(revision) ||
+        revision < 1 ||
+        !connected ||
+        !connected.includes(declaredHost) ||
+        connected.some((ext) => !participants.includes(ext)) ||
+        (acknowledgement !== undefined && !/^[A-Za-z0-9_-]{1,80}$/.test(acknowledgement))
+      )
+        return
+      const freshReply = acknowledgement && group._groupSyncRequestIds.has(acknowledgement)
+      if (group._groupSnapshotId && group._groupSnapshotId !== groupId && !freshReply) return
+      if (group._groupSnapshotId === groupId && revision <= group._groupSnapshotRevision) return
+      group._groupSnapshotId = groupId
+      group._groupSnapshotRevision = revision
+      if (freshReply) group._groupSyncRequestIds.delete(acknowledgement)
+    } else if (group._groupSnapshotId) {
+      return // GROUP legacy đến muộn không được ghi đè snapshot đã xác nhận.
+    }
     state.isGroupCall = true
     state.isGroupHost = false
     state.groupHostExtension = sender.extension
     state.groupParticipantExtensions = participants
-    Object.assign(currentCall, {
-      isGroupCall: true,
-      isGroupHost: false,
-      groupHostExtension: sender.extension,
-      groupParticipantExtensions: [...participants],
-      groupTitle: 'Cuộc gọi nhóm (' + participants.length + ' người)',
-    })
+    state.groupConnectedExtensions = connected
+    group._syncGroupDisplayState()
     return
   }
-  // Người phát phải thuộc nhóm hiện tại trước khi được yêu cầu mời người hoặc báo rời nhóm.
-  if (!member) return
+  if (kind === 'GROUP_SYNC') {
+    // Người vừa nhận SIP incoming có thể đã lỡ GROUP gửi trước đó; chỉ host trả lời thành viên đã mời.
+    const [requestId, targetHost, ...extra] = payload.split(':')
+    if (
+      !member ||
+      !state.isGroupHost ||
+      host !== me ||
+      targetHost !== me ||
+      extra.length ||
+      !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)
+    )
+      return
+    const key = sender.uuid + ':' + requestId
+    if (group._processedGroupSyncIds.has(key)) return
+    group._processedGroupSyncIds.add(key)
+    group.broadcastGroupStateViaPresence(requestId)
+    return
+  }
+  // B đang nhận cuộc gọi của A được yêu cầu A nâng lên nhóm, dù GROUP chưa được tạo.
+  const initialPeerRequest =
+    !state.isGroupCall &&
+    currentCall.direction === 'outbound' &&
+    currentCall.status === 'connected' &&
+    peer === sender.extension
+  if (!member && !(kind === 'ADD_REQ' && initialPeerRequest)) return
   if (kind === 'LEFT') {
     if (payload !== sender.extension || payload === me) return
     group.handleParticipantLeftGroupCall(sender.extension)
     return
   }
   if (kind === 'ADD_REQ') {
-    // Chọn đúng nhánh host/thành viên trước khi điều phối hội nghị hoặc gửi tín hiệu nhóm.
-    if (!state.isGroupHost || host !== me) return
+    if (!initialPeerRequest && (!state.isGroupHost || host !== me)) return
     const connectedMember =
       (peer === sender.extension && currentCall.status === 'connected') ||
       state.extensionToWazoCallIdMap.has(sender.extension) ||
@@ -199,13 +238,14 @@ export function handleGroupPresenceSignal(context, data) {
     const requested = extensions(csv)
     if (targetHost !== me || !requested) return
     const targets = requested.filter(
-      (extension) => !state.groupParticipantExtensions.includes(extension),
+      (extension) =>
+        extension !== me &&
+        extension !== peer &&
+        !state.groupParticipantExtensions.includes(extension),
     )
     if (!targets.length) return
-    // Android cũ không có request ID: giới hạn một nội dung yêu cầu/người phát trong cuộc gọi hiện
-    // tại.
+    // Android cũ không có request ID: giới hạn một nội dung yêu cầu/người phát trong cuộc gọi hiện tại.
     const key = sender.uuid + ':' + (requestId || csv)
-    // Bỏ tín hiệu/tin nhắn đã xử lý để event lặp không tạo thêm lời mời hoặc bản sao dữ liệu.
     if (group._processedAddReqIds.has(key)) return
     group._processedAddReqIds.add(key)
     Promise.resolve(group.addParticipantsToGroupCall(targets)).catch((error) =>
@@ -215,7 +255,6 @@ export function handleGroupPresenceSignal(context, data) {
   }
   if (kind === 'NOTICE') {
     const [noticeId, declaredHost, ...message] = payload.split(':')
-    // Chọn đúng nhánh host/thành viên trước khi điều phối hội nghị hoặc gửi tín hiệu nhóm.
     if (
       state.isGroupHost ||
       sender.extension !== host ||
@@ -225,7 +264,6 @@ export function handleGroupPresenceSignal(context, data) {
     )
       return
     const key = sender.uuid + ':' + noticeId
-    // Bỏ tín hiệu/tin nhắn đã xử lý để event lặp không tạo thêm lời mời hoặc bản sao dữ liệu.
     if (group._processedNoticeIds.has(key)) return
     group._processedNoticeIds.add(key)
     window.dispatchEvent(
@@ -245,6 +283,17 @@ function handleConferenceEvent(context, name, data) {
     data?.conference_uuid ||
     (name === 'adhoc_conference_deleted' ? data?.id : '')
   if (!conferenceId) return
+  if (name === 'adhoc_conference_participant_left' || name === 'conference_user_participant_left') {
+    // Chỉ gỡ theo call_id của đúng hội nghị; không đoán từ participant_id/id.
+    if (
+      group.isGroupHost &&
+      group.activeAdhocConferenceId &&
+      String(conferenceId) === String(group.activeAdhocConferenceId) &&
+      data.call_id != null
+    )
+      context.groupCallService.handleParticipantLeftGroupCall(String(data.call_id))
+    return
+  }
   if (
     name === 'adhoc_conference_participant_joined' ||
     name === 'conference_user_participant_joined'

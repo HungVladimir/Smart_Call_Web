@@ -95,8 +95,8 @@ export class CallService {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
         // đến muộn sau hủy/đổi phiên.
         if (generation !== this.connectionGeneration) throw new Error('Kết nối thoại đã bị hủy.')
-        // Đăng ký trước connect để không bỏ lỡ ON_REGISTERED phát ngay.
-        this.attachPhoneListeners()
+        // SDK xóa listener trong connect(); gỡ thế hệ cũ rồi gắn sau khi SDK hoàn tất.
+        this.detachPhoneListeners()
         const microphoneId = localStorage.getItem('smartcall_selected_mic')
         await this.sdk.Phone.connect({
           media: {
@@ -112,6 +112,9 @@ export class CallService {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
         // đến muộn sau hủy/đổi phiên.
         if (generation !== this.connectionGeneration) throw new Error('Kết nối thoại đã bị hủy.')
+        this.attachPhoneListeners()
+        // REGISTERED có thể phát sớm; đọc trạng thái thật thay vì suy từ token.
+        if (this.sdk.Phone.phone?.isRegistered?.()) this._onRegisteredHandler()
         await this.phoneAdapter.applyAudioDevices()
         assertSessionContext(context)
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
@@ -228,6 +231,18 @@ export class CallService {
 
       if (endedSecExt || isMarkedTerminating) {
         if (endedSecExt) {
+          // Chờ REST ghép trả kết quả trước khi diễn giải kết thúc nhánh đã nghe máy.
+          if (
+            this.groupCallService._isSyncingAdhoc &&
+            !isMarkedTerminating &&
+            (session.answered || this.answeredSipIds.has(String(endedSipId)))
+          ) {
+            this.groupCallService._pendingConferenceTerminations.set(String(endedSipId), {
+              reason,
+              session,
+            })
+            return
+          }
           this.groupCallService.clearParticipantInviteTimeout(endedSecExt)
           this.groupCallService.state.secondaryCallSessions.delete(endedSecExt)
 
@@ -235,7 +250,13 @@ export class CallService {
           // WebRTC kết thúc do Asterisk chuyển kênh sang ConfBridge
           // -> Tuyệt đối KHÔNG xóa thành viên khỏi nhóm (Đối chiếu WazoSipCallManager.py line
           // 1164)
-          if (this.groupCallService.state.activeAdhocConferenceId && !isMarkedTerminating) {
+          const participantCallId =
+            this.groupCallService.state.extensionToWazoCallIdMap.get(endedSecExt)
+          if (
+            this.groupCallService.state.activeAdhocConferenceId &&
+            this.groupCallService.state.mergedCallIds.has(participantCallId) &&
+            !isMarkedTerminating
+          ) {
             logger.info(
               'CALL',
               `Nhánh WebRTC phụ [${endedSecExt}] đã chuyển giao sang Ad-hoc Conference [${this.groupCallService.state.activeAdhocConferenceId}]. Tiếp tục duy trì thành viên trong nhóm.`,
@@ -843,6 +864,7 @@ export class CallService {
       groupTitle: incoming.groupTitle || '',
     }
     callState.activeCall = active
+    this.groupCallService._syncGroupDisplayState()
     callState.incomingCall = null
     try {
       await this.acceptSdkCall(session)

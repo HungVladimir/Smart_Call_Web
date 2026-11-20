@@ -1,5 +1,5 @@
 /**
- * CallToneService - Bộ tạo âm thanh tổng đài WebRTC chuẩn bằng Web Audio API
+ * CallToneService - Quản lý chuông Web Audio và tiếng phím WAV qua HTMLAudio
  * Tự động tạo âm thanh thuần không cần phụ thuộc file .mp3 bên ngoài (hoạt động 100% offline).
  * Đảm bảo ngắt dứt khoát toàn bộ âm thanh chuông chờ và chuông đến khi cuộc gọi kết thúc/từ chối.
  */
@@ -15,6 +15,8 @@ class CallToneService {
     this.isRinging = false
     this.isRingbackActive = false
     this.activeOscillators = []
+    this.dtmfAudio = null
+    this.dtmfToneUrls = new Map()
   }
 
   /** Lấy/tạo AudioContext theo khả năng trình duyệt và mở lại context khi cần phát âm báo. */
@@ -159,6 +161,15 @@ class CallToneService {
    * Ngắt toàn bộ mọi loại âm thanh (Incoming ring, Ringback chờ, Keypad DTMF)
    */
   stopAllTones() {
+    // Âm bàn phím dùng HTMLAudio riêng để không khởi tạo AudioContext trong lần bấm đầu.
+    if (this.dtmfAudio) {
+      try {
+        this.dtmfAudio.pause()
+        this.dtmfAudio.currentTime = 0
+      } catch {
+        /* Thiết bị âm thanh lỗi không được chặn cleanup cuộc gọi. */
+      }
+    }
     this.stopRingbackTone()
     this.stopIncomingRingtone()
     this._stopAllActiveOscillators()
@@ -196,14 +207,9 @@ class CallToneService {
     }
   }
 
-  /**
-   * Phát âm thanh khi bấm phím số (DTMF Keypad Tone)
-   */
-  playDtmfTone(digit) {
-    const ctx = this._getAudioContext()
-    if (!ctx) return
-
-    // Bảng tần số DTMF chuẩn
+  /** Tạo WAV ngắn cho từng phím và tái sử dụng URL trong RAM; không mở AudioContext/thiết bị đồng bộ. */
+  _getDtmfToneUrl(digit) {
+    if (this.dtmfToneUrls.has(digit)) return this.dtmfToneUrls.get(digit)
     const dtmfFreqs = {
       1: [697, 1209],
       2: [697, 1336],
@@ -219,32 +225,56 @@ class CallToneService {
       '#': [941, 1477],
     }
 
-    const freqs = dtmfFreqs[digit] || [700, 1200]
+    const freqs = dtmfFreqs[digit]
+    if (!freqs) return null
+    const sampleRate = 8000,
+      sampleCount = 960 // Âm 120 ms, PCM mono 16 bit.
+    const buffer = new ArrayBuffer(44 + sampleCount * 2)
+    const wave = new DataView(buffer)
+    // Ghi nhãn cấu trúc WAV vào buffer; phần giải mã/phát do HTMLAudio xử lý bất đồng bộ.
+    const writeText = (offset, text) =>
+      [...text].forEach((char, i) => wave.setUint8(offset + i, char.charCodeAt(0)))
+    // Header WAV mô tả PCM mono, 16 bit, little-endian; trình duyệt tự giải mã/phát bất đồng bộ.
+    writeText(0, 'RIFF')
+    wave.setUint32(4, buffer.byteLength - 8, true)
+    writeText(8, 'WAVE')
+    writeText(12, 'fmt ')
+    wave.setUint32(16, 16, true)
+    wave.setUint16(20, 1, true)
+    wave.setUint16(22, 1, true)
+    wave.setUint32(24, sampleRate, true)
+    wave.setUint32(28, sampleRate * 2, true)
+    wave.setUint16(32, 2, true)
+    wave.setUint16(34, 16, true)
+    writeText(36, 'data')
+    wave.setUint32(40, sampleCount * 2, true)
+    for (let i = 0; i < sampleCount; i++) {
+      const time = i / sampleRate
+      // Tăng/giảm âm nhẹ ở hai đầu để tránh tiếng tách khi bấm nhanh.
+      const envelope = Math.min(1, i / 40, (sampleCount - 1 - i) / 80)
+      const sample =
+        (Math.sin(2 * Math.PI * freqs[0] * time) + Math.sin(2 * Math.PI * freqs[1] * time)) *
+        2600 *
+        envelope
+      wave.setInt16(44 + i * 2, sample, true)
+    }
+    const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }))
+    this.dtmfToneUrls.set(digit, url)
+    return url
+  }
 
+  /** Phát tiếng phím bằng HTMLAudio; play() mở thiết bị bất đồng bộ, lỗi âm thanh không chặn nhập số. */
+  playDtmfTone(digit) {
     try {
-      const osc1 = ctx.createOscillator()
-      const osc2 = ctx.createOscillator()
-      const gain = ctx.createGain()
-
-      osc1.frequency.setValueAtTime(freqs[0], ctx.currentTime)
-      osc2.frequency.setValueAtTime(freqs[1], ctx.currentTime)
-
-      gain.gain.setValueAtTime(0.08, ctx.currentTime)
-      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.12)
-
-      osc1.connect(gain)
-      osc2.connect(gain)
-      gain.connect(ctx.destination)
-
-      this._trackOscillator(osc1)
-      this._trackOscillator(osc2)
-
-      osc1.start(ctx.currentTime)
-      osc2.start(ctx.currentTime)
-      osc1.stop(ctx.currentTime + 0.12)
-      osc2.stop(ctx.currentTime + 0.12)
-    } catch (e) {
-      /* ignore */
+      const url = this._getDtmfToneUrl(String(digit))
+      if (!url) return
+      if (!this.dtmfAudio) this.dtmfAudio = new Audio()
+      this.dtmfAudio.pause()
+      if (this.dtmfAudio.src !== url) this.dtmfAudio.src = url
+      this.dtmfAudio.currentTime = 0
+      this.dtmfAudio.play()?.catch(() => {}) // Autoplay/thiết bị lỗi chỉ làm mất tiếng phím.
+    } catch {
+      // Nhập số và DTMF gửi tới tổng đài vẫn hoạt động khi trình duyệt không phát được âm cục bộ.
     }
   }
 

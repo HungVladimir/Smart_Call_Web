@@ -287,7 +287,7 @@ verifySessionHealth dùng HEAD /api/auth/0.1/token/{token}. Các timer kiểm tr
 
 ### Logout và những điều cần nhớ
 
-Logout dọn token/UUID/các cache phiên, ngắt thoại/socket và tăng epoch của sessionScope. localStorage giữ một số cấu hình kỹ thuật và lựa chọn khôi phục; RAM giữ phòng, tin nhắn và danh bạ đang sử dụng.
+Logout dọn token/UUID/các cache phiên trong RAM, ngắt thoại/socket và tăng epoch của sessionScope. Ngoại lệ mới: cache metadata bộ đếm tin đến được giữ theo tài khoản/máy chủ để đăng nhập lại còn số. localStorage giữ một số cấu hình kỹ thuật và lựa chọn khôi phục; RAM giữ phòng, tin nhắn và danh bạ đang sử dụng.
 
 sessionScope là cơ chế chống kết quả cũ ghi vào phiên mới. Nếu A đang tải tin rồi B đăng nhập, tác vụ A không được phép cập nhật rooms của B. Cơ chế kiểm tra cả trước/sau request và sau khi đọc body JSON/blob.
 
@@ -361,7 +361,7 @@ State chỉ đổi sau xác nhận HTTP thành công. pendingFavorites gộp b�
 
 **Luồng chính sau khi tách UI:** DialerPanel → CallsView.handleDial → CallService.startCall → placeSdkCall/requestSdkCall → SDK Phone.call. Khi nghe máy: SDK ON_CALL_ACCEPTED → phoneEvents.createCallAcceptedHandler → kiểm tra SIP ID → callState.activeCall → ActiveCallPanel.
 
-Event tới trước Promise call được giữ tạm và chỉ phát lại khi SIP ID khớp kết quả thật. Event của cuộc gọi cũ không được đổi session/timer của cuộc gọi mới. Hộp thoại AddParticipantModal giữ lựa chọn tạm và phát confirm; View quyết định gọi trực tiếp hay ủy quyền host.
+Event tới trước Promise call được giữ tạm và chỉ phát lại khi SIP ID khớp kết quả thật. Event của cuộc gọi cũ không được đổi session/timer của cuộc gọi mới. Hộp thoại AddParticipantModal giữ lựa chọn tạm và phát confirm; GroupCallService quyết định gọi trực tiếp hay ủy quyền; View chỉ chuyển lựa chọn và hiển thị lỗi.
 
 ### Các điểm bắt đầu
 
@@ -464,7 +464,7 @@ Bản vá dùng handleGroupPresenceSignal trong services/realtime/wazoEventHandl
 
 MessagesView là trang chọn phòng và thực hiện lệnh. MessageList chỉ hiển thị nội dung/thời gian/lỗi gửi và cung cấp scrollToBottom. MessageComposer quản lý textarea, kích thước, phím Enter/IME rồi phát sự kiện send; quyết định gọi API nằm ở ChatService.
 
-Người dùng có thể mở phòng, gửi tin, mở chat từ liên hệ, tạo nhóm có nhiều người và gọi điện từ phòng. Chức năng ghim, trạng thái đã gửi/đã đọc và bộ đếm chưa đọc đã được bỏ theo yêu cầu. Đừng tìm code cho chúng như một phần cần khôi phục.
+Người dùng có thể mở phòng, gửi tin, mở chat từ liên hệ, tạo nhóm có nhiều người và gọi điện từ phòng. Ghim và trạng thái đã gửi/đã xem vẫn được bỏ. Theo yêu cầu mới 20/11/2026, badge tin đến chưa mở đã được khôi phục ở menu và từng hội thoại, cùng cache tạm theo tài khoản/máy chủ; xem chương 22.
 
 ### Tải danh sách và mở phòng
 
@@ -796,8 +796,8 @@ Không bật lại ghim/read receipt vì nhìn thấy comment lịch sử. Khôn
 - GROUP/ADD_REQ/LEFT/NOTICE kiểm tra UUID, peer, host và thành viên; kiểm tra Web không thay thế ACL Wazo. Schema Android cũ chưa có nonce/chữ ký ràng buộc mỗi cuộc gọi.
 - Thiếu conference ID/call_id đáng tin thì bỏ qua event hội nghị; không đoán theo tên hoặc số người.
 - Các sửa F01–F08 đã có kiểm thử trong source hiện tại. Báo cáo audit cũ là bằng chứng tại snapshot trước; đọc phần cập nhật ngày 20/11 ở đầu báo cáo để biết trạng thái mới.
-- 121 test hiện tại kiểm soát SDK/network/device tại ranh giới; chưa thay thế kiểm tra SIP, media và Android trên tổng đài thật. Không khẳng định coverage 100% hoặc không còn mọi lỗi.
-- Chỉnh ngôn ngữ, desktop notification, chat sound và âm lượng chuông chưa được triển khai hoàn chỉnh; UI vô hiệu các điều khiển đó. Ghim/read receipts/trạng thái đã gửi-đã xem/bộ đếm chưa đọc đã bị bỏ theo yêu cầu, không thêm lại.
+- 143 test hiện tại kiểm soát SDK/network/device tại ranh giới; chưa thay thế kiểm tra SIP, media và Android trên tổng đài thật. Không khẳng định coverage 100% hoặc không còn mọi lỗi.
+- Chỉnh ngôn ngữ, desktop notification, chat sound và âm lượng chuông chưa được triển khai hoàn chỉnh; UI vô hiệu các điều khiển đó. Ghim/read receipts/trạng thái đã gửi-đã xem vẫn bị bỏ. Badge chưa mở đã được khôi phục theo yêu cầu mới, không phải read receipt.
 
 ## 17 Danh mục từng file source và lý do đặt tại đó
 
@@ -1057,3 +1057,34 @@ Khi đọc một chức năng, xem comment trước handler của View, rồi Ct
 | Listener/timer/stream cần dọn | Component bị ẩn/hủy hoặc phiên đổi thì tài nguyên cũ không được tiếp tục tác động UI | composables/useMicrophoneMeter.js, composables/useRecordingPlayer.js |
 
 Đợt thêm comment được đối chiếu AST với snapshot: thân chương trình không đổi; template và CSS cũng được giữ nguyên. Nếu sửa logic sau này, cập nhật comment ngay trong cùng thay đổi để tránh tài liệu mô tả hành vi cũ.
+
+## 22 Các bản sửa mới và cách lần luồng — 20/11/2026
+
+### A vẫn là host khi B thêm C
+
+A gọi B tạo cuộc gọi outbound ở A và inbound ở B. B chọn C trong AddParticipantModal → CallsView.confirmAddParticipants → GroupCallService.addParticipantsToGroupCall. Vì B đang nhận cuộc gọi, service gửi ADD_REQ tới A thay vì tự gọi C. wazoEventHandler trên A kiểm tra UUID, peer hiện tại, trạng thái connected và host đích; A nâng thành nhóm rồi gọi/ghép C. A cúp thì yêu cầu giải tán/ngắt B/C; B hoặc C rời thì nhóm tiếp tục với A giữ host.
+
+### Vì sao C nghe mà trước đây vẫn báo rời?
+
+call_ended có thể chỉ kết thúc kênh SIP khi tổng đài chuyển vào ConfBridge. Nó không trực tiếp xóa người khỏi nhóm nữa. Chỉ participant_left của đúng conference_id/call_id mới cập nhật rời phòng. CallService giữ sự kiện kết thúc nhánh đã nghe trong queue của GroupCallService nếu REST đang ghép; khi REST xong mới quyết định giữ thành viên hay dọn nhánh lỗi. Reset/cúp vô hiệu queue và kết quả muộn.
+
+### Kết nối SDK và phím số
+
+CallService.connect gắn listener sau khi Phone.connect hoàn tất vì SDK xóa listener bên trong. Sự kiện REGISTERED phát sớm được bù bằng trạng thái đăng ký thật của inner phone; token không chứng minh SIP sẵn sàng. CallsView nhập số/gửi DTMF trước tiếng phím. CallToneService phát WAV ngắn qua HTMLAudio, không tạo AudioContext ở lần bấm đầu. Cần thử lại trên máy từng bị khựng để xác minh độ trễ thực tế.
+
+### Badge ngoài menu và trong hội thoại
+
+Event Web/Mobile → ChatService.handleIncomingMessage → chuẩn hóa UUID/room/người gửi → khử trùng → state.unreadByRoom. Sidebar đọc totalUnread, MessagesView đọc getUnreadCount(room.id). Tin của chính mình và lệnh quản trị đã xác minh không tăng số.
+
+MessagesView gọi ChatService.setVisibleRoom, được điều phối bằng watcher/lifecycle cùng focus/visibility. Mở đúng phòng ở cửa sổ đang hiển thị xóa số; KeepAlive/tab ẩn hoặc màn hình khác vẫn nhận số. Khi F5 hoặc đăng nhập lại, Sidebar gọi ChatService.restoreUnreadNotifications để nạp cache và đối chiếu metadata phòng thật trước khi hiện tổng.
+
+Theo ngoại lệ tạm đã chốt, localStorage chỉ lưu metadata bộ đếm theo host/UUID: ID phòng, UUID chưa mở và ID gần nhất để khử trùng. Không lưu nội dung tin nhắn. Logout giữ cache riêng nhưng dọn RAM, tài khoản khác không dùng chung số. Chưa đồng bộ trạng thái đọc với Mobile/trình duyệt khác và không tự biết toàn bộ tin tới khi Web tắt nếu server không phát lại. Ghim và read receipt vẫn bị bỏ.
+
+Xem [đường dẫn file, cơ chế, 143 kiểm thử và bảng thử tổng đài](refactor/LATEST_FIXES_2026-11-20.md). Các phần trước mô tả lịch sử được hiểu theo cập nhật mới này khi có mâu thuẫn.
+
+
+## Đồng bộ bổ sung hiển thị nhóm Web — 20/11/2026
+
+Đã chuyển tiếp bản main d0dc85d vào refactor theo yêu cầu mới: tách groupConnectedExtensions/groupPendingExtensions, snapshot GROUP_STATE có revision, GROUP_SYNC khi incoming/accepted/reconnect. ActiveCallPanel chỉ đếm người đã kết nối, bỏ tiêu đề số cũ. Giữ ánh xạ ID B/C sau merge và dọn lời mời khi SDK lỗi/null/timeout. EventConnection báo mở socket qua callback được lắp tại createServices, không import ngược nghiệp vụ.
+
+Kết quả hiện hành: 148/148 test (14 file), lint/architecture/build đạt; các số 143 ở mục trước là mốc trước bổ sung này. Đã gồm toàn bộ bản sửa trước về host, listener SDK, tiếng phím và badge lưu tạm. Chưa thử tổng đài thật; cả ba máy Web cần cập nhật cùng bản.
