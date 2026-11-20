@@ -219,7 +219,7 @@
                   <path
                     stroke-linecap="round"
                     stroke-linejoin="round"
-                    d="M19 11a7 7 0 01-14 0m7 7v4m-4 0h8m-4-15a3 3 0 00-3 3v5a3 3 0 006 0V6a3 3 0 00-3-3z"
+                    d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z M5 10v2a7 7 0 0 0 14 0v-2 M12 19v3 M8 22h8"
                   />
                 </svg>
                 <svg
@@ -4285,11 +4285,11 @@ onUnmounted(() => {
 }
 
 .control-btn.btn-add-member {
-  color: #2563eb;
+  color: white;
 }
+/* Giữ nền hover trong suốt như các nút điều khiển trên nền cuộc gọi tối. */
 .control-btn.btn-add-member:hover:not(:disabled) {
-  background: #eff6ff;
-  color: #1d4ed8;
-  border-color: #bfdbfe;
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 </style>

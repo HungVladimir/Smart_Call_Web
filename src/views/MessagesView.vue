@@ -656,7 +656,7 @@ const currentIsAdmin = computed(() => {
 const currentUserName = computed(() => localStorage.getItem('smartcall_username') || 'Quản trị viên')
 const currentUserExt = computed(() => callStore.myExtension || localStorage.getItem('smartcall_extension') || '')
 
-const rooms = ref([])
+const rooms = ref([...(chatService.rooms || [])])
 const currentRoom = ref(null)
 const editGroupTitle = ref('')
 const isRenamingGroup = ref(false)
@@ -737,13 +737,17 @@ const availableContactsForGroup = computed(() => {
   })
 })
 
+let hasLoadedRooms = false
+
+/** Nạp lần đầu có loading; những lần sau giữ dữ liệu trong RAM khi đồng bộ nền. */
 const loadRooms = async () => {
   const context = captureSessionContext()
-  isLoadingRooms.value = true
+  isLoadingRooms.value = !hasLoadedRooms && rooms.value.length === 0
   try {
     const list = await chatService.getRooms()
     if (!isSessionContextCurrent(context)) return
     rooms.value = [...list]
+    hasLoadedRooms = true
     // Giữ nguyên phòng đang mở nếu có, KHÔNG tự ý chọn rooms[0] để bảo toàn badge (Issue 6)
     if (currentRoom.value) {
       const found = rooms.value.find((r) => r.id === currentRoom.value.id)
@@ -765,7 +769,8 @@ const selectRoom = async (room) => {
   }
   // Tự động kéo lịch sử tin nhắn từ Wazo chatd nếu là phòng trên server thật
   if (room && room.id && !room.id.startsWith('room-') && !room.id.startsWith('direct-')) {
-    isLoadingMessages.value = true
+    // Giữ lịch sử đã hiển thị trong lúc lấy bản mới, tránh nháy trắng khi mở lại phòng.
+    isLoadingMessages.value = !room.messages?.length
     try {
       const msgs = await chatService.getRoomMessages(room.id)
       if (!isSessionContextCurrent(context)) return

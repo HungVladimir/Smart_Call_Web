@@ -1593,3 +1593,64 @@ test('Group filter: còn hai người khả dụng thì tạo nhóm, không đư
   assert.deepEqual([...c.svc.groupParticipantExtensions], ['1000', '2000', '2001'])
   assert.equal(dialed[0].number, '2000'); assert.equal(dialed[0].meta.isGroupCall, true)
 })
+
+
+test('Chat refresh: lần đầu loading, quay lại KeepAlive đồng bộ nền không che phòng hiện có', async () => {
+  const c = fixture(), first = deferred(), refresh = deferred(); let requests = 0
+  c.chatService.rooms = []
+  c.chatService.getRooms = () => (++requests === 1 ? first.promise : refresh.promise)
+  view(c, 'src/views/MessagesView.vue', 'globalThis.ui = { loadRooms, currentRoom, isLoadingRooms, rooms }')
+  const loading = c.ui.loadRooms()
+  assert.equal(c.ui.isLoadingRooms.value, true)
+  const room = { id: 'r', messages: [{ id: 'm', text: 'Có sẵn' }] }
+  first.resolve([room]); await loading
+  c.ui.currentRoom.value = c.ui.rooms.value[0]
+  c.hooks.deactivated[0]()
+  const activated = c.hooks.activated[0]()
+  assert.equal(c.ui.isLoadingRooms.value, false)
+  assert.equal(c.ui.currentRoom.value.messages[0].text, 'Có sẵn')
+  refresh.resolve([{ ...room, title: 'Mới' }]); await activated
+  assert.equal(c.ui.currentRoom.value.title, 'Mới'); assert.equal(requests, 2)
+})
+
+test('Chat cache: mở view/phòng đã có dữ liệu không che lịch sử trong lúc tải', async () => {
+  const c = fixture(), pending = deferred()
+  c.chatService.rooms = [{ id: 'r', messages: [{ id: 'm', text: 'Cũ' }] }]
+  c.chatService.saveRooms = noop
+  c.chatService.getRooms = () => pending.promise
+  c.chatService.getRoomMessages = () => pending.promise
+  view(c, 'src/views/MessagesView.vue', 'globalThis.ui = { loadRooms, selectRoom, rooms, isLoadingRooms, isLoadingMessages, currentRoom }')
+  const load = c.ui.loadRooms()
+  assert.equal(c.ui.isLoadingRooms.value, false)
+  const select = c.ui.selectRoom(c.ui.rooms.value[0])
+  assert.equal(c.ui.isLoadingMessages.value, false)
+  assert.equal(c.ui.currentRoom.value.messages[0].text, 'Cũ')
+  pending.resolve([]); await Promise.all([load, select])
+})
+
+test('Login hint: ẩn mặc định, chỉ hiện với lỗi kết nối và xóa khi thử lại', async () => {
+  const c = fixture()
+  view(c, 'src/views/LoginView.vue', 'globalThis.ui = {handleLogin, username, password, showCertificateHint}')
+  c.ui.username.value = 'account'; c.ui.password.value = 'password'
+  assert.equal(c.ui.showCertificateHint.value, false)
+  const cases = [
+    [new TypeError('Failed to fetch'), true],
+    [new Error('certificate verify failed'), true],
+    [Object.assign(new Error('Network error'), { status: 401 }), false],
+    [Object.assign(new Error('server'), { response: { status: 503 } }), false],
+    [new Error('Invalid credentials'), false],
+    [new Error('Timeout'), false],
+    [new TypeError('Cannot read properties of undefined'), false],
+  ]
+  c.console = { ...console, error: noop }
+  for (const [error, expected] of cases) {
+    c.wazoService.login = async () => { throw error }
+    await c.ui.handleLogin(); assert.equal(c.ui.showCertificateHint.value, expected, error.message)
+  }
+  c.wazoService.login = async () => { throw new TypeError('Failed to fetch') }
+  await c.ui.handleLogin()
+  const pending = deferred(); c.wazoService.login = () => pending.promise
+  const retry = c.ui.handleLogin()
+  assert.equal(c.ui.showCertificateHint.value, false)
+  pending.reject(new Error('Invalid credentials')); await retry
+})

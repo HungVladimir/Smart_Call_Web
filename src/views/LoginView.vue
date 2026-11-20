@@ -114,13 +114,13 @@
           </button>
 
           <!-- Gợi ý xác nhận chứng chỉ SSL -->
-          <div class="ssl-cert-hint">
+          <div v-if="showCertificateHint" class="ssl-cert-hint">
             <svg class="hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="16" x2="12" y2="12" />
               <line x1="12" y1="8" x2="12.01" y2="8" />
             </svg>
-            <span>Lần đầu truy cập: mở <a :href="`https://${serverHost}/`" target="_blank" class="hint-link">https://{{ serverHost }}/</a> để xác nhận tin cậy chứng chỉ máy chủ.</span>
+            <span>Nếu chưa tin cậy chứng chỉ máy chủ, mở <a :href="`https://${serverHost}/`" target="_blank" rel="noopener noreferrer" class="hint-link">https://{{ serverHost }}/</a> để xác nhận tin cậy chứng chỉ máy chủ.</span>
           </div>
         </form>
       </div>
@@ -226,7 +226,16 @@ const showPassword = ref(false)
 const rememberMe = ref(true)
 const loading = ref(false)
 const errorMessage = ref('')
+const showCertificateHint = ref(false)
 const serverHost = ref((wazoService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').replace(/\/+$/, ''))
+
+/** Chỉ gợi ý kiểm tra chứng chỉ khi request lỗi mạng/TLS; không suy diễn từ lỗi tài khoản hoặc HTTP. */
+const shouldShowCertificateHint = (error) => {
+  const status = Number(error?.status || error?.response?.status || error?.statusCode)
+  const message = String(error?.message || '')
+  if (status >= 400 || /\b(?:401|403)\b|unauthorized|credentials/i.test(message)) return false
+  return /failed to fetch|fetch failed|network|load failed|certificate|ssl|tls|cert_/i.test(message)
+}
 
 const handleLogin = async () => {
   const u = username.value.trim()
@@ -235,6 +244,7 @@ const handleLogin = async () => {
 
   loading.value = true
   errorMessage.value = ''
+  showCertificateHint.value = false
 
   let realDisplayName = ''
   let realExtension = ''
@@ -330,6 +340,7 @@ const handleLogin = async () => {
   } catch (err) {
     loading.value = false
     console.error('Lỗi đăng nhập:', err.name || 'Error', err.status || '')
+    showCertificateHint.value = shouldShowCertificateHint(err)
 
     let msg = ''
     if (
