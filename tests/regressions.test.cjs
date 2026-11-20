@@ -562,6 +562,7 @@ function groupFixture() {
   c.svc.currentCallSession = c.state.activeCall.session
   c.contactService.currentContacts = [{ uuid: 'a', number: '1000' }, { uuid: 'peer', number: '2000' }, { uuid: 'member', number: '3000' }, { uuid: 'outsider', number: '9000' }]
   c.contactService.findContactByUuid = (uuid) => c.contactService.currentContacts.find((item) => item.uuid === uuid)
+  c.contactService.findContactByExtension = (extension) => c.contactService.currentContacts.find((item) => item.number === String(extension).split('@')[0])
   c.svc.isGroupCall = c.svc.isGroupHost = true
   c.svc.groupHostExtension = '1000'
   c.svc.groupParticipantExtensions = ['1000', '2000', '3000']
@@ -893,6 +894,7 @@ function callClient(number, peer, direction) {
   c.svc.getMyExtension = () => number; c.svc.getMyUserUuid = () => number
   c.contactService.currentContacts = ['1000', '2000', '3000', '4000'].map((n) => ({ uuid: n, number: n }))
   c.contactService.findContactByUuid = (uuid) => c.contactService.currentContacts.find((item) => item.uuid === uuid)
+  c.contactService.findContactByExtension = (extension) => c.contactService.currentContacts.find((item) => item.number === String(extension).split('@')[0])
   c.contactService.isContactAvailableForCall = () => true
   c.svc.currentCallSession = { sipCallId: number + '-primary', answered: true }
   c.state.activeCall = { callId: number + '-call', number: peer, direction, status: 'connected', session: c.svc.currentCallSession }
@@ -906,6 +908,161 @@ function callClient(number, peer, direction) {
   c.svc.attachListeners()
   return c
 }
+
+test('Group display: ba máy cùng dùng snapshot; C chưa nghe chỉ ở danh sách đang mời, C nhận muộn vẫn vào UI nhóm', async () => {
+  const a = callClient('1000', '2000', 'outbound'), b = callClient('2000', '1000', 'inbound'), c = callClient('3000', '1000', 'inbound')
+  c.state.activeCall = null; c.svc.currentCallSession = null
+  a.svc.setPresence = async (_, status) => { b.signal({ uuid: '1000', status }); c.signal({ uuid: '1000', status }); return true }
+  b.svc.setPresence = async (_, status) => { a.signal({ uuid: '2000', status }); return true }
+  c.svc.setPresence = async (_, status) => { a.signal({ uuid: '3000', status }); return true }
+  await b.svc.addParticipantsToGroupCall(['3000']); await drain()
+  for (const client of [a, b]) {
+    assert.equal(client.state.activeCall.groupTitle, 'Cuộc gọi nhóm (2 người)')
+    assert.deepEqual([...client.state.activeCall.groupConnectedExtensions], ['1000', '2000'])
+    assert.deepEqual([...client.state.activeCall.groupPendingExtensions], ['3000'])
+  }
+  assert.equal(c.svc.isGroupCall, false) // GROUP ban đầu đến trước incoming của C.
+  const incoming = { sipCallId: 'C-incoming', number: '1000' }
+  c.svc._onCallIncomingHandler(incoming); await drain()
+  assert.equal(c.state.incomingCall.isGroupCall, true)
+  assert.deepEqual([...c.state.incomingCall.groupPendingExtensions], ['3000'])
+  await c.svc.acceptIncomingCall(); c.svc._onCallAcceptedHandler(incoming)
+  a.svc._onCallAcceptedHandler(a.svc.secondaryCallSessions.get('3000')); await drain()
+  for (const client of [a, b, c]) {
+    assert.equal(client.state.activeCall.isGroupCall, true)
+    assert.equal(client.state.activeCall.groupTitle, 'Cuộc gọi nhóm (3 người)')
+    assert.deepEqual([...client.state.activeCall.groupConnectedExtensions], ['1000', '2000', '3000'])
+    assert.deepEqual([...client.state.activeCall.groupPendingExtensions], [])
+    assert.equal(client.state.activeCall.groupHostExtension, '1000')
+  }
+})
+
+test('Group display: snapshot cũ/legacy/scope khác không kéo 3 người về 2; phản hồi đúng request có thể sửa scope cũ', () => {
+  const b = callClient('2000', '1000', 'inbound')
+  const signal = (state) => b.signal({ uuid: '1000', status: '[GROUP:1000:1000,2000,3000]' + state })
+  signal('[GROUP_STATE:room:2:1000,2000,3000]')
+  signal('[GROUP_STATE:room:1:1000,2000]')
+  signal('')
+  signal('[GROUP_STATE:other:10:1000,2000]')
+  assert.equal(b.state.activeCall.groupTitle, 'Cuộc gọi nhóm (3 người)')
+  assert.equal(b.svc._groupSnapshotRevision, 2)
+  b.svc._groupSyncRequestIds.add('current-request')
+  signal('[GROUP_STATE:new-room:1:1000,2000:current-request]')
+  assert.equal(b.svc._groupSnapshotId, 'new-room')
+  assert.equal(b.state.activeCall.groupTitle, 'Cuộc gọi nhóm (2 người)')
+  assert.deepEqual([...b.state.activeCall.groupPendingExtensions], ['3000'])
+})
+
+test('Group display: GROUP_STATE sai thành viên/revision hoặc nhiều snapshot không được áp dụng', () => {
+  const b = callClient('2000', '1000', 'inbound')
+  for (const metadata of ['[GROUP_STATE:room:1:1000,9000]', '[GROUP_STATE:room:0:1000,2000]', '[GROUP_STATE:room:1:1000,2000', '[GROUP_STATE:room:1:1000,2000][GROUP_STATE:room:2:1000,2000]']) {
+    b.signal({ uuid: '1000', status: '[GROUP:1000:1000,2000,3000]' + metadata })
+    assert.equal(b.svc.isGroupCall, false)
+  }
+})
+
+test('Group display: chỉ thành viên được mời có quyền xin snapshot, request lặp không phát lại', async () => {
+  const a = callClient('1000', '2000', 'outbound'); await a.svc.addParticipantsToGroupCall(['3000'])
+  const replies = []; a.svc.broadcastGroupStateViaPresence = (request) => replies.push(request)
+  a.signal({ uuid: '4000', status: '[GROUP_SYNC:outside:1000]' })
+  a.signal({ uuid: '3000', status: '[GROUP_SYNC:request:1000]' })
+  a.signal({ uuid: '3000', status: '[GROUP_SYNC:request:1000]' })
+  assert.deepEqual(replies, ['request'])
+})
+
+test('Group display: View đếm người đã kết nối thay vì groupTitle cũ và tách người đang mời', async () => {
+  const a = callClient('1000', '2000', 'outbound')
+  view(a, 'src/views/CallsView.vue', 'globalThis.title = activeCallTitle; globalThis.pending = pendingRingingMembers; globalThis.members = groupMembersSummary')
+  await a.svc.addParticipantsToGroupCall(['3000'])
+  a.state.activeCall.groupTitle = 'Cuộc gọi nhóm (999 người)'
+  assert.equal(a.title.value, 'Cuộc gọi nhóm (2 người)')
+  assert.equal(a.pending.value.length, 1); assert.match(a.pending.value[0], /3000/)
+  assert.doesNotMatch(a.members.value, /3000/)
+  a.svc._onCallAcceptedHandler(a.svc.secondaryCallSessions.get('3000'))
+  assert.equal(a.title.value, 'Cuộc gọi nhóm (3 người)'); assert.equal(a.pending.value.length, 0)
+  assert.match(a.members.value, /3000/)
+})
+
+test('Group display: C từ chối không làm tăng số; timeout đến sau accepted không xóa C', async () => {
+  const a = callClient('1000', '2000', 'outbound'); await a.svc.addParticipantsToGroupCall(['3000'])
+  a.svc._onCallRejectedHandler(a.svc.secondaryCallSessions.get('3000'))
+  assert.deepEqual([...a.state.activeCall.groupConnectedExtensions], ['1000', '2000'])
+  assert.deepEqual([...a.state.activeCall.groupPendingExtensions], [])
+  await a.svc.addParticipantsToGroupCall(['3000'])
+  a.svc._onCallAcceptedHandler(a.svc.secondaryCallSessions.get('3000'))
+  a.svc._cancelSecondaryLegOnTimeout('3000')
+  assert.equal(a.state.activeCall.groupConnectedExtensions.length, 3)
+})
+
+test('Group display: C nghe trước B thì chỉ có A/C; timeout B vẫn được dọn dù nhóm đã connected', () => {
+  const a = callClient('1000', '2000', 'outbound')
+  a.svc.currentCallSession.answered = false; a.state.activeCall.status = 'ringing'
+  a.svc.isGroupCall = a.svc.isGroupHost = true; a.svc.groupHostExtension = '1000'
+  a.svc.groupParticipantExtensions = ['1000', '2000', '3000']; a.svc.groupConnectedExtensions = ['1000']
+  const child = { sipCallId: 'C', answered: true }; a.svc.secondaryCallSessions.set('3000', child)
+  a.svc._onCallAcceptedHandler(child)
+  assert.deepEqual([...a.state.activeCall.groupConnectedExtensions], ['1000', '3000'])
+  assert.deepEqual([...a.state.activeCall.groupPendingExtensions], ['2000'])
+  a.svc._cancelPrimaryLegOnTimeout('2000')
+  assert.deepEqual([...a.state.activeCall.groupPendingExtensions], [])
+  assert.deepEqual([...a.state.activeCall.groupConnectedExtensions], ['1000', '3000'])
+})
+
+test('Group display: Calld bổ sung accepted bị lỡ và nhiều talking_to không làm B/C đè call ID', async () => {
+  const a = callClient('1000', '2000', 'outbound'); await a.svc.addParticipantsToGroupCall(['3000'])
+  a.svc.activeAdhocConferenceId = 'conference'; a.svc.mergedCallIds.add('B-call'); a.svc.mergedCallIds.add('C-call')
+  a.svc.extensionToWazoCallIdMap.set('2000', 'B-call'); a.svc.extensionToWazoCallIdMap.set('3000', 'C-call')
+  a.svc.secondaryCallSessions.clear()
+  a.svc.getMyActiveCalls = async () => [{ id: 'host', sip_call_id: '1000-primary', status: 'talking', talking_to: { 'B-call': {}, 'C-call': {} } }]
+  await a.svc._doSyncActiveCallsToAdhocConference()
+  assert.equal(a.svc.extensionToWazoCallIdMap.get('2000'), 'B-call')
+  assert.equal(a.svc.extensionToWazoCallIdMap.get('3000'), 'C-call')
+  assert.equal(a.state.activeCall.groupTitle, 'Cuộc gọi nhóm (3 người)')
+})
+
+test('Group display: chờ danh bạ rồi cúp không gửi yêu cầu snapshot của cuộc gọi đã kết thúc', async () => {
+  const c = callClient('3000', '1000', 'inbound'), contacts = deferred()
+  c.state.activeCall = null; c.svc.currentCallSession = null
+  c.contactService.findContactByExtension = () => null
+  c.contactService.getContacts = () => contacts.promise
+  c.svc._onCallIncomingHandler({ sipCallId: 'C-incoming', number: '1000' })
+  c.svc.hangup()
+  c.contactService.findContactByExtension = () => ({ uuid: '1000', number: '1000' })
+  contacts.resolve(); await drain()
+  assert.equal(c.sent.some(({ status }) => status.includes('[GROUP_SYNC:')), false)
+  assert.equal(c.svc._groupSyncRequestIds.size, 0)
+})
+
+test('Group display: SDK lỗi hoặc trả null thì bỏ C đang mời, hai máy vẫn cùng hiển thị 2 người', async () => {
+  for (const fail of [async () => { throw new Error('SIP failed') }, async () => null]) {
+    const a = callClient('1000', '2000', 'outbound'), b = callClient('2000', '1000', 'inbound')
+    a.svc.setPresence = async (_, status) => { b.signal({ uuid: '1000', status }); return true }
+    a.Wazo.Phone.call = fail
+    await a.svc.addParticipantsToGroupCall(['3000'])
+    for (const client of [a, b]) {
+      assert.equal(client.state.activeCall.groupTitle, 'Cuộc gọi nhóm (2 người)')
+      assert.deepEqual([...client.state.activeCall.groupPendingExtensions], [])
+      assert.deepEqual([...client.state.activeCall.groupParticipantExtensions], ['1000', '2000'])
+    }
+  }
+})
+
+test('Group display: websocket mở lại xin snapshot mới mà không tự suy ra nhóm', async () => {
+  const b = callClient('2000', '1000', 'inbound')
+  b.WebSocket = class { send() {} close() {} }
+  b.svc.openWebSocketEvents(); b.svc.eventWs.onopen(); await drain()
+  assert.ok(b.sent.some(({ status }) => status.startsWith('[GROUP_SYNC:')))
+  assert.equal(b.svc.isGroupCall, false)
+})
+
+test('Group display: cúp dọn snapshot và event GROUP cũ không phục hồi giao diện nhóm', async () => {
+  const b = callClient('2000', '1000', 'inbound')
+  const status = '[GROUP:1000:1000,2000,3000][GROUP_STATE:room:1:1000,2000,3000]'
+  b.signal({ uuid: '1000', status }); assert.equal(b.svc.isGroupCall, true)
+  b.svc.hangup(); b.signal({ uuid: '1000', status }); await drain()
+  assert.equal(b.svc.isGroupCall, false); assert.equal(b.svc._groupSnapshotId, '')
+  assert.deepEqual([...b.svc.groupConnectedExtensions], []); assert.equal(b.state.activeCall, null)
+})
 
 test('Host: A gọi B, B mời C thì chỉ A gọi C và A giữ quyền giải tán nhóm', async () => {
   const a = callClient('1000', '2000', 'outbound'), b = callClient('2000', '1000', 'inbound'), c = callClient('3000', '1000', 'inbound')

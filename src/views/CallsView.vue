@@ -987,7 +987,7 @@ const activeCallContact = computed(() => {
 const isGroupCall = computed(() => Boolean(callStore.activeCall?.isGroupCall || wazoService.isGroupCall))
 
 const groupMembersSummary = computed(() => {
-  const exts = callStore.activeCall?.groupParticipantExtensions || wazoService.groupParticipantExtensions || []
+  const exts = callStore.activeCall?.groupConnectedExtensions || wazoService.groupConnectedExtensions || []
   if (!exts || exts.length === 0) return ''
   const myExt = callStore.myExtension || localStorage.getItem('smartcall_extension') || ''
   const names = exts.map((ext) => {
@@ -999,12 +999,11 @@ const groupMembersSummary = computed(() => {
 })
 
 const pendingRingingMembers = computed(() => {
-  if (!wazoService.secondaryCallSessions || wazoService.secondaryCallSessions.size === 0) return []
   const list = []
-  for (const [secExt] of wazoService.secondaryCallSessions.entries()) {
+  const pending = callStore.activeCall?.groupPendingExtensions || wazoService.groupPendingExtensions || []
+  for (const secExt of pending) {
     const c = contacts.value.find((ct) => String(ct.number || '').trim() === String(secExt).trim()) || contactService.findContactByExtension(secExt)
-    const name = c?.name || `Máy lẻ ${secExt}`
-    list.push(`${name} (${secExt})`)
+    list.push(c?.name ? `${c.name} (${secExt})` : `Máy lẻ ${secExt}`)
   }
   return list
 })
@@ -1012,8 +1011,8 @@ const pendingRingingMembers = computed(() => {
 const activeCallTitle = computed(() => {
   if (!callStore.activeCall) return ''
   if (isGroupCall.value) {
-    const count = (callStore.activeCall.groupParticipantExtensions || wazoService.groupParticipantExtensions || []).length
-    return callStore.activeCall.groupTitle || `Cuộc gọi nhóm (${count > 0 ? count : 3} người)`
+    const count = (callStore.activeCall.groupConnectedExtensions || wazoService.groupConnectedExtensions || []).length
+    return `Cuộc gọi nhóm (${count} người)`
   }
   const ext = callStore.activeCall.number || extension.value
   if (callStore.activeCall.status === 'ringing') {

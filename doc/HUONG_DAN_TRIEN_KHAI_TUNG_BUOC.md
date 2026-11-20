@@ -4039,6 +4039,10 @@ Theo yêu cầu tiếp theo, dùng lại localStorage như phiên bản cũ từ
 
 Đây là ngoại lệ lưu tạm được người dùng cho phép, đã ghi vào `GEMINI.md`; chưa phải read cursor server và không đồng bộ với thiết bị khác. Bộ kiểm thử **98/98 đạt**, build thành công. Chi tiết lịch sử code, định dạng lưu và giới hạn: [lưu tạm badge tin nhắn](audit/19-temporary-persistent-message-badges-2026-11-20.md).
 
+## BƯỚC 82: ĐỒNG BỘ HIỂN THỊ NHÓM GIỮA CÁC MÁY WEB
+
+Tách người đang mời và đã kết nối, bỏ số trong tiêu đề cũ, dùng snapshot có revision và cơ chế thành viên xin lại sau incoming/accepted/reconnect. Sửa ánh xạ ID sau ghép và cleanup lời mời lỗi/timeout. **110/110 test đạt**, build thành công; chưa thử tổng đài thật. Chỉ sửa bản gốc trước, đợi người dùng test rồi mới chuyển sang refactor. Xem [chi tiết và bảng thử](audit/20-web-group-display-sync-2026-11-20.md).
+
 
 
 

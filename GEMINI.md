@@ -59,6 +59,7 @@ Tài liệu này định nghĩa các nguyên tắc phát triển cốt lõi, quy
 ## 3. CÁC NGUYÊN TẮC NGHIỆP VỤ & TÍNH NĂNG ĐÃ THỐNG NHẤT
 
 ### 3.1. Nghiệp vụ Cuộc gọi & Bàn phím (`CallsView.vue`)
+- **Đồng bộ hiển thị nhóm Web (20/11/2026)**: số người chỉ tính các nhánh đã kết nối; danh sách đang mời hiển thị riêng. Host phát snapshot có ID/revision; máy nhận xin lại snapshot khi incoming/accepted/reconnect. Không dùng groupTitle lưu cũ để tính số người.
 - **Người gọi ban đầu luôn giữ quyền chủ phòng khi nâng cuộc gọi thành nhóm**:
   - A gọi B, B yêu cầu thêm C thì A vẫn là host. B gửi yêu cầu mời cho A; A thực hiện quay số và ghép hội nghị. Không chuyển host sang người bấm thêm thành viên.
   - A cúp máy thì kết thúc nhóm và ngắt các nhánh B/C. B hoặc C rời thì các thành viên còn lại tiếp tục với A làm host.
