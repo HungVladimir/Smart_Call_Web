@@ -17,6 +17,12 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
+      path: '/callback',
+      name: 'SingleIdCallback',
+      component: () => import('../views/CallbackView.vue'),
+      meta: { title: 'Đăng nhập Single ID' },
+    },
+    {
       path: '/login',
       name: 'Login',
       component: LoginView,

@@ -1,7 +1,7 @@
 # Quy tắc làm việc trong bản refactor SmartCall Web
 
 - Phạm vi sửa: duy nhất `D:/Project/Smart_Call_Web_Refactor`. Giữ nguyên bản gốc `D:/Project/Smart_Call_Web`.
-- Đây là sản phẩm Web. Mã Vue nằm trong `frontend/`; `backend/` chuẩn bị cho API/IdP; `FileQuest/` chỉ là tài liệu tham khảo Android.
+- Đây là sản phẩm Web. Mã Vue nằm trong `frontend/`; `backend/` triển khai FastAPI Single ID và cấp tài khoản Wazo; `FileQuest/` chỉ là tài liệu tham khảo Android.
 - Người dùng đã cho phép tự phân tích, refactor và sửa lỗi liên quan trong bản clone.
 - Làm việc trên `codex/refactor-architecture`, không cập nhật `main`.
 - Tên biến/hàm/lớp dùng tiếng Anh rõ nghĩa; comment giải thích và tài liệu dùng tiếng Việt, UTF-8.
@@ -25,3 +25,5 @@
 - Trước hàm/method/getter/computed có tên, thêm comment tiếng Việt nêu công việc và tác động đáng chú ý. Guard quan trọng về phiên, quyền, SIP/conference ID, ACK HTTP và cleanup cần giải thích lý do; cập nhật comment khi logic đổi.
 
 - Hiển thị nhóm chỉ đếm người đã kết nối; người đang mời tách riêng. Đồng bộ snapshot có revision và xin lại khi nhận máy/reconnect; không dùng groupTitle cũ để tính số.
+
+- Single ID dùng OIDC theo mã tham chiếu; không coi token IdP là token Wazo. Cấp phát qua backend với credential quản trị riêng, chỉ trả token user cho SDK. Không reset mật khẩu tài khoản cũ; mật khẩu 12345 chỉ là mặc định thử nghiệm theo yêu cầu người dùng. backend/.env và hai bản dán trong backend/doc không đưa lên Git.

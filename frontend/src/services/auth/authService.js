@@ -1,3 +1,4 @@
+import { requestSingleId } from './singleIdApi.js'
 import { getSdkAuthenticationGate } from './sdkAuthenticationGate.js'
 import { mapUserProfile } from '../../utils/userProfile.js'
 import {
@@ -21,6 +22,8 @@ export class AuthService {
     this.sdk = sdk
     this.sdkAuthentication = getSdkAuthenticationGate(sdk.Auth)
     this.phoneAdapter = phoneAdapter
+    this.singleIdProfile = null
+    this.singleIdCsrf = ''
     this.session = null
     this.sdkCleanupPromise = Promise.resolve()
     this.host =
@@ -108,98 +111,172 @@ export class AuthService {
         password,
         loginContext,
       )
-      assertSessionContext(loginContext)
-      if (!authenticatedSession?.token)
-        throw new Error('Máy chủ chưa trả về phiên xác thực hợp lệ.')
-      this.session = authenticatedSession
-      localStorage.setItem('smartcall_login_username', username)
-      if (this.session && this.session.token) {
-        localStorage.setItem('smartcall_wazo_token', this.session.token)
-        localStorage.setItem('smartcall_wazo_refreshToken', this.session.refreshToken || '')
-        this.currentSessionUuid = this.session.sessionUuid || ''
-        if (this.currentSessionUuid) {
-          localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
-        }
-        if (this.clientId) {
-          try {
-            sessionStorage.setItem('smartcall_client_id', this.clientId)
-          } catch (e) {}
-        }
-        if (this.session.uuid) {
-          localStorage.setItem('smartcall_user_uuid', this.session.uuid)
-          userSessionState.userUuid = this.session.uuid
-        }
-        let exten = ''
-        try {
-          exten = this.session.primaryNumber?.() || ''
-        } catch (e) {}
-        if (exten) {
-          localStorage.setItem('smartcall_user_exten', exten)
-          localStorage.setItem('smartcall_extension', exten)
-          userSessionState.extension = exten
-        }
-        if (this.session.profile?.department) {
-          const dept = this.session.profile.department
-          localStorage.setItem('smartcall_department', dept)
-          localStorage.setItem('smartcall_user_department', dept)
-          userSessionState.department = dept
-        }
-        userSessionState.displayName = this.getCurrentDisplayName()
-        await this.synchronizeUserProfile(this.session, username)
-        this.historyService.reload()
-        logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
-
-        // Thu hồi session cũ và refresh token của các thiết bị khác theo chuẩn mã nguồn tham chiếu
-        // mẫu
-        // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ
-        if (this.session.uuid && this.currentSessionUuid && this.clientId) {
-          this.revokeOtherDeviceSessions(
-            this.session.uuid,
-            this.currentSessionUuid,
-            this.clientId,
-          ).catch((err) => {
-            logger.warn('AUTH', 'Lỗi khi thu hồi phiên thiết bị khác:', err.message)
-          })
-        } else {
-          logger.warn(
-            'AUTH',
-            'Chốt chặn an toàn: Bỏ qua thu hồi phiên khác do thiếu sessionUuid hoặc clientId hợp lệ.',
-          )
-        }
-      }
-
-      const authenticatedContext = captureSessionContext()
-      this.eventConnection.connect()
-
-      // Tự động kết nối WebRTC Phone sau khi login thành công
-      try {
-        await this.callService.connect()
-      } catch (phoneErr) {
-        logger.warn(
-          'SIP',
-          'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)',
-          phoneErr.message,
-        )
-      }
-      assertSessionContext(authenticatedContext)
-
-      // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên máy chủ Chatd
-      this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
-      try {
-        sessionStorage.setItem('smartcall_session_id', this.mySessionId)
-      } catch (e) {}
-      this.isSessionRevoked = false
-      try {
-        await this.updatePresence('available', this.mySessionId)
-      } catch (presErr) {
-        /* ignore */
-      }
-      assertSessionContext(authenticatedContext)
-      this.startSessionHealthCheck()
-
-      return this.session
+      return await this.completeAuthenticatedSession(authenticatedSession, username, loginContext)
     } catch (error) {
       logger.error('AUTH', `Đăng nhập thất bại: ${error.message || error}`, error)
+      throw error
+    }
+  }
+
+  /** Dùng chung bước gắn session, profile, WebSocket và SIP cho mật khẩu và Single ID. */
+  async completeAuthenticatedSession(authenticatedSession, username, context) {
+    assertSessionContext(context)
+    if (!authenticatedSession?.token) throw new Error('Máy chủ chưa trả về phiên xác thực hợp lệ.')
+    this.session = authenticatedSession
+    localStorage.setItem('smartcall_login_username', username)
+    if (this.session && this.session.token) {
+      localStorage.setItem('smartcall_wazo_token', this.session.token)
+      localStorage.setItem('smartcall_wazo_refreshToken', this.session.refreshToken || '')
+      this.currentSessionUuid = this.session.sessionUuid || ''
+      if (this.currentSessionUuid) {
+        localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
+      }
+      if (this.clientId) {
+        try {
+          sessionStorage.setItem('smartcall_client_id', this.clientId)
+        } catch (e) {}
+      }
+      if (this.session.uuid) {
+        localStorage.setItem('smartcall_user_uuid', this.session.uuid)
+        userSessionState.userUuid = this.session.uuid
+      }
+      let exten = ''
+      try {
+        exten = this.session.primaryNumber?.() || ''
+      } catch (e) {}
+      if (exten) {
+        localStorage.setItem('smartcall_user_exten', exten)
+        localStorage.setItem('smartcall_extension', exten)
+        userSessionState.extension = exten
+      }
+      if (this.session.profile?.department) {
+        const dept = this.session.profile.department
+        localStorage.setItem('smartcall_department', dept)
+        localStorage.setItem('smartcall_user_department', dept)
+        userSessionState.department = dept
+      }
+      userSessionState.displayName = this.getCurrentDisplayName()
+      await this.synchronizeUserProfile(this.session, username)
+      this.historyService.reload()
+      logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
+
+      // Thu hồi session cũ và refresh token của các thiết bị khác theo chuẩn mã nguồn tham chiếu
+      // mẫu
+      // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ
+      if (this.session.uuid && this.currentSessionUuid && this.clientId) {
+        this.revokeOtherDeviceSessions(
+          this.session.uuid,
+          this.currentSessionUuid,
+          this.clientId,
+        ).catch((err) => {
+          logger.warn('AUTH', 'Lỗi khi thu hồi phiên thiết bị khác:', err.message)
+        })
+      } else {
+        logger.warn(
+          'AUTH',
+          'Chốt chặn an toàn: Bỏ qua thu hồi phiên khác do thiếu sessionUuid hoặc clientId hợp lệ.',
+        )
+      }
+    }
+
+    const authenticatedContext = captureSessionContext()
+    this.eventConnection.connect()
+
+    // Tự động kết nối WebRTC Phone sau khi login thành công
+    try {
+      await this.callService.connect()
+    } catch (phoneErr) {
+      logger.warn(
+        'SIP',
+        'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)',
+        phoneErr.message,
+      )
+    }
+    assertSessionContext(authenticatedContext)
+
+    // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên máy chủ Chatd
+    this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+    try {
+      sessionStorage.setItem('smartcall_session_id', this.mySessionId)
+    } catch (e) {}
+    this.isSessionRevoked = false
+    try {
+      await this.updatePresence('available', this.mySessionId)
+    } catch (presErr) {
+      /* ignore */
+    }
+    assertSessionContext(authenticatedContext)
+    this.startSessionHealthCheck()
+
+    return this.session
+  }
+
+  /** Bắt đầu đăng nhập bằng điều hướng cửa sổ, không dùng fetch để mở trang IdP. */
+  beginSingleIdLogin() {
+    window.location.assign('/api/auth/login')
+  }
+
+  /** Lấy hồ sơ đã xác minh và CSRF token; không nhận token IdP trên trình duyệt. */
+  async getSingleIdProfile(expectedUserUuid = '') {
+    const data = await requestSingleId('user_info')
+    this.singleIdProfile =
+      !expectedUserUuid || data.wazo_user_uuid === expectedUserUuid ? data.profile : null
+    this.singleIdCsrf = data.csrf_token
+    return data
+  }
+
+  /** Hủy phiên backend có cookie/CSRF; gọi trước khi dọn scope của Web. */
+  async endSingleIdSession() {
+    let csrf = this.singleIdCsrf
+    const profile = this.singleIdProfile
+    if (!csrf) csrf = (await requestSingleId('user_info', {}, null)).csrf_token
+    await requestSingleId('logout', { method: 'POST', headers: { 'X-CSRF-Token': csrf } }, null)
+    if (this.singleIdProfile === profile) {
+      this.singleIdCsrf = ''
+      this.singleIdProfile = null
+    }
+  }
+
+  /** Hủy giao dịch đang chờ khi rời callback; thu hồi cookie backend và vô hiệu scope SDK. */
+  cancelSingleIdLogin() {
+    this.endSingleIdSession().catch(() => {})
+    this.logout({ preserveSingleId: true })
+  }
+
+  /** Xin token user từ backend và xác minh SDK trước khi dùng chung luồng hoàn tất đăng nhập. */
+  async completeSingleIdLogin(csrfToken) {
+    this.sdkAuthentication.assertCanAuthenticate()
+    const profile = this.singleIdProfile
+    const cleanup = this.logout({ preserveSingleId: true })
+    const context = captureSessionContext()
+    await cleanup
+    assertSessionContext(context)
+    this.singleIdProfile = profile
+    this.singleIdCsrf = csrfToken
+    try {
+      const data = await requestSingleId(
+        'wazo-session',
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrfToken },
+          body: JSON.stringify({ client_id: this.getOrCreateBrowserClientId() }),
+        },
+        context,
+      )
+      assertSessionContext(context)
+      if (!data.token || !data.user_uuid || !String(data.host || '').startsWith('https://'))
+        throw new Error('Backend chưa trả phiên Wazo hợp lệ.')
+      this.singleIdProfile = data.profile || profile
+      this.host = data.host
+      const session = await this.validateSdkSession(data.token, data.refresh_token, context)
+      assertSessionContext(context)
+      if (!session || session.uuid !== data.user_uuid)
+        throw new Error('Danh tính phiên SDK không khớp tài khoản Wazo được liên kết.')
+      localStorage.setItem('smartcall_wazo_host', data.host)
+      localStorage.setItem('smartcall_auth_method', 'singleid')
+      return await this.completeAuthenticatedSession(session, data.username, context)
+    } catch (error) {
+      if (captureSessionContext().epoch === context.epoch) this.logout({ preserveSingleId: true })
       throw error
     }
   }
@@ -271,6 +348,14 @@ export class AuthService {
             userSessionState.department = dept
           }
           userSessionState.displayName = this.getCurrentDisplayName()
+          if (localStorage.getItem('smartcall_auth_method') === 'singleid') {
+            try {
+              await this.getSingleIdProfile(this.session.uuid)
+            } catch {
+              /* Phiên Wazo độc lập vẫn được SDK xác minh. */
+            }
+            assertSessionContext(restoreContext)
+          }
           await this.synchronizeUserProfile(this.session, this.getCurrentDisplayName())
           this.historyService.reload()
           logger.success('AUTH', 'Đã khôi phục phiên đăng nhập Wazo từ Token thành công!')
@@ -310,7 +395,10 @@ export class AuthService {
   }
 
   /** Kết thúc phiên, ngắt kết nối và yêu cầu các dịch vụ dọn state. */
-  logout({ revoked = false } = {}) {
+  logout({ revoked = false, preserveSingleId = false } = {}) {
+    if (!preserveSingleId && localStorage.getItem('smartcall_auth_method') === 'singleid') {
+      this.endSingleIdSession().catch(() => {})
+    }
     const previousSession = this.session
     const sdkNeedsCleanup =
       Boolean(previousSession) || this.sdkAuthentication.isAuthenticationPending
@@ -328,6 +416,8 @@ export class AuthService {
     }
     this.callService.finalizeCallTermination('ended')
     this.eventConnection.disconnect()
+    this.singleIdProfile = null
+    this.singleIdCsrf = ''
     this.session = null
     // Xếp cleanup sau request xác thực còn chạy, trước mọi lần initialize/logIn tiếp theo.
     this.sdkCleanupPromise = this.sdkAuthentication
@@ -335,6 +425,7 @@ export class AuthService {
       .catch((error) => logger.warn('AUTH', 'SDK chưa hoàn tất logout từ xa:', error.message))
     // Xóa sạch toàn bộ session storage keys theo Issue 2 & plan
     const sessionKeys = [
+      'smartcall_auth_method',
       'smartcall_wazo_token',
       'smartcall_wazo_refreshToken',
       'smartcall_user_uuid',
@@ -911,6 +1002,10 @@ export class AuthService {
     }
     assertSessionContext(context)
     const profile = mapUserProfile(session, confdUser, username)
+    if (this.singleIdProfile) {
+      profile.displayName = this.singleIdProfile.name || profile.displayName
+      profile.department = this.singleIdProfile.department || ''
+    }
     Object.assign(userSessionState, profile)
     localStorage.setItem('smartcall_user_uuid', profile.userUuid)
     localStorage.setItem('smartcall_extension', profile.extension)

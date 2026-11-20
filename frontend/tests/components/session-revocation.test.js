@@ -55,3 +55,25 @@ it('thu hồi phiên đóng Settings, bỏ view/cache riêng tư và hiện logi
   expect(router.currentRoute.value.path).toBe('/login')
   await app.authService.sdkCleanupPromise
 })
+
+it('callback công khai vẫn render khi chưa có phiên Wazo, App không đá về login', async () => {
+  localStorage.clear()
+  app.authService.session = null
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      {
+        path: '/callback',
+        name: 'SingleIdCallback',
+        component: { template: '<div>SINGLE ID CALLBACK</div>' },
+      },
+      { path: '/login', component: { template: '<div>LOGIN</div>' } },
+    ],
+  })
+  await router.push('/callback')
+  const { default: App } = await import('../../src/App.vue')
+  wrapper = mountComponent(App, { plugins: [router] })
+  await flushUi()
+  expect(router.currentRoute.value.path).toBe('/callback')
+  expect(wrapper.element.textContent).toContain('SINGLE ID CALLBACK')
+})

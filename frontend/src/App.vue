@@ -2,13 +2,13 @@
   <div id="app" class="app-container">
     <!-- 1. Thanh Top Header (Chỉ hiện khi đã đăng nhập) -->
     <AppHeader
-      v-if="isLoggedIn && !isLoginPage"
+      v-if="isLoggedIn && !isPublicAuthPage"
       @logout="handleLogout"
       @open-settings="showSettings = true"
     />
 
     <!-- 2. Thân ứng dụng chính -->
-    <div v-if="isLoggedIn && !isLoginPage" class="app-body">
+    <div v-if="isLoggedIn && !isPublicAuthPage" class="app-body">
       <!-- Sidebar điều hướng bên trái -->
       <AppSidebar />
 
@@ -28,7 +28,7 @@
     <!-- Màn hình Login hiển thị toàn màn hình nếu chưa đăng nhập hoặc đang ở trang Login -->
     <div v-else class="login-fullscreen">
       <!-- Không render lại route riêng tư trong lúc chuyển về login sau khi mất phiên. -->
-      <router-view v-if="isLoginPage" />
+      <router-view v-if="isPublicAuthPage" />
     </div>
 
     <!-- 3. Modal Cài đặt hệ thống (Settings Modal) -->
@@ -107,8 +107,8 @@ const showIncomingModal = computed(() => Boolean(callState.incomingCall))
 /** Đọc dữ liệu cuộc gọi đến từ state chung để truyền cho modal, không giữ một bản session riêng. */
 const incomingCallData = computed(() => callState.incomingCall)
 
-/** Nhận biết route login để chọn bố cục toàn màn hình thay cho khung ứng dụng đã xác thực. */
-const isLoginPage = computed(() => route.path === '/login')
+/** Nhận biết login/callback để hiển thị toàn màn hình trong giai đoạn xác thực. */
+const isPublicAuthPage = computed(() => ['/login', '/callback'].includes(route.path))
 
 // Toast Notification System
 const toastMessage = ref('')
@@ -123,6 +123,8 @@ onMounted(async () => {
   window.addEventListener('app-login-success', handleLoginSuccess)
   window.addEventListener('smartcall-session-kicked', handleSessionKicked)
   window.addEventListener('beforeunload', handleBeforeUnload)
+
+  if (route.path === '/callback') return
 
   // 1. Kiểm tra trạng thái đăng nhập
   const storedLogin = localStorage.getItem('smartcall_logged_in')

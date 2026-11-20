@@ -65,3 +65,11 @@ specs/
 .refactor-tmp/
 **/coverage/
 **/.vite/
+
+# Backend Python và tài liệu tham chiếu chứa secret gốc
+backend/.venv/
+__pycache__/
+*.py[cod]
+backend/data/
+backend/doc/backendV1.py
+backend/doc/codeAuthRefer.py

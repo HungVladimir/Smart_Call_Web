@@ -131,7 +131,7 @@ frontend/src/
 
 Các selector CSS gọi điện được đặt trong namespace .calls-view và giữ đủ rule khi tách; không làm CSS rò sang trang khác. CallsView/MessagesView/Settings vẫn còn một số phần có thể làm gọn theo nhu cầu thật. Không coi đợt này là tối ưu hiệu năng hoặc hoàn tất mọi thiết kế.
 
-Backend/IdP chưa triển khai. Đóng nhóm là giao thức Web, không thay API membership/ACL server. Cần thử Wazo/Android thật trước khi dùng thay bản chính.
+Backend đã triển khai OIDC Single ID và cấp tài khoản Wazo qua FastAPI; cần cấu hình .env và kiểm chứng IdP/Wazo thật. Hướng dẫn: ../../backend/README.md. Đóng nhóm là giao thức Web, không thay API membership/ACL server. Cần thử Wazo/Android thật trước khi dùng thay bản chính.
 
 Xem [hướng dẫn đầy đủ](../HUONG_DAN_FRONTEND_CHO_NGUOI_MOI.md), [kiểm chứng](VERIFICATION.md) và [nhật ký](PROGRESS.md).
 
@@ -150,3 +150,8 @@ GroupCallService giữ host là người gọi ban đầu; người nhận gửi
 ChatService sở hữu bộ đếm reactive và cache metadata tạm theo host/UUID; Sidebar/MessagesView chỉ đọc state và báo phòng đang xem. Đây là ngoại lệ localStorage do người dùng yêu cầu, không phải read receipt hoặc lưu nội dung chat. Tiếng phím HTMLAudio được giữ trong CallToneService, không tạo AudioContext trong handler nhập.
 
 Xem [bản sửa và giới hạn](LATEST_FIXES_2026-11-20.md). Cây thư mục và ranh giới import giữ nguyên.
+
+
+## Backend xác thực — cập nhật 20/11/2026
+
+LoginView → backend /api/auth/login → IdP → backend callback → CallbackView → backend wazo-session → AuthService.validateSdkSession → completeAuthenticatedSession dùng chung bootstrap mật khẩu. Backend gồm config, store (Redis/SQLite), oidc, wazo, main; không đưa mã Android vào runtime. JWT/Origin/CSRF/session expiry được xác minh trước cấp phát. Identity issuer/sub/tenant liên kết Wazo UUID, không lưu password/token trong SQLite. Nguồn nhân sự là IdP, nguồn UUID/line/máy lẻ là Wazo.

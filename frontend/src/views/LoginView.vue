@@ -166,6 +166,16 @@
             </svg>
           </button>
 
+          <!-- Điều hướng toàn trang tới backend để bắt đầu giao dịch OIDC. -->
+          <button
+            type="button"
+            class="btn-primary-login"
+            :disabled="loading"
+            @click="authService.beginSingleIdLogin()"
+          >
+            ĐĂNG NHẬP SINGLE ID
+          </button>
+
           <!-- Gợi ý xác nhận chứng chỉ SSL -->
           <div v-if="showCertificateHint" class="ssl-cert-hint">
             <svg
