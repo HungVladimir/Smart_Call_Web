@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     wazo_admin_username: str = ""
     wazo_admin_password: str = ""
     wazo_tenant_uuid: str = ""
+    wazo_auth_tenant_uuid: str = ""
     wazo_provisioning_enabled: bool = True
     wazo_default_password: str = "12345"
     wazo_context: str = "internal"

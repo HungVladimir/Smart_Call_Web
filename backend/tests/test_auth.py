@@ -391,6 +391,83 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
             await self.wazo.provision(self.session, "web_fixture")
         self.assertEqual(caught.exception.detail["code"], "WAZO_IDENTITY_MISMATCH")
 
+    async def test_read_queries_use_recurse_and_never_full_view(self):
+        """Các API đọc tài nguyên dùng recurse=true, không còn view=full gây HTTP 400."""
+        await self.wazo.provision(self.session, "web_fixture")
+        reads = [request for request in self.calls
+                 if request.method == "GET" and request.url.path.startswith("/api/confd/")]
+        self.assertTrue(reads)
+        for request in reads:
+            self.assertEqual(request.url.params.get("recurse"), "true")
+            self.assertNotIn("view", request.url.params)
+            self.assertEqual(request.headers["Wazo-Tenant"], "tenant")
+
+    async def test_auth_tenant_is_independent_of_resource_target(self):
+        """Không ép tenant đích vào request xin token của admin ở tenant cha."""
+        await self.wazo.provision(self.session, "web_fixture")
+        token_requests = [request for request in self.calls
+                          if request.url.path == "/api/auth/0.1/token"]
+        self.assertNotIn("Wazo-Tenant", token_requests[0].headers)
+        self.settings.wazo_auth_tenant_uuid = "parent-tenant"
+        await self.wazo.token("fixture-admin", "fixture-secret", "fixture", user=False)
+        self.assertEqual(self.calls[-1].headers["Wazo-Tenant"], "parent-tenant")
+
+    async def test_context_user_ranges_limit_the_random_pool(self):
+        """Kho cấu hình rộng vẫn không cấp số ngoài user_ranges của context."""
+        self.settings.wazo_extension_max = 9999
+        original = self.wazo.list_items
+
+        async def with_ranges(path, token, **params):
+            items = await original(path, token, **params)
+            if path.endswith("/contexts"):
+                return [{"name": "internal", "tenant_uuid": "tenant",
+                         "user_ranges": [{"start": "2000", "end": "2001"}]}]
+            return items
+
+        self.wazo.list_items = with_ranges
+        await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(self.created_payloads[0]["lines"][0]["extensions"][0]["exten"], "2001")
+
+    async def test_pool_outside_context_ranges_does_not_create(self):
+        """Kho số không giao user_ranges phải dừng trước POST."""
+        original = self.wazo.list_items
+
+        async def disjoint_ranges(path, token, **params):
+            if path.endswith("/contexts"):
+                return [{"name": "internal", "tenant_uuid": "tenant",
+                         "user_ranges": [{"start": "1000", "end": "1999"}]}]
+            return await original(path, token, **params)
+
+        self.wazo.list_items = disjoint_ranges
+        with self.assertRaises(HTTPException) as caught:
+            await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(caught.exception.detail["code"], "WAZO_EXTENSION_POOL_EMPTY")
+        self.assertEqual(self.created_payloads, [])
+
+    async def test_same_email_in_other_tenant_is_not_linked_or_duplicated(self):
+        """Đọc đệ quy không được liên kết nhầm tài khoản ở tenant con/khác."""
+        self.users = [{"uuid": "foreign-user", "email": self.session["profile"]["email"],
+                       "tenant_uuid": "other-tenant", "enabled": True}]
+        with self.assertRaises(HTTPException) as caught:
+            await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(caught.exception.detail["code"], "WAZO_EMAIL_OTHER_TENANT")
+        self.assertEqual(self.created_payloads, [])
+
+    async def test_context_in_other_tenant_does_not_authorize_create(self):
+        """Trùng tên context ở tenant khác vẫn không được cấp user vào tenant đích."""
+        original = self.wazo.list_items
+
+        async def foreign_context(path, token, **params):
+            if path.endswith("/contexts"):
+                return [{"name": "internal", "tenant_uuid": "other-tenant"}]
+            return await original(path, token, **params)
+
+        self.wazo.list_items = foreign_context
+        with self.assertRaises(HTTPException) as caught:
+            await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(caught.exception.detail["code"], "WAZO_CONTEXT_NOT_FOUND")
+        self.assertEqual(self.created_payloads, [])
+
     async def test_sqlite_unique_identity_and_no_secret_columns(self):
         """Mapping SQLite thật không cho cùng user_uuid thuộc hai danh tính."""
         with tempfile.TemporaryDirectory() as directory:

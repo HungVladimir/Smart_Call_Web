@@ -26,7 +26,7 @@ class WazoClient:
     async def token(self, username, password, client_id, user=True):
         """Đăng nhập Wazo bằng credential riêng; token IdP không được dùng làm password."""
         response = await self.client.post(self.settings.wazo_url + "/api/auth/0.1/token",
-            headers={"Wazo-Tenant": self.settings.wazo_tenant_uuid},
+            headers={"Wazo-Tenant": self.settings.wazo_auth_tenant_uuid} if self.settings.wazo_auth_tenant_uuid else {},
             auth=BasicAuth(username, password),
             json={"backend": "wazo_user", "expiration": 3600, **(
                 {"access_type": "offline", "client_id": client_id} if user else {})})
@@ -44,7 +44,7 @@ class WazoClient:
         """Lấy đủ các trang trước khi kết luận không tồn tại; lỗi API không phải danh sách rỗng."""
         result = []
         for offset in range(0, 100000, 100):
-            data = await self.request("GET", path, token=token, params={**params, "limit": 100, "offset": offset})
+            data = await self.request("GET", path, token=token, params={"recurse": True, **params, "limit": 100, "offset": offset})
             items = data.get("items")
             if not isinstance(items, list):
                 fail("WAZO_RESPONSE_INVALID", "Danh sách Wazo không đúng định dạng.", 502)
@@ -54,48 +54,179 @@ class WazoClient:
         fail("WAZO_LIST_TOO_LARGE", "Danh sách quá lớn để cấp phát an toàn; cần thu hẹp tenant.", 502)
 
     async def find_email(self, email, token):
-        """Tìm gần đúng qua API rồi bắt buộc khớp email chính xác trong đúng tenant."""
-        users = await self.list_items("/api/confd/1.1/users", token, search=email, recurse=False, view="full")
-        matches = [u for u in users if str(u.get("email") or "").strip().casefold() == email
-                   or any(str(e.get("address") or "").casefold() == email for e in (u.get("auth") or {}).get("emails", []))]
-        if len(matches) > 1:
-            fail("WAZO_EMAIL_CONFLICT", "Có nhiều tài khoản Wazo cùng email; cần quản trị liên kết.", 409)
-        return matches[0] if matches else None
+        """Tìm đủ các trang nhưng chỉ liên kết email trong tenant đích đã cấu hình."""
+        users = await self.list_items(
+            "/api/confd/1.1/users",
+            token,
+            search=email,
+        )
+        matching_users = []
+        email_exists_in_other_tenant = False
+        for user in users:
+            user_tenant_uuid = user.get("tenant_uuid")
 
-    async def create_user(self, profile, identity, username, marker, token, lock):
-        """Kiểm tra context/template/kho số trước một POST gộp user+auth+line+extension."""
-        s = self.settings
-        contexts = await self.list_items("/api/confd/1.1/contexts", token)
-        if not any(c.get("name") == s.wazo_context for c in contexts):
-            fail("WAZO_CONTEXT_NOT_FOUND", "Context cấu hình không tồn tại. Điền tên context nội bộ thật trong backend/.env.", 409)
-        templates = await self.list_items("/api/confd/1.1/endpoints/sip/templates", token)
-        selected = []
-        for label in [x.strip() for x in s.wazo_template_labels.split(",") if x.strip()]:
-            matches = [t for t in templates if t.get("label") == label]
-            if len(matches) != 1 or not matches[0].get("uuid"):
-                fail("WAZO_TEMPLATE_NOT_FOUND", f"Không xác định được SIP template '{label}' trong tenant.", 409)
-            selected.append({"uuid": matches[0]["uuid"]})
-        if not selected:
+            contact_email = str(user.get("email") or "").strip().casefold()
+            authentication_emails = (user.get("auth") or {}).get("emails", [])
+            authentication_email_matches = any(
+                str(address.get("address") or "").strip().casefold() == email
+                for address in authentication_emails
+            )
+            if contact_email == email or authentication_email_matches:
+                if user_tenant_uuid and user_tenant_uuid != self.settings.wazo_tenant_uuid:
+                    email_exists_in_other_tenant = True
+                else:
+                    matching_users.append(user)
+
+        if len(matching_users) > 1:
+            fail("WAZO_EMAIL_CONFLICT", "Có nhiều tài khoản Wazo cùng email trong tenant đích; cần quản trị liên kết.", 409)
+        if not matching_users and email_exists_in_other_tenant:
+            fail("WAZO_EMAIL_OTHER_TENANT", "Email tồn tại ở tenant khác. Kiểm tra tenant đích; không tự liên kết hoặc tạo trùng.", 409)
+        return matching_users[0] if matching_users else None
+
+    async def create_user(self, user_profile, wazo_username, identity_marker, admin_token, provisioning_lock):
+        """Kiểm tra từng tài nguyên rồi tạo gộp user, auth, line SIP và máy lẻ trong tenant đích."""
+        settings = self.settings
+
+        # 1. Context phải đúng tên thật và thuộc tenant sẽ nhận user mới.
+        available_contexts = await self.list_items(
+            "/api/confd/1.1/contexts",
+            admin_token,
+        )
+        matching_contexts = []
+        for context in available_contexts:
+            name_matches = context.get("name") == settings.wazo_context
+            tenant_matches = context.get("tenant_uuid") in (None, settings.wazo_tenant_uuid)
+            is_enabled = context.get("enabled") is not False
+            if name_matches and tenant_matches and is_enabled:
+                matching_contexts.append(context)
+
+        if len(matching_contexts) != 1:
+            fail(
+                "WAZO_CONTEXT_NOT_FOUND",
+                "Không tìm thấy đúng context nội bộ trong tenant đích. Kiểm tra WAZO_CONTEXT là trường name và WAZO_TENANT_UUID là tenant_uuid của context.",
+                409,
+            )
+        selected_context = matching_contexts[0]
+
+        # 2. Chuyển từng label cấu hình thành UUID template thật trong tenant đích.
+        available_templates = await self.list_items(
+            "/api/confd/1.1/endpoints/sip/templates",
+            admin_token,
+        )
+        required_template_labels = [
+            label.strip()
+            for label in settings.wazo_template_labels.split(",")
+            if label.strip()
+        ]
+        selected_templates = []
+        for required_label in required_template_labels:
+            matching_templates = [
+                template
+                for template in available_templates
+                if template.get("label") == required_label
+                and template.get("tenant_uuid") in (None, settings.wazo_tenant_uuid)
+            ]
+            if len(matching_templates) != 1 or not matching_templates[0].get("uuid"):
+                fail(
+                    "WAZO_TEMPLATE_NOT_FOUND",
+                    f"Không xác định được SIP template '{required_label}' trong tenant đích.",
+                    409,
+                )
+            selected_templates.append({"uuid": matching_templates[0]["uuid"]})
+
+        if not selected_templates:
             fail("WAZO_TEMPLATE_NOT_FOUND", "Chưa cấu hình template WebRTC.", 409)
-        extensions = await self.list_items("/api/confd/1.1/extensions", token)
-        used = {str(e.get("exten")) for e in extensions if e.get("context") == s.wazo_context}
-        # Dải số do quản trị cấu hình; không đoán số điện thoại từ EP ID.
-        free = [str(n) for n in range(s.wazo_extension_min, s.wazo_extension_max + 1) if str(n) not in used]
-        if not free:
-            fail("WAZO_EXTENSION_POOL_EMPTY", "Kho máy lẻ đã hết số trống.", 409)
-        extension = secrets.choice(free)
-        payload = dict(firstname=profile["firstname"], lastname=profile["lastname"], email=profile["email"],
-            userfield=marker,
-            auth=dict(username=username, password=s.wazo_default_password, email_address=profile["email"],
-                      firstname=profile["firstname"], lastname=profile["lastname"], purpose="user"),
-            lines=[dict(context=s.wazo_context, extensions=[dict(exten=extension, context=s.wazo_context)],
-                endpoint_sip=dict(templates=selected,
-                    auth_section_options=[["username", username + "_" + extension], ["password", secrets.token_urlsafe(32)]]))])
-        if not await lock.owned():
+
+        # 3. Chỉ chọn số nằm trong cả kho cấu hình và user_ranges mà context cho phép.
+        allowed_context_ranges = []
+        for context_range in selected_context.get("user_ranges") or []:
+            try:
+                first_number = int(context_range["start"])
+                last_number = int(context_range["end"])
+            except (KeyError, TypeError, ValueError):
+                fail("WAZO_CONTEXT_RANGE_INVALID", "user_ranges của context không đúng định dạng số.", 409)
+            if first_number > last_number:
+                fail("WAZO_CONTEXT_RANGE_INVALID", "Điểm đầu user_ranges lớn hơn điểm cuối.", 409)
+            allowed_context_ranges.append((first_number, last_number))
+
+        existing_extensions = await self.list_items(
+            "/api/confd/1.1/extensions",
+            admin_token,
+        )
+        occupied_extension_numbers = {
+            str(extension.get("exten"))
+            for extension in existing_extensions
+            if extension.get("context") == settings.wazo_context
+        }
+        available_extension_numbers = []
+        configured_number_pool = range(
+            settings.wazo_extension_min,
+            settings.wazo_extension_max + 1,
+        )
+        for extension_number in configured_number_pool:
+            is_allowed_by_context = not allowed_context_ranges or any(
+                first_number <= extension_number <= last_number
+                for first_number, last_number in allowed_context_ranges
+            )
+            extension_text = str(extension_number)
+            if is_allowed_by_context and extension_text not in occupied_extension_numbers:
+                available_extension_numbers.append(extension_text)
+
+        if not available_extension_numbers:
+            fail(
+                "WAZO_EXTENSION_POOL_EMPTY",
+                "Không còn máy lẻ trống trong phần giao giữa kho số cấu hình và user_ranges của context.",
+                409,
+            )
+        selected_extension_number = secrets.choice(available_extension_numbers)
+
+        # 4. Credential đăng nhập Wazo khác credential SIP; không dùng token IdP làm mật khẩu.
+        authentication_payload = {
+            "username": wazo_username,
+            "password": settings.wazo_default_password,
+            "email_address": user_profile["email"],
+            "firstname": user_profile["firstname"],
+            "lastname": user_profile["lastname"],
+            "purpose": "user",
+        }
+        sip_username = wazo_username + "_" + selected_extension_number
+        sip_password = secrets.token_urlsafe(32)
+        sip_endpoint_payload = {
+            "templates": selected_templates,
+            "auth_section_options": [
+                ["username", sip_username],
+                ["password", sip_password],
+            ],
+        }
+        extension_payload = {
+            "exten": selected_extension_number,
+            "context": settings.wazo_context,
+        }
+        line_payload = {
+            "context": settings.wazo_context,
+            "extensions": [extension_payload],
+            "endpoint_sip": sip_endpoint_payload,
+        }
+        create_user_payload = {
+            "firstname": user_profile["firstname"],
+            "lastname": user_profile["lastname"],
+            "email": user_profile["email"],
+            "userfield": identity_marker,
+            "auth": authentication_payload,
+            "lines": [line_payload],
+        }
+
+        # 5. Giữ khóa kho số tới lúc POST; lỗi/timeout không được retry tạo user mù.
+        if not await provisioning_lock.owned():
             fail("WAZO_PROVISION_BUSY", "Khóa cấp phát đã hết hạn; vui lòng thử lại.", 409)
-        await lock.extend(180, replace_ttl=True)
-        # Không retry POST mù khi timeout: máy chủ có thể đã tạo; lượt sau tra lại email/marker.
-        return await self.request("POST", "/api/confd/1.1/users", token=token, json=payload)
+        await provisioning_lock.extend(180, replace_ttl=True)
+
+        return await self.request(
+            "POST",
+            "/api/confd/1.1/users",
+            token=admin_token,
+            json=create_user_payload,
+        )
 
     async def revoke_session(self, result, client_id):
         """Thu hồi token/refresh mới cấp nếu phiên backend bị hủy trước khi giao cho Web."""
@@ -130,7 +261,7 @@ class WazoClient:
             managed = bool(mapping and mapping["managed"]) or bool(user and user.get("userfield") == marker)
             created = False
             if not user:
-                user = await self.create_user(profile, identity, default_username, marker, admin["token"], lock)
+                user = await self.create_user(profile, default_username, marker, admin["token"], lock)
                 managed, created = True, True
             if not user.get("uuid"):
                 fail("WAZO_RESPONSE_INVALID", "Wazo chưa trả UUID user sau cấp phát.", 502)
