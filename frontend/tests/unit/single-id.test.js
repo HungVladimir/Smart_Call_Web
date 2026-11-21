@@ -36,7 +36,7 @@ function prepare() {
     if (url === '/api/auth/user_info') return response({ profile, csrf_token: 'csrf' })
     if (url === '/api/auth/wazo-session') return response(value)
     if (url === '/api/auth/logout') return response({ status: 'logged_out' })
-    if (url.endsWith('/api/confd/1.1/users/me'))
+    if (url.endsWith('/api/confd/1.1/users/peer'))
       return response({ uuid: 'peer', firstname: 'Tên Wazo cũ', department: 'Bộ phận cũ' })
     throw new Error('Unexpected fixture URL')
   })

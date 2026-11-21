@@ -220,6 +220,7 @@ class WazoClient:
             "firstname": user_profile["firstname"],
             "lastname": user_profile["lastname"],
             "email": user_profile["email"],
+            "description": " ".join(str(user_profile.get("department") or "").split()),
             "userfield": identity_marker,
             "auth": authentication_payload,
             "lines": [line_payload],
@@ -259,6 +260,16 @@ class WazoClient:
             # Chỉ sửa endpoint của user được xác nhận managed; không sửa template hoặc credential.
             await self.request("PUT", "/api/confd/1.1/endpoints/sip/" + endpoint["uuid"],
                                token=admin_token, json={"name": sip_username})
+
+    async def synchronize_department_description(self, user, profile, admin_token):
+        """Ghi bộ phận IdP vào description của user Wazo; thiếu department không xóa mô tả cũ."""
+        department = " ".join(str(profile.get("department") or "").split())
+        if not department or user.get("description") == department:
+            return
+        # Chỉ cập nhật field đã thống nhất; không gửi lại auth/password/line hay marker userfield.
+        await self.request("PUT", "/api/confd/1.1/users/" + user["uuid"],
+                           token=admin_token, json={"description": department})
+        user["description"] = department
 
     def username_from_email(self, email):
         """Lấy nguyên phần trước @ làm username auth; chuẩn hóa chữ thường theo email từ IdP."""
@@ -345,6 +356,15 @@ class WazoClient:
                 except Exception:
                     pass
                 fail("WAZO_IDENTITY_MISMATCH", "Token Wazo không thuộc tài khoản vừa liên kết.", 502)
+            # Chỉ cập nhật tài khoản cũ sau khi token đã được xác nhận đúng UUID đã liên kết.
+            try:
+                await self.synchronize_department_description(user, profile, admin["token"])
+            except Exception:
+                try:
+                    await self.revoke_session(dict(token, user_uuid=user["uuid"]), client_id)
+                except Exception:
+                    pass
+                raise
             return dict(token=token["token"], refresh_token=token.get("refresh_token", ""),
                         user_uuid=user["uuid"], host=s.wazo_url, username=username, created=created,
                         profile=profile)

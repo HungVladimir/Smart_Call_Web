@@ -408,11 +408,13 @@ export class ContactService {
         return this.currentContacts || []
       }
 
-      const contacts = mapDirectoryContacts(contactsData, {
+      let contacts = mapDirectoryContacts(contactsData, {
         favoriteIds: favorites,
         defaultSource: this.defaultSourceName || 'wazo_user',
       })
       if (contacts === null) return this.currentContacts || []
+      contacts = await this.loadContactDescriptions(contacts)
+      assertSessionContext(sessionContext)
       for (const contact of contacts.filter((item) => item.isFavorite)) {
         for (const id of [contact.id, contact.uuid, contact.rawId, contact.number]) {
           if (id && !this.favoriteIds.includes(id)) this.favoriteIds.push(id)
@@ -427,6 +429,68 @@ export class ContactService {
       logger.warn('API', 'Không thể nạp danh bạ từ máy chủ Wazo:', err.message)
       return this.currentContacts || []
     }
+  }
+
+  /** Bổ sung description trực tiếp từ Wazo khi nguồn Dird chưa trả field này, không gọi backend riêng. */
+  async loadContactDescriptions(contacts) {
+    const context = captureSessionContext()
+    const request = createSessionFetch(context)
+    const unresolved = new Set(
+      contacts
+        .filter((contact) => contact.uuid && !contact.description)
+        .map((contact) => contact.uuid),
+    )
+    if (!unresolved.size) return contacts
+    const descriptions = new Map()
+    try {
+      for (let offset = 0; offset < 10000 && unresolved.size; offset += 100) {
+        const response = await request(
+          this.authService.getHostUrl() +
+            '/api/confd/1.1/users?recurse=true&limit=100&offset=' +
+            offset,
+          {
+            headers: { 'X-Auth-Token': this.authService.getToken() },
+            signal: AbortSignal.timeout(3000),
+          },
+        )
+        if (!response.ok) {
+          logger.warn(
+            'API',
+            `Chưa đọc được description từ Confd (HTTP ${response.status}); giữ danh bạ Dird.`,
+          )
+          break
+        }
+        const data = await response.json()
+        if (!Array.isArray(data.items)) break
+        for (const user of data.items) {
+          if (!unresolved.has(user.uuid)) continue
+          if (typeof user.description === 'string')
+            descriptions.set(
+              user.uuid,
+              user.description.normalize('NFC').trim().replace(/\s+/g, ' '),
+            )
+          unresolved.delete(user.uuid)
+        }
+        if (
+          data.items.length < 100 ||
+          (Number.isInteger(data.total) && offset + data.items.length >= data.total)
+        )
+          break
+      }
+    } catch (error) {
+      if (!isSessionContextCurrent(context)) throw error
+      logger.warn('API', 'Không bổ sung được description; giữ dữ liệu Wazo Dird hiện tại.')
+    }
+    assertSessionContext(context)
+    return contacts.map((contact) =>
+      descriptions.has(contact.uuid)
+        ? {
+            ...contact,
+            description: descriptions.get(contact.uuid),
+            dept: descriptions.get(contact.uuid),
+          }
+        : contact,
+    )
   }
 
   /** Bổ sung phòng ban từ danh bạ đã xác nhận; nhận diện bằng UUID hoặc máy lẻ. */

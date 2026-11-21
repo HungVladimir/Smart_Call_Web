@@ -42,6 +42,11 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
         item.lines?.[0]?.extensions?.[0]?.exten ||
         '',
     )
+    // description là nguồn phòng ban chính; userfield chỉ giữ liên kết SSO kỹ thuật.
+    const description = String(item.description || '')
+      .normalize('NFC')
+      .trim()
+      .replace(/\s+/g, ' ')
     return {
       id,
       rawId,
@@ -50,8 +55,8 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
       number,
       source: item.source || item.backend || defaultSource,
       email: item.email || item.emails?.[0]?.email || '',
-      dept:
-        item.department || item.society || item.title || item.userfield || item.description || '',
+      description,
+      dept: description || item.department || item.society || item.title || '',
       status: 'offline',
       statusLabel: 'Ngoại tuyến',
       isMobileApp: false,

@@ -300,6 +300,11 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
             if path == "/api/confd/1.1/users/deleted":
                 return httpx.Response(404)
             if path == "/api/confd/1.1/users/u1":
+                if method == "PUT":
+                    payload = json.loads(request.content)
+                    assert set(payload) == {"description"}
+                    self.users[0].update(payload)
+                    return httpx.Response(204)
                 return httpx.Response(200, json=self.users[0])
             if path.endswith("/contexts"):
                 return httpx.Response(200, json={"items": [{"name": self.context}]})
@@ -329,6 +334,7 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["user_uuid"], "u1")
         self.assertTrue(result["created"])
         body = self.created_payloads[0]
+        self.assertEqual(body["description"], "D")
         self.assertEqual(body["auth"]["password"], "12345")
         self.assertEqual(body["auth"]["email_address"], self.session["profile"]["email"])
         self.assertEqual(body["lines"][0]["extensions"][0]["exten"], "2001")
@@ -409,7 +415,7 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.store.links[(self.identity, "tenant")] = dict(user_uuid="u1", username="sso_old", managed=True)
         self.users = [{"uuid": "u1", "enabled": True}]
         await self.wazo.provision(self.session, "web_fixture")
-        writes = [request for request in self.calls if request.method == "PUT"]
+        writes = [request for request in self.calls if request.method == "PUT" and "/endpoints/sip/" in request.url.path]
         self.assertEqual(len(writes), 1)
         self.assertEqual(json.loads(writes[0].content), {"name": "sip-employee"})
 
@@ -472,7 +478,8 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["username"], "existing_user")
         self.assertFalse(result["created"])
         self.assertEqual(self.created_payloads, [])
-        self.assertFalse(any(r.method in ("PUT", "PATCH") for r in self.calls))
+        writes = [json.loads(request.content) for request in self.calls if request.method == "PUT"]
+        self.assertEqual(writes, [{"description": "D"}])
 
     async def test_email_lookup_failure_does_not_become_create(self):
         """HTTP 403/timeout khi tra cứu phải dừng, không được hiểu là chưa có tài khoản."""
@@ -570,6 +577,60 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
             await self.wazo.provision(self.session, "web_fixture")
         self.assertEqual(caught.exception.detail["code"], "WAZO_CONTEXT_NOT_FOUND")
         self.assertEqual(self.created_payloads, [])
+
+    async def test_existing_single_id_login_updates_only_description(self):
+        """Tài khoản đã tạo cũng nhận department mới, giữ username/password/line."""
+        await self.wazo.provision(self.session, "web_fixture")
+        self.session["profile"]["department"] = "  AI   Transformation Part(SDV) "
+        self.calls.clear()
+        await self.wazo.provision(self.session, "web_fixture")
+        updates = [request for request in self.calls if request.method == "PUT" and request.url.path.endswith("/users/u1")]
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(json.loads(updates[0].content), {"description": "AI Transformation Part(SDV)"})
+        self.assertEqual(updates[0].headers["Wazo-Tenant"], "tenant")
+        self.assertEqual(self.users[0]["description"], "AI Transformation Part(SDV)")
+        self.assertEqual(len(self.created_payloads), 1)
+
+    async def test_unchanged_department_does_not_write(self):
+        """Đăng nhập lặp lại không cần PUT description đã đúng."""
+        await self.wazo.synchronize_department_description({"uuid": "u1", "description": "D"}, self.session["profile"], "admin-token")
+        self.assertEqual(self.calls, [])
+
+    async def test_missing_department_does_not_erase_description(self):
+        """IdP thiếu bộ phận thì giữ nội dung mô tả đang có trên Wazo."""
+        await self.wazo.synchronize_department_description({"uuid": "u1", "description": "Existing"}, {"department": "  "}, "admin-token")
+        self.assertEqual(self.calls, [])
+
+    async def test_description_update_failure_revokes_new_user_token(self):
+        """Không trả token như đã hoàn tất khi PUT bị từ chối; thu hồi token vừa xin."""
+        await self.wazo.provision(self.session, "web_fixture")
+        self.session["profile"]["department"] = "Changed"
+        original = self.wazo.request
+        async def reject_update(method, path, **kwargs):
+            if method == "PUT" and path.endswith("/users/u1"):
+                raise HTTPException(502, detail={"code": "WAZO_REQUEST_FAILED"})
+            return await original(method, path, **kwargs)
+        self.wazo.request = reject_update
+        with self.assertRaises(HTTPException):
+            await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(self.users[0]["description"], "D")
+        self.assertTrue(any(request.method == "DELETE" and request.url.path.endswith("/token/user-token") for request in self.calls))
+
+    async def test_mismatched_user_token_does_not_update_existing_description(self):
+        """Không sửa department nếu token xin được không thuộc UUID đang liên kết."""
+        self.settings.wazo_existing_password_login = True
+        self.users = [{"uuid": "u1", "email": self.session["profile"]["email"], "description": "Old",
+                       "enabled": True, "auth": {"username": "employee"}}]
+        original = self.wazo.token
+        async def wrong_token(username, password, client_id, user=True):
+            if not user:
+                return await original(username, password, client_id, user=False)
+            return {"token": "wrong", "metadata": {"pbx_user_uuid": "different-user"}}
+        self.wazo.token = wrong_token
+        with self.assertRaises(HTTPException):
+            await self.wazo.provision(self.session, "web_fixture")
+        self.assertFalse(any(request.method == "PUT" for request in self.calls))
+        self.assertEqual(self.users[0]["description"], "Old")
 
     async def test_sqlite_replace_mapping_requires_expected_uuid(self):
         """DB thật chỉ thay UUID đã đọc; concurrent edit không bị ghi đè."""

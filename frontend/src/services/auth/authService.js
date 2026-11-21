@@ -1033,10 +1033,13 @@ export class AuthService {
       request = createSessionFetch(context)
     let confdUser = {}
     try {
-      const response = await request(this.getHostUrl() + '/api/confd/1.1/users/me', {
-        headers: { 'X-Auth-Token': this.getToken() },
-        signal: AbortSignal.timeout(5000),
-      })
+      const response = await request(
+        this.getHostUrl() + '/api/confd/1.1/users/' + encodeURIComponent(session.uuid),
+        {
+          headers: { 'X-Auth-Token': this.getToken() },
+          signal: AbortSignal.timeout(5000),
+        },
+      )
       // Chỉ sử dụng response HTTP thành công; mã lỗi đi qua nhánh xử lý thất bại thay vì báo thành
       // công giả.
       if (response.ok) confdUser = await response.json()
@@ -1050,7 +1053,7 @@ export class AuthService {
     const profile = mapUserProfile(session, confdUser, username)
     if (this.singleIdProfile) {
       profile.displayName = this.singleIdProfile.name || profile.displayName
-      profile.department = this.singleIdProfile.department || ''
+      profile.department = this.singleIdProfile.department || profile.department
     }
     Object.assign(userSessionState, profile)
     localStorage.setItem('smartcall_user_uuid', profile.userUuid)

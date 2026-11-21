@@ -240,3 +240,24 @@ Mapping có UUID trả 404 được tìm lại qua email rồi tạo nếu cần
 Công cụ backend/manage_identity_db.py hỗ trợ list/add/delete, đọc đúng Settings.database_path, lọc tenant/username, hiển thị issuer/sub riêng; INSERT không ghi đè và DELETE có tenant+UUID. Tự backup bằng SQLite API trước ghi. Công cụ chỉ chỉnh DB, không gọi API Wazo/IdP/Redis; cần dừng backend khi sửa để test. Xem backend/IDENTITY_DB_GUIDE.md để biết lệnh đầy đủ và ý nghĩa managed.
 
 Kiểm chứng: 38/38 test backend, 178/178 test frontend (17 file), lint/architecture/build/format:check/pip check đạt. Có test CAS SQLite, khôi phục UUID 404, lỗi 403 không tạo lại, payload name và sửa endpoint legacy không sửa credential, CLI backup/unique/delete đúng tenant, reconnect gộp/hủy/health trả muộn và SIP_NOT_READY. Build còn cảnh báo chunk lớn đã có. Không gọi server thật; giữ nguyên backend/main.py do người dùng tự sửa.
+
+
+## Thay luồng department bằng description Wazo, bỏ avatar — 21/11/2026
+
+Theo yêu cầu mới, commit 03397d2 đảo ngược toàn bộ commit 0f2dbdd (hồ sơ dùng chung/avatar). Đã bỏ EmployeeAvatar, proxy ảnh, cấu hình employee_photo_url, API directory-profiles và code lưu/đọc bảng directory_profiles. Giữ nguyên các sửa SIP, username email, phục hồi mapping và công cụ SQLite từ các commit trước. Nếu máy đã có bảng directory_profiles do chạy bản cũ, code mới không dùng bảng đó; không tự DROP dữ liệu đã tồn tại. Bảng identities vẫn phục vụ liên kết Single ID–Wazo.
+
+Luồng mới: department từ hồ sơ IdP đã xác thực được chuẩn hóa khoảng trắng và gán vào description của user Confd. Tài khoản tạo mới gửi description trong cùng POST /api/confd/1.1/users. Tài khoản đã có được PUT /api/confd/1.1/users/<uuid> với duy nhất JSON {"description": "<department từ IdP>"}, sau khi token đăng nhập được xác nhận đúng UUID liên kết. Chỉ ghi khi department có dữ liệu và khác description hiện tại; không xóa mô tả cũ nếu IdP thiếu department. Nếu PUT thất bại, thu hồi token user vừa cấp và trả lỗi, không báo đã hoàn tất. Đồng bộ department có thể thay nội dung description cũ vì field này nay được quy ước là bộ phận cho tài khoản đăng nhập Single ID; không đụng username/password/line/userfield.
+
+API được dùng là Confd /api/confd/1.1/users/<uuid>, vì schema User có description; không tự suy rằng /api/auth/user/uuid là cùng tài nguyên hoặc đồng bộ sang Auth. Khi kiểm tra Postman nên GET chính endpoint Confd này với X-Auth-Token và Wazo-Tenant đúng. Trường userfield tiếp tục là marker liên kết, không phải phòng ban.
+
+Frontend ưu tiên description trong mapper contact và hồ sơ đăng nhập, không dùng userfield làm department. Vẫn nhận alias department/society/title từ nguồn Dird cũ khi description chưa có. Nếu Dird chưa trả description, ContactService đọc danh sách user Confd trực tiếp bằng token user, có recurse=true và phân trang 100, ghép theo UUID; dừng khi đã tìm đủ liên hệ cần bổ sung hoặc hết dữ liệu (giới hạn 10.000 user cho lượt đọc). Nếu không có quyền Confd, giữ danh bạ Dird và ghi log cảnh báo; không dùng admin token ở Web. Muốn không phát thêm lượt GET Confd, cấu hình nguồn Dird trả description trực tiếp. Search và chip phòng ban tiếp tục dùng contact.dept đã ánh xạ description. Badge chọn tất cả đếm đúng toàn bộ danh bạ đang hiện.
+
+Cách test:
+1. Pull nhánh refactor, khởi động lại backend/frontend và đăng nhập Single ID lại.
+2. Trong Postman: GET https://<wazo>/api/confd/1.1/users/<UUID> với X-Auth-Token và Wazo-Tenant; description phải là department IdP, ví dụ AI Transformation Part(SDV).
+3. Dùng Web/tài khoản khác lấy danh bạ, lọc hoặc tìm theo bộ phận. Dữ liệu nằm trên Wazo nên không phụ thuộc dùng chung file SQLite hồ sơ của bản đã bỏ. App muốn có department thì đọc description từ user Confd hoặc nguồn Dird có field này.
+4. Tài khoản cũ chưa đăng nhập Single ID lại chưa được cập nhật tự động hàng loạt. Avatar quay về chữ viết tắt như trước.
+
+Kiểm chứng: 43/43 test backend, 185/185 test frontend (18 file), lint/architecture/build/format:check/pip check đạt. Có test description tạo mới, cập nhật tài khoản cũ, bỏ qua trùng/rỗng, token sai không ghi, lỗi PUT thu hồi token, mapper/search/filter và fallback Confd có guard phiên. Chưa gọi ghi tài khoản thật trên Wazo công ty trong lượt này. Build còn cảnh báo chunk lớn đã có. Đoạn uvicorn người dùng thêm trong backend/main.py được giữ ngoài commit.
+
+Nguồn API: https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/wazo_confd/plugins/user/schema.py (description) và https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/wazo_confd/helpers/restful.py (PUT partial).

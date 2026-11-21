@@ -28,11 +28,7 @@ export function useContactFilters({ getContacts, isAvailableForCall, getCurrentE
 
   /** Tính số lượng hiển thị trên tab phòng ban theo phòng ban đang được chọn. */
   const departmentTabCount = computed(() => {
-    if (selectedDepartment.value === 'all') {
-      return (
-        getContacts().filter((c) => Boolean((c.dept || '').trim())).length || getContacts().length
-      )
-    }
+    if (selectedDepartment.value === 'all') return getContacts().length
     return getDepartmentCount(selectedDepartment.value)
   })
 

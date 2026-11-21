@@ -26,12 +26,11 @@ export function mapUserProfile(session, confdUser = {}, username = '') {
     extension: String(sdkNumber || confdUser.lines?.[0]?.extensions?.[0]?.exten || ''),
     displayName: sdkName || confdName || displayName || username,
     department:
+      confdUser.description ||
       sdkProfile.department ||
       confdUser.department ||
       confdUser.society ||
       confdUser.title ||
-      confdUser.userfield ||
-      confdUser.description ||
       '',
   }
 }
