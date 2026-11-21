@@ -17,7 +17,10 @@
       <button v-if="profile && errorMessage" :disabled="working" @click="connectWazo">
         Thử kết nối Wazo lại
       </button>
-      <button :disabled="working" @click="restartLogin">Đăng nhập Single ID lại</button>
+      <button v-if="profile" :disabled="working" @click="logoutSingleId">
+        Đăng xuất Single ID / Đổi tài khoản
+      </button>
+      <button v-else :disabled="working" @click="restartLogin">Đăng nhập Single ID</button>
       <button :disabled="working" @click="returnToLogin">Về trang đăng nhập</button>
     </div>
   </main>
@@ -55,6 +58,20 @@ async function connectWazo() {
     if (!active) return
     status.value = 'Đã nhận hồ sơ Single ID; chưa hoàn tất kết nối Wazo.'
     errorMessage.value = error.message
+  } finally {
+    working.value = false
+  }
+}
+
+/** Kết thúc SSO; lỗi backend vẫn giữ hồ sơ để người dùng thử lại. */
+async function logoutSingleId() {
+  if (working.value) return
+  working.value = true
+  errorMessage.value = ''
+  try {
+    await authService.logoutSingleId()
+  } catch (error) {
+    if (active) errorMessage.value = error.message
   } finally {
     working.value = false
   }

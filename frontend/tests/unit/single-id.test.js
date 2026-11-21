@@ -119,3 +119,24 @@ it('logout hủy cookie backend kể cả khi scope SDK đã bị vô hiệu hó
   )
   expect(app.authService.singleIdProfile).toBeNull()
 })
+
+it('logout SSO yêu cầu handoff qua CSRF rồi điều hướng cửa sổ; không redirect URL tùy ý', async () => {
+  prepare()
+  app.authService.singleIdCsrf = 'csrf'
+  fetch.mockResolvedValue(response({ redirect_url: 'https://other.fixture' }))
+  await expect(app.authService.logoutSingleId()).rejects.toThrow('không hợp lệ')
+  const request = fetch.mock.calls.find(([url]) => url === '/api/auth/idp-logout')
+  expect(request[1].headers['X-CSRF-Token']).toBe('csrf')
+  expect(app.authService.session).not.toBeNull()
+})
+
+it('logout SSO thành công dọn SDK và điều hướng tới handoff cùng origin', async () => {
+  prepare()
+  app.authService.singleIdCsrf = 'csrf'
+  fetch.mockResolvedValue(response({ redirect_url: '/api/auth/idp-logout/continue' }))
+  const navigate = vi.spyOn(window.location, 'assign').mockImplementation(() => {})
+  await app.authService.logoutSingleId()
+  expect(navigate).toHaveBeenCalledWith('/api/auth/idp-logout/continue')
+  expect(app.authService.session).toBeNull()
+  expect(localStorage.getItem('smartcall_wazo_token')).toBeNull()
+})

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     idp_client_secret: str = ""
     idp_discovery_url: str = ""
     idp_jwks_uri: str = ""
+    idp_logout_redirect: str = ""
     idp_scope: str = "openid"
     idp_pkce_enabled: bool = True
     idp_require_verified_email: bool = False
@@ -49,6 +50,10 @@ class Settings(BaseSettings):
             raise ValueError("WAZO_URL phải dùng HTTPS.")
         if not 1 <= self.wazo_extension_min <= self.wazo_extension_max <= 999999:
             raise ValueError("Dải máy lẻ không hợp lệ.")
+        if self.idp_logout_redirect:
+            target = urlsplit(self.idp_logout_redirect)
+            if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
+                raise ValueError("IDP_LOGOUT_REDIRECT phải cùng origin với Web.")
         self.public_origin = self.public_origin.rstrip("/")
         self.wazo_url = self.wazo_url.rstrip("/")
         return self

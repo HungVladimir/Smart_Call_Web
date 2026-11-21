@@ -7,6 +7,7 @@ const auth = vi.hoisted(() => ({
   completeSingleIdLogin: vi.fn(),
   beginSingleIdLogin: vi.fn(),
   endSingleIdSession: vi.fn(),
+  logoutSingleId: vi.fn(),
   cancelSingleIdLogin: vi.fn(),
 }))
 vi.mock('@/services/index.js', () => ({ authService: auth }))
@@ -76,4 +77,21 @@ it('rời callback khi chờ hủy tác vụ, không điều hướng khi kết 
   await nextTick()
   await flushUi()
   expect(localStorage.getItem('smartcall_logged_in')).toBeNull()
+})
+
+it('callback có nút logout SSO để đổi tài khoản, lỗi được giữ trên trang', async () => {
+  auth.completeSingleIdLogin.mockRejectedValue(new Error('Chưa cấu hình Wazo'))
+  auth.logoutSingleId.mockRejectedValue(new Error('IdP logout chưa sẵn sàng'))
+  wrapper = mountComponent(CallbackView, { plugins: [router] })
+  await flushUi()
+  const button = [...wrapper.element.querySelectorAll('button')].find((b) =>
+    b.textContent.includes('Đăng xuất Single ID'),
+  )
+  expect(button).toBeTruthy()
+  button.click()
+  await flushUi()
+  expect(auth.logoutSingleId).toHaveBeenCalledTimes(1)
+  expect(auth.beginSingleIdLogin).not.toHaveBeenCalled()
+  expect(wrapper.element.textContent).toContain('IdP logout chưa sẵn sàng')
+  expect(router.currentRoute.value.path).toBe('/callback')
 })

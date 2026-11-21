@@ -141,6 +141,29 @@ def create_app(settings=None):
             raise
         return result
 
+    @app.post("/api/auth/idp-logout")
+    async def prepare_idp_logout(request: Request):
+        """CSRF xác nhận logout; handoff chỉ chứa ticket, không trả ID token trong JSON."""
+        session = await require_session(request, csrf=True)
+        location = await app.state.oidc.logout_location(session)
+        ticket = secrets.token_urlsafe(48)
+        await app.state.store.put("logout", ticket, {"location": location}, 60)
+        await app.state.store.delete("sessions", request.cookies.get("smartcall_session"))
+        response = JSONResponse({"redirect_url": "/api/auth/idp-logout/continue"})
+        response.delete_cookie("smartcall_session", path="/api/auth")
+        response.set_cookie("smartcall_logout", ticket, httponly=True, secure=settings.secure_cookie, samesite="lax", max_age=60, path="/api/auth/idp-logout")
+        return response
+
+    @app.get("/api/auth/idp-logout/continue")
+    async def continue_idp_logout(request: Request):
+        """Điều hướng cửa sổ tới IdP qua handoff GETDEL; không logout IdP bằng fetch."""
+        handoff = await app.state.store.get("logout", request.cookies.get("smartcall_logout"), consume=True)
+        if not handoff:
+            fail("IDP_LOGOUT_EXPIRED", "Yêu cầu logout hết hạn hoặc đã sử dụng. Vui lòng thử lại.", 400)
+        response = RedirectResponse(handoff["location"], status_code=302)
+        response.delete_cookie("smartcall_logout", path="/api/auth/idp-logout")
+        return response
+
     @app.post("/api/auth/logout")
     async def logout(request: Request):
         """Hủy phiên SmartCall backend; SDK frontend phụ trách thu hồi phiên Wazo của nó."""

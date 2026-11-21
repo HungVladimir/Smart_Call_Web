@@ -25,4 +25,5 @@ window.addEventListener('unhandledrejection', (event) => {
 
 app.use(router)
 
-app.mount('#app')
+// Chờ router nạp callback trước khi App kiểm tra phiên.
+router.isReady().then(() => app.mount('#app'))

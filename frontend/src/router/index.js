@@ -16,6 +16,7 @@ const getFirstAvailableRoute = () => {
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    { path: '/logout', name: 'SingleIdLoggedOut', redirect: '/login' },
     {
       path: '/callback',
       name: 'SingleIdCallback',

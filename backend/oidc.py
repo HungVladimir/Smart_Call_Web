@@ -58,6 +58,17 @@ class OidcClient:
         separator = "&" if "?" in metadata["authorization_endpoint"] else "?"
         return state, transaction, metadata["authorization_endpoint"] + separator + urlencode(params)
 
+    async def logout_location(self, session):
+        """Dùng end_session_endpoint theo mẫu; ID token chỉ giữ trong Redis/backend."""
+        metadata = await self.metadata()
+        endpoint = metadata.get("end_session_endpoint", "")
+        if urlsplit(endpoint).scheme != "https":
+            fail("IDP_LOGOUT_NOT_CONFIGURED", "Discovery chưa có end_session_endpoint HTTPS hợp lệ.", 503)
+        if not session.get("id_token_hint"):
+            fail("IDP_LOGOUT_HINT_MISSING", "Phiên cũ chưa có dữ liệu logout. Bấm đăng nhập Single ID một lần rồi đăng xuất lại.", 409)
+        params = dict(id_token_hint=session["id_token_hint"], post_logout_redirect_uri=self.settings.idp_logout_redirect or self.settings.public_origin + "/logout")
+        return endpoint + ("&" if "?" in endpoint else "?") + urlencode(params)
+
     async def signing_key(self, kid):
         """Chọn khóa theo kid và nạp lại khi IdP rotate; không giữ cố định một khóa."""
         metadata = await self.metadata()
@@ -117,5 +128,5 @@ class OidcClient:
         ttl = min(s.session_ttl, int(claims["exp"] - time.time()))
         if ttl <= 0:
             fail("ID_TOKEN_EXPIRED", "Phiên IdP đã hết hạn.", 401)
-        return dict(profile=profile, identity=claims["iss"] + "\0" + claims["sub"],
+        return dict(id_token_hint=tokens["id_token"], profile=profile, identity=claims["iss"] + "\0" + claims["sub"],
                     expires_at=int(time.time()) + ttl, csrf_token=secrets.token_urlsafe(32)), ttl

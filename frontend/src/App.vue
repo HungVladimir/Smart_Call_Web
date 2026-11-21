@@ -215,7 +215,17 @@ const handleToastEvent = (event) => {
 }
 
 // --- Thao tác người dùng ---
-const handleLogout = () => {
+const handleLogout = async () => {
+  if (localStorage.getItem('smartcall_auth_method') === 'singleid') {
+    showSettings.value = false
+    try {
+      await authService.logoutSingleId()
+      isLoggedIn.value = false
+    } catch (error) {
+      showToast(error.message || 'Không đăng xuất được Single ID.', 'warning')
+    }
+    return
+  }
   authService.logout()
   localStorage.setItem('smartcall_logged_in', 'false')
   isLoggedIn.value = false

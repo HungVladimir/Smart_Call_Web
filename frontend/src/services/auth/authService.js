@@ -227,6 +227,19 @@ export class AuthService {
     return data
   }
 
+  /** Đăng xuất cả IdP bằng điều hướng cửa sổ để có thể nhập tài khoản khác. */
+  async logoutSingleId() {
+    const csrf = this.singleIdCsrf || (await requestSingleId('user_info')).csrf_token
+    const data = await requestSingleId('idp-logout', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrf },
+    })
+    if (data.redirect_url !== '/api/auth/idp-logout/continue')
+      throw new Error('Đường dẫn logout không hợp lệ.')
+    await this.logout({ preserveSingleId: true })
+    window.location.assign(data.redirect_url)
+  }
+
   /** Hủy phiên backend có cookie/CSRF; gọi trước khi dọn scope của Web. */
   async endSingleIdSession() {
     let csrf = this.singleIdCsrf

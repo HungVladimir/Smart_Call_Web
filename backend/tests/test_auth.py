@@ -111,7 +111,7 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path == "/.well-known/openid-configuration":
                 return httpx.Response(200, json=dict(issuer=self.settings.idp_issuer,
                     authorization_endpoint="https://idp.fixture/authorize",
-                    token_endpoint="https://idp.fixture/token", jwks_uri="https://idp.fixture/jwks"))
+                    token_endpoint="https://idp.fixture/token", jwks_uri="https://idp.fixture/jwks", end_session_endpoint="https://idp.fixture/end-session"))
             if request.url.path == "/jwks":
                 return httpx.Response(200, json={"keys": [PUBLIC]})
             if request.url.path == "/token":
@@ -193,6 +193,34 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.web.get("/api/auth/callback", params={"state": state, "code": "one-time"})
                 self.assertIn(response.status_code, (401, 403), response.text)
                 self.assertIsNone(self.web.cookies.get("smartcall_session"))
+
+    async def test_idp_logout_handoff_is_one_use_and_does_not_return_id_token_in_json(self):
+        """Logout xác nhận CSRF rồi redirect cửa sổ qua ticket, không phát token qua API JSON."""
+        info = await self.authenticated()
+        headers = {"Origin": self.settings.public_origin, "X-CSRF-Token": info["csrf_token"]}
+        bad = await self.web.post("/api/auth/idp-logout", headers={"Origin": self.settings.public_origin})
+        self.assertEqual(bad.status_code, 403)
+        response = await self.web.post("/api/auth/idp-logout", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("id_token", response.text)
+        self.assertEqual((await self.web.get("/api/auth/user_info")).status_code, 401)
+        redirect = await self.web.get(response.json()["redirect_url"])
+        self.assertEqual(redirect.status_code, 302)
+        target = urlsplit(redirect.headers["location"])
+        self.assertEqual(target.netloc, "idp.fixture")
+        self.assertEqual(target.path, "/end-session")
+        params = parse_qs(target.query)
+        self.assertIn("id_token_hint", params)
+        self.assertEqual(params["post_logout_redirect_uri"], [self.settings.public_origin + "/logout"])
+        self.assertEqual((await self.web.get("/api/auth/idp-logout/continue")).status_code, 400)
+
+    async def test_idp_logout_missing_endpoint_keeps_session_for_retry(self):
+        """Không giả báo logout thành công nếu IdP không công bố endpoint."""
+        info = await self.authenticated()
+        self.oidc.metadata_cache.pop("end_session_endpoint")
+        response = await self.web.post("/api/auth/idp-logout", headers={"Origin": self.settings.public_origin, "X-CSRF-Token": info["csrf_token"]})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual((await self.web.get("/api/auth/user_info")).status_code, 200)
 
     async def test_cached_profile_still_expires(self):
         """Có cache profile không vượt kiểm tra hạn phiên."""
