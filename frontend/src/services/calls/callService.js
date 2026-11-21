@@ -36,6 +36,7 @@ export class CallService {
     })
     this.connectionGeneration = 0
     this.connectPromise = null
+    this.phoneReconnectTask = null
     this.disconnectionPromise = null
     this.listenerGeneration = 0
     this.dialingAttempt = 0
@@ -121,7 +122,7 @@ export class CallService {
         // đến muộn sau hủy/đổi phiên.
         if (generation !== this.connectionGeneration) throw new Error('Kết nối thoại đã bị hủy.')
         this.phoneAdapter.disableSdkAutomaticHold()
-        logger.success(
+        logger.info(
           'SIP',
           'Đã gửi lệnh kết nối thoại; trạng thái sẵn sàng do ON_REGISTERED quyết định.',
         )
@@ -144,8 +145,52 @@ export class CallService {
     return this.connectPromise
   }
 
+  /** Hủy cả timer và quyền chạy tiếp của reconnect đang chờ kiểm tra phiên. */
+  cancelPhoneReconnect() {
+    if (this.phoneReconnectTask) clearTimeout(this.phoneReconnectTask.timer)
+    this.phoneReconnectTask = null
+  }
+
+  /** Gộp các UNREGISTERED liên tiếp thành một lần thử lại, không nhân timer với retry SDK. */
+  schedulePhoneReconnect() {
+    if (
+      this.phoneReconnectTask ||
+      !this.authService.isAuthenticated() ||
+      this.authService.isSessionRevoked
+    )
+      return
+    const context = captureSessionContext()
+    const task = { timer: null }
+    this.phoneReconnectTask = task
+    task.timer = setTimeout(async () => {
+      try {
+        const isValid = await this.authService.verifySessionHealth()
+        // Timer/HTTP cũ không được kết nối lại sau logout, REGISTERED hoặc thay phiên.
+        if (this.phoneReconnectTask !== task || !isSessionContextCurrent(context)) return
+        if (!isValid && this.authService.refreshTokenRevoked) {
+          this.authService.handleSessionRevocation()
+          return
+        }
+        if (
+          !this.authService.isAuthenticated() ||
+          this.authService.isSessionRevoked ||
+          callState.isRegistered
+        )
+          return
+        logger.info('SIP', 'Đang thử kết nối lại WebRTC Phone sau khi mất đăng ký...')
+        await this.connect()
+      } catch (error) {
+        if (this.phoneReconnectTask === task && isSessionContextCurrent(context))
+          logger.warn('SIP', 'Không thể kết nối lại WebRTC Phone:', error.message)
+      } finally {
+        if (this.phoneReconnectTask === task) this.phoneReconnectTask = null
+      }
+    }, 5000)
+  }
+
   /** Hủy kết nối đang chờ, gỡ listener và dừng tài nguyên âm thanh. */
   disconnect() {
+    this.cancelPhoneReconnect()
     this.connectionGeneration += 1
     this.connectPromise = null
     this.cancelPendingDial()
@@ -740,9 +785,9 @@ export class CallService {
       // muộn sau hủy/đổi phiên.
       if (callEpoch !== this.callGeneration || callState.activeCall?.callId !== callId)
         throw new Error('Cuộc gọi đã kết thúc.')
-      logger.success(
+      logger.info(
         'CALL',
-        `Tín hiệu cuộc gọi tới ${extension} đã được phát đi. Session ID: ${this.currentCallSession?.sipCallId || 'N/A'}`,
+        `Đã tạo yêu cầu gọi tới ${extension}; đang chờ tổng đài phản hồi. Session ID: ${this.currentCallSession?.sipCallId || 'N/A'}`,
       )
       return this.currentCallSession
     } catch (err) {
@@ -953,6 +998,11 @@ export class CallService {
     // Dùng tác vụ đang chờ hoặc chặn thao tác trùng để tránh tạo nhiều request/SDK session song
     // song.
     if (this.isDialing) return reject('THROTTLED', 'Yêu cầu gọi trước đang được xử lý.')
+    if (!callState.isRegistered)
+      return reject(
+        'SIP_NOT_READY',
+        'Thoại chưa kết nối với tổng đài. Vui lòng chờ đăng ký SIP thành công.',
+      )
     if (this.hasActiveCall())
       return reject('BUSY_LOCAL', 'Vui lòng kết thúc cuộc gọi hiện tại trước.')
     const targetExtension = normalizeExtension(extension)
@@ -985,6 +1035,8 @@ export class CallService {
       if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
         return reject('CANCELED')
       if (this.hasActiveCall()) return reject('BUSY_LOCAL', 'Đã có cuộc gọi khác đang hoạt động.')
+      if (!callState.isRegistered)
+        return reject('SIP_NOT_READY', 'Kết nối thoại vừa bị ngắt. Vui lòng thử lại sau.')
       const localCallId = 'call-' + crypto.randomUUID()
       callState.activeCall = {
         session: null,

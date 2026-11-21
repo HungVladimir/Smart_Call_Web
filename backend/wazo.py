@@ -11,12 +11,14 @@ class WazoClient:
         """Nhận HTTP client và store; không gọi máy chủ cho tới khi người dùng hoàn tất SSO."""
         self.settings, self.client, self.store = settings, client, store
 
-    async def request(self, method, path, *, token=None, **kwargs):
+    async def request(self, method, path, *, token=None, allow_not_found=False, **kwargs):
         """Áp dụng tenant/header cố định và chuyển lỗi thành thông báo không lộ secret."""
         headers = {"Accept": "application/json", "Wazo-Tenant": self.settings.wazo_tenant_uuid}
         if token:
             headers["X-Auth-Token"] = token
         response = await self.client.request(method, self.settings.wazo_url + path, headers=headers, **kwargs)
+        if response.status_code == 404 and allow_not_found:
+            return None
         # Username do email quyết định: để Wazo chặn trùng, không tự thêm hậu tố hay chiếm tài khoản cũ.
         if response.status_code == 409 and method == "POST" and path == "/api/confd/1.1/users":
             fail("WAZO_CREATE_CONFLICT",
@@ -197,6 +199,8 @@ class WazoClient:
         sip_username = wazo_username + "_" + selected_extension_number
         sip_password = secrets.token_urlsafe(32)
         sip_endpoint_payload = {
+            # SDK dùng auth username làm SIP URI; đồng bộ tên PJSIP để nhận diện endpoint/AoR.
+            "name": sip_username,
             "templates": selected_templates,
             "auth_section_options": [
                 ["username", sip_username],
@@ -241,6 +245,21 @@ class WazoClient:
         finally:
             await self.client.delete(self.settings.wazo_url + "/api/auth/0.1/token/" + result["token"])
 
+    async def repair_managed_sip_name(self, user_uuid, admin_token):
+        """Đồng bộ tên endpoint cũ do SmartCall quản lý, giữ nguyên password và các option SIP."""
+        endpoint = await self.request(
+            "GET", f"/api/confd/1.1/users/{user_uuid}/lines/main/associated/endpoints/sip",
+            token=admin_token, params={"view": "merged"},
+        )
+        sip_username = next((value for key, value in endpoint.get("auth_section_options", [])
+                             if key == "username"), None)
+        if not endpoint.get("uuid") or not sip_username:
+            fail("WAZO_SIP_CONFIG_INVALID", "Line chính chưa có endpoint UUID hoặc SIP username hợp lệ.", 409)
+        if endpoint.get("name") != sip_username:
+            # Chỉ sửa endpoint của user được xác nhận managed; không sửa template hoặc credential.
+            await self.request("PUT", "/api/confd/1.1/endpoints/sip/" + endpoint["uuid"],
+                               token=admin_token, json={"name": sip_username})
+
     def username_from_email(self, email):
         """Lấy nguyên phần trước @ làm username auth; chuẩn hóa chữ thường theo email từ IdP."""
         normalized_email = str(email or "").strip().casefold()
@@ -270,8 +289,18 @@ class WazoClient:
             marker = "smartcall:sso:" + digest
             default_username = self.username_from_email(profile["email"])
             mapping = await self.store.mapping(identity, s.wazo_tenant_uuid)
-            user = (await self.request("GET", "/api/confd/1.1/users/" + mapping["user_uuid"], token=admin["token"])
-                    if mapping else await self.find_email(profile["email"], admin["token"]))
+            stale_mapping = None
+            user = None
+            if mapping:
+                user = await self.request(
+                    "GET", "/api/confd/1.1/users/" + mapping["user_uuid"],
+                    token=admin["token"], allow_not_found=True,
+                )
+                # Chỉ 404 của UUID cụ thể mới cho phép tìm/tạo lại; 401/403/timeout vẫn dừng.
+                if user is None:
+                    stale_mapping, mapping = mapping, None
+            if not mapping:
+                user = await self.find_email(profile["email"], admin["token"])
             if user and (user.get("tenant_uuid") not in (None, s.wazo_tenant_uuid) or user.get("enabled") is False):
                 fail("WAZO_USER_UNAVAILABLE", "Tài khoản Wazo bị khóa hoặc không thuộc tenant cấu hình.", 403)
             managed = bool(mapping and mapping["managed"]) or bool(user and user.get("userfield") == marker)
@@ -284,6 +313,8 @@ class WazoClient:
             if not managed and not s.wazo_existing_password_login:
                 fail("WAZO_ACCOUNT_LINK_REQUIRED",
                      "Email đã có tài khoản Wazo. Cần cơ chế SSO hoặc cho phép thử mật khẩu cấu hình; backend không đổi mật khẩu cũ.", 409)
+            if managed and not created:
+                await self.repair_managed_sip_name(user["uuid"], admin["token"])
             auth = user.get("auth") or {}
             username = mapping["username"] if mapping else auth.get("username")
             # Chỉ user vừa tạo mới có username theo quy tắc mới; user cũ phải đọc username thật.
@@ -298,9 +329,13 @@ class WazoClient:
                 fail("WAZO_PROVISION_BUSY", "Khóa cấp phát đã hết hạn; vui lòng thử lại.", 409)
             await lock.extend(180, replace_ttl=True)
             # Lưu ngay sau tạo, trước đăng nhập: retry không được tạo thêm một user khác.
-            if not mapping:
-                await self.store.mapping(identity, s.wazo_tenant_uuid,
-                    dict(user_uuid=user["uuid"], username=username, managed=managed))
+            mapping_value = dict(user_uuid=user["uuid"], username=username, managed=managed)
+            if stale_mapping:
+                # Thay đúng binding đã xác nhận mất user; nếu công cụ khác sửa DB thì dừng.
+                await self.store.replace_mapping(identity, s.wazo_tenant_uuid,
+                                                 stale_mapping["user_uuid"], mapping_value)
+            elif not mapping:
+                await self.store.mapping(identity, s.wazo_tenant_uuid, mapping_value)
             token = await self.token(username, s.wazo_default_password, client_id)
             metadata = token.get("metadata") or {}
             token_user_uuid = metadata.get("pbx_user_uuid") or metadata.get("uuid") or token.get("pbx_user_uuid")

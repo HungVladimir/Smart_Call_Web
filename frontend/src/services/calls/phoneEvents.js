@@ -35,6 +35,7 @@ export function createPhoneEventHandlers(callService) {
 /** Cập nhật SIP registered và hồ sơ đang dùng. */
 function createRegisteredHandler(callService) {
   return () => {
+    callService.cancelPhoneReconnect()
     callState.isRegistered = true
     userSessionState.extension = callService.authService.getCurrentExtension()
     userSessionState.userUuid = callService.authService.getCurrentUserUuid()
@@ -51,44 +52,7 @@ function createUnregisteredHandler(callService) {
     logger.warn('SIP', '🔴 Wazo WebRTC SIP Phone: Unregistered!')
     window.dispatchEvent(new CustomEvent('wazo-unregistered'))
 
-    if (callService.authService.isAuthenticated() && !callService.authService.isSessionRevoked) {
-      const reconnectContext = captureSessionContext()
-      callService.authService
-        .verifySessionHealth()
-        .then((isValid) => {
-          // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-          // đến muộn sau hủy/đổi phiên.
-          if (!isSessionContextCurrent(reconnectContext)) return
-          if (!isValid && callService.authService.refreshTokenRevoked) {
-            logger.warn(
-              'SIP',
-              'Phiên SIP bị ngắt do token không còn hợp lệ hoặc phiên đã chuyển sang thiết bị khác!',
-            )
-            callService.authService.handleSessionRevocation()
-            return
-          }
-          setTimeout(async () => {
-            // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ
-            // liệu đến muộn sau hủy/đổi phiên.
-            if (!isSessionContextCurrent(reconnectContext)) return
-            if (
-              callService.authService.isAuthenticated() &&
-              !callState.isRegistered &&
-              !callService.authService.isSessionRevoked
-            ) {
-              try {
-                logger.info('SIP', 'Đang tự động kết nối lại WebRTC Phone sau khi mất đăng ký...')
-                await callService.connect()
-              } catch (err) {
-                logger.warn('SIP', 'Tự động kết nối lại WebRTC Phone thất bại:', err)
-              }
-            }
-          }, 5000)
-        })
-        .catch((error) =>
-          logger.warn('SIP', 'Không thể kiểm tra phiên trước khi kết nối lại:', error),
-        )
-    }
+    callService.schedulePhoneReconnect()
   }
 }
 

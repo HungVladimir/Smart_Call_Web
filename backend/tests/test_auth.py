@@ -89,6 +89,12 @@ class MemoryStore:
         """Dọn cookie session tương ứng."""
         self.values.pop((resource, identifier), None)
 
+    async def replace_mapping(self, identity, tenant, expected_user_uuid, value):
+        """Giả thay liên kết có điều kiện như Store SQLite thật."""
+        if self.links[(identity, tenant)]["user_uuid"] != expected_user_uuid:
+            raise AssertionError("mapping changed")
+        self.links[(identity, tenant)] = value
+
     async def mapping(self, identity, tenant, value=None):
         """Giữ binding để kiểm tra retry không tạo user lặp."""
         if value:
@@ -286,6 +292,13 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, json={"items": self.users, "total": len(self.users)})
             if path == "/api/auth/0.1/users/u1":
                 return httpx.Response(200, json={"username": self.users[0]["auth"]["username"]})
+            if path.endswith("/lines/main/associated/endpoints/sip"):
+                return httpx.Response(200, json={"uuid": "sip-uuid", "name": "legacy-endpoint",
+                    "auth_section_options": [["username", "sip-employee"], ["password", "fixture-sip-secret"]]})
+            if path == "/api/confd/1.1/endpoints/sip/sip-uuid" and method == "PUT":
+                return httpx.Response(204)
+            if path == "/api/confd/1.1/users/deleted":
+                return httpx.Response(404)
             if path == "/api/confd/1.1/users/u1":
                 return httpx.Response(200, json=self.users[0])
             if path.endswith("/contexts"):
@@ -320,7 +333,9 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["auth"]["email_address"], self.session["profile"]["email"])
         self.assertEqual(body["lines"][0]["extensions"][0]["exten"], "2001")
         self.assertEqual(body["lines"][0]["endpoint_sip"]["templates"], [{"uuid": "global"}, {"uuid": "webrtc"}])
-        self.assertNotEqual(body["lines"][0]["endpoint_sip"]["auth_section_options"][1][1], "12345")
+        sip_endpoint = body["lines"][0]["endpoint_sip"]
+        self.assertEqual(sip_endpoint["name"], dict(sip_endpoint["auth_section_options"])["username"])
+        self.assertNotEqual(sip_endpoint["auth_section_options"][1][1], "12345")
         again = await self.wazo.provision(self.session, "web_fixture")
         self.assertFalse(again["created"])
         self.assertEqual(len(self.created_payloads), 1)
@@ -380,6 +395,37 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
                 await self.wazo.request("POST", "/api/confd/1.1/users", token="admin-token", json={})
         self.assertEqual(caught.exception.detail["code"], "WAZO_CREATE_CONFLICT")
         self.assertEqual(self.store.links, {})
+
+    async def test_deleted_user_mapping_is_replaced_after_creation(self):
+        """404 user cụ thể cho phép tạo lại và thay binding cũ, không xóa mapping trước POST."""
+        self.store.links[(self.identity, "tenant")] = dict(user_uuid="deleted", username="sso_old", managed=True)
+        result = await self.wazo.provision(self.session, "web_fixture")
+        self.assertTrue(result["created"])
+        self.assertEqual(self.store.links[(self.identity, "tenant")]["user_uuid"], "u1")
+        self.assertEqual(self.store.links[(self.identity, "tenant")]["username"], "employee")
+
+    async def test_managed_existing_endpoint_name_is_repaired_without_credentials(self):
+        """User quản lý cũ chỉ được sửa name endpoint, không PUT password/template."""
+        self.store.links[(self.identity, "tenant")] = dict(user_uuid="u1", username="sso_old", managed=True)
+        self.users = [{"uuid": "u1", "enabled": True}]
+        await self.wazo.provision(self.session, "web_fixture")
+        writes = [request for request in self.calls if request.method == "PUT"]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(json.loads(writes[0].content), {"name": "sip-employee"})
+
+    async def test_mapped_lookup_forbidden_keeps_mapping_and_never_creates(self):
+        """403 không được biến thành 404 để cấp tài khoản khác."""
+        self.store.links[(self.identity, "tenant")] = dict(user_uuid="u1", username="old", managed=True)
+        async def forbidden(request):
+            if request.url.path == "/api/auth/0.1/token" and request.method == "POST":
+                return httpx.Response(200, json={"data": {"token": "admin-token"}})
+            return httpx.Response(403)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as client:
+            self.wazo.client = client
+            with self.assertRaises(HTTPException):
+                await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(self.created_payloads, [])
+        self.assertEqual(self.store.links[(self.identity, "tenant")]["user_uuid"], "u1")
 
     async def test_existing_account_is_not_reset_or_recreated(self):
         """Tài khoản cũ cần linking, không tự đổi password/line."""
@@ -524,6 +570,31 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
             await self.wazo.provision(self.session, "web_fixture")
         self.assertEqual(caught.exception.detail["code"], "WAZO_CONTEXT_NOT_FOUND")
         self.assertEqual(self.created_payloads, [])
+
+    async def test_sqlite_replace_mapping_requires_expected_uuid(self):
+        """DB thật chỉ thay UUID đã đọc; concurrent edit không bị ghi đè."""
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(config(database_path=Path(directory) / "identity.sqlite3"))
+            await store.mapping("identity", "tenant", dict(user_uuid="old", username="old-name", managed=True))
+            value = dict(user_uuid="new", username="employee", managed=True)
+            await store.replace_mapping("identity", "tenant", "old", value)
+            self.assertEqual((await store.mapping("identity", "tenant"))["user_uuid"], "new")
+            with self.assertRaises(HTTPException) as caught:
+                await store.replace_mapping("identity", "tenant", "old", dict(value, user_uuid="wrong"))
+            self.assertEqual(caught.exception.detail["code"], "WAZO_MAPPING_CHANGED")
+            self.assertEqual((await store.mapping("identity", "tenant"))["user_uuid"], "new")
+            await store.redis.aclose()
+
+    async def test_existing_correct_sip_name_is_not_rewritten(self):
+        """Endpoint khớp rồi thì không PUT để tránh reconfigure không cần thiết."""
+        original = self.wazo.request
+        async def correct_endpoint(method, path, **kwargs):
+            if path.endswith("/lines/main/associated/endpoints/sip"):
+                return {"uuid": "sip-uuid", "name": "sip-employee", "auth_section_options": [["username", "sip-employee"]]}
+            return await original(method, path, **kwargs)
+        self.wazo.request = correct_endpoint
+        await self.wazo.repair_managed_sip_name("u1", "admin-token")
+        self.assertFalse(any(request.method == "PUT" for request in self.calls))
 
     async def test_sqlite_unique_identity_and_no_secret_columns(self):
         """Mapping SQLite thật không cho cùng user_uuid thuộc hai danh tính."""

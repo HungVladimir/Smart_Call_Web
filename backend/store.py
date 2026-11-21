@@ -55,3 +55,21 @@ class Store:
     async def mapping(self, identity, tenant, value=None):
         """Đọc/ghi mapping ngoài event loop; không lưu token hoặc credential vào SQLite."""
         return await asyncio.to_thread(self._mapping, identity, tenant, value)
+
+
+    def _replace_mapping(self, identity, tenant, expected_user_uuid, value):
+        """Thay binding cũ theo UUID kỳ vọng trong một transaction; không ghi đè sửa đổi khác."""
+        with closing(sqlite3.connect(self.settings.database_path, timeout=10)) as database, database:
+            result = database.execute(
+                "UPDATE identities SET user_uuid=?, username=?, managed=? "
+                "WHERE identity=? AND tenant=? AND user_uuid=?",
+                (value["user_uuid"], value["username"], int(value["managed"]),
+                 identity, tenant, expected_user_uuid),
+            )
+            if result.rowcount != 1:
+                from oidc import fail
+                fail("WAZO_MAPPING_CHANGED", "Liên kết tài khoản vừa thay đổi; vui lòng đăng nhập lại.", 409)
+
+    async def replace_mapping(self, identity, tenant, expected_user_uuid, value):
+        """Cập nhật UUID mới sau khi Wazo xác nhận UUID đã liên kết không còn tồn tại."""
+        await asyncio.to_thread(self._replace_mapping, identity, tenant, expected_user_uuid, value)

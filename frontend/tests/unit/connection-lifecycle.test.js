@@ -132,3 +132,31 @@ it('kết nối mới chờ SDK disconnect cũ trước khi mở phone', async (
   await connecting
   expect(app.sdk.Phone.connect).toHaveBeenCalledTimes(1)
 })
+
+it('nhiều UNREGISTERED chỉ lên lịch một reconnect và REGISTERED hủy lịch đó', async () => {
+  app.callService.attachPhoneListeners()
+  const health = vi.spyOn(app.authService, 'verifySessionHealth').mockResolvedValue(true)
+  const connect = vi.spyOn(app.callService, 'connect').mockResolvedValue(true)
+  for (let index = 0; index < 7; index++) app.callService._onUnregisteredHandler()
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(health).toHaveBeenCalledTimes(1)
+  expect(connect).toHaveBeenCalledTimes(1)
+  app.callService._onUnregisteredHandler()
+  app.callService._onRegisteredHandler()
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(connect).toHaveBeenCalledTimes(1)
+})
+
+it('logout lúc reconnect chờ kiểm tra phiên không kết nối lại', async () => {
+  const health = deferred()
+  app.callService.attachPhoneListeners()
+  vi.spyOn(app.authService, 'verifySessionHealth').mockReturnValue(health.promise)
+  const connect = vi.spyOn(app.callService, 'connect').mockResolvedValue(true)
+  app.callService._onUnregisteredHandler()
+  await vi.advanceTimersByTimeAsync(5000)
+  app.callService.disconnect()
+  health.resolve(true)
+  await Promise.resolve()
+  expect(connect).not.toHaveBeenCalled()
+  expect(app.callService.phoneReconnectTask).toBeNull()
+})

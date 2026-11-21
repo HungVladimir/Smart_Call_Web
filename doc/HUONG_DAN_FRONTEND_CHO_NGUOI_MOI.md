@@ -1187,3 +1187,16 @@ Username auth dùng cho xin token API Wazo, không phải máy lẻ. SIP vẫn c
 Nếu POST tạo user trả 409, backend báo WAZO_CREATE_CONFLICT, yêu cầu kiểm tra username/auth còn sót hoặc máy lẻ trùng. Không tự liên kết chỉ vì username trùng, không reset mật khẩu, không đổi sang username có hậu tố; kiểm tra uniqueness cuối cùng do Wazo thực thi, kể cả khi có công cụ khác tạo đồng thời.
 
 Kiểm chứng: 29/29 test backend, pip check và git diff --check đạt. Có kiểm thử local-part chứa dấu chấm/số, username legacy trong mapping, khôi phục username cũ khi thiếu inline auth, email sai và xung đột tạo user. Chưa gọi Wazo thật. Frontend không thay đổi; giữ nguyên phần backend/main.py do người dùng tự sửa.
+
+
+## SIP endpoint, reconnect và công cụ mapping — 21/11/2026
+
+Payload tạo mới thêm endpoint_sip.name = SIP auth username để SDK dùng SIP URI nhất quán với tên endpoint. Tài khoản managed cũ được đọc endpoint chính dạng merged; chỉ PUT name nếu đang lệch, không đổi password/template. Chưa xác minh REGISTER trên Wazo công ty nên không coi giả thuyết tên endpoint là nguyên nhân duy nhất đã chứng minh.
+
+Frontend gộp nhiều UNREGISTERED thành một task reconnect, hủy timer/quyền tiếp tục khi REGISTERED hoặc disconnect/logout, kiểm tra context trước khi dùng kết quả health check. Chặn quay số khi SIP chưa registered hoặc vừa mất đăng ký trong lúc tra cứu; không phát ringback/SDK call trong trường hợp đó. Log tạo SIP session chỉ là INFO đang chờ phản hồi, không báo tổng đài đã chấp nhận.
+
+Mapping có UUID trả 404 được tìm lại qua email rồi tạo nếu cần. Chỉ thay liên kết sau khi đã có user/username hợp lệ; SQLite kiểm tra UUID cũ trong UPDATE để không ghi đè concurrent edit. Lỗi 401/403/timeout vẫn dừng. Không tự xóa tài khoản auth hoặc tài nguyên còn sót trên Wazo.
+
+Công cụ backend/manage_identity_db.py hỗ trợ list/add/delete, đọc đúng Settings.database_path, lọc tenant/username, hiển thị issuer/sub riêng; INSERT không ghi đè và DELETE có tenant+UUID. Tự backup bằng SQLite API trước ghi. Công cụ chỉ chỉnh DB, không gọi API Wazo/IdP/Redis; cần dừng backend khi sửa để test. Xem backend/IDENTITY_DB_GUIDE.md để biết lệnh đầy đủ và ý nghĩa managed.
+
+Kiểm chứng: 38/38 test backend, 178/178 test frontend (17 file), lint/architecture/build/format:check/pip check đạt. Có test CAS SQLite, khôi phục UUID 404, lỗi 403 không tạo lại, payload name và sửa endpoint legacy không sửa credential, CLI backup/unique/delete đúng tenant, reconnect gộp/hủy/health trả muộn và SIP_NOT_READY. Build còn cảnh báo chunk lớn đã có. Không gọi server thật; giữ nguyên backend/main.py do người dùng tự sửa.

@@ -4,6 +4,7 @@ import { createFixture, disposeFixture, deferred } from '../helpers/createFixtur
 let app
 beforeEach(() => {
   app = createFixture()
+  app.callState.isRegistered = true
 })
 afterEach(() => {
   disposeFixture(app)
@@ -131,4 +132,13 @@ it('còn hai người rảnh thì giữ luồng nhóm và danh sách mời chỉ
     '2000',
     expect.objectContaining({ isGroupCall: true, isGroupHost: true }),
   )
+})
+
+it('SIP chưa đăng ký không phát call hay bật chuông chờ', async () => {
+  app.callState.isRegistered = false
+  const ringback = vi.spyOn(app.callService.callToneService, 'startRingbackTone')
+  expect((await app.callService.startCall('4321')).reason).toBe('SIP_NOT_READY')
+  expect(app.sdk.Phone.call).not.toHaveBeenCalled()
+  expect(ringback).not.toHaveBeenCalled()
+  expect(app.callState.activeCall).toBeNull()
 })
