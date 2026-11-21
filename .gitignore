@@ -73,3 +73,6 @@ __pycache__/
 backend/data/
 backend/doc/backendV1.py
 backend/doc/codeAuthRefer.py
+
+# Ngoại lệ người dùng yêu cầu ngày 21/11/2026: track đúng cấu hình backend này.
+!backend/.env

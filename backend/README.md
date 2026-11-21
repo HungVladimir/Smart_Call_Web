@@ -1,3 +1,5 @@
+> Cập nhật 21/11/2026: theo yêu cầu người dùng, backend/.env nay được track trong Git và chứa secret thật. Hướng dẫn ignore .env bên dưới là hướng dẫn trước ngoại lệ này; người có quyền đọc repo/lịch sử Git có thể lấy credential.
+
 # Backend Single ID và cấp tài khoản Wazo
 
 Đã chuyển luồng OIDC trong backendV1/codeAuthRefer thành backend chạy thực tế. Hai bản dán gốc trong doc được giữ nguyên tại máy, không đưa lên Git vì chứa credential.
