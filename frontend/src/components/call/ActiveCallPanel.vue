@@ -12,11 +12,7 @@
           }"
           :style="{ backgroundColor: activeCallAvatarBg }"
         >
-          <EmployeeAvatar
-            :user-uuid="activeCallContact?.uuid || ''"
-            :enabled="!isGroupCall && Boolean(activeCallContact?.hasEmployeeAvatar)"
-            :fallback="activeCallAvatarText"
-          />
+          <span>{{ activeCallAvatarText }}</span>
         </div>
 
         <div class="caller-details">
@@ -162,7 +158,6 @@
 </template>
 
 <script setup>
-import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 import { computed } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 

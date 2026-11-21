@@ -73,39 +73,3 @@ class Store:
     async def replace_mapping(self, identity, tenant, expected_user_uuid, value):
         """Cập nhật UUID mới sau khi Wazo xác nhận UUID đã liên kết không còn tồn tại."""
         await asyncio.to_thread(self._replace_mapping, identity, tenant, expected_user_uuid, value)
-
-
-    def _directory_profiles(self, tenant, user_uuids=None, identity=None, user_uuid=None, profile=None):
-        """Lưu hồ sơ IdP tối thiểu và đọc theo tenant/UUID; không lưu token hay ảnh trong DB."""
-        path = self.settings.database_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(path, timeout=10)) as database, database:
-            database.row_factory = sqlite3.Row
-            database.execute("""CREATE TABLE IF NOT EXISTS directory_profiles (
-                tenant TEXT NOT NULL, user_uuid TEXT NOT NULL, identity TEXT NOT NULL,
-                name TEXT NOT NULL, department TEXT NOT NULL, employee_id TEXT NOT NULL,
-                PRIMARY KEY(tenant, user_uuid), UNIQUE(tenant, identity))""")
-            if profile is not None:
-                # UUID đổi sau khi tạo lại user: không để hồ sơ cũ tiếp tục xuất hiện trong danh bạ.
-                database.execute("DELETE FROM directory_profiles WHERE tenant=? AND identity=? AND user_uuid<>?",
-                                 (tenant, identity, user_uuid))
-                database.execute("""INSERT INTO directory_profiles VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(tenant, user_uuid) DO UPDATE SET identity=excluded.identity,
-                    name=excluded.name, department=excluded.department, employee_id=excluded.employee_id""",
-                    (tenant, user_uuid, identity, str(profile.get("name") or ""),
-                     " ".join(str(profile.get("department") or "").split()), str(profile.get("employee_id") or "")))
-            user_uuids = list(dict.fromkeys(user_uuids or []))
-            if not user_uuids:
-                return []
-            placeholders = ",".join("?" for _ in user_uuids)
-            return [dict(row) for row in database.execute(
-                "SELECT user_uuid, name, department, employee_id FROM directory_profiles WHERE tenant=? "
-                f"AND user_uuid IN ({placeholders})", [tenant, *user_uuids])]
-
-    async def save_directory_profile(self, tenant, identity, user_uuid, profile):
-        """Lưu dữ liệu Single ID đã xác thực sau khi liên kết đúng UUID Wazo thành công."""
-        await asyncio.to_thread(self._directory_profiles, tenant, identity=identity, user_uuid=user_uuid, profile=profile)
-
-    async def directory_profiles(self, tenant, user_uuids):
-        """Đọc hồ sơ dùng chung để bộ lọc phòng ban/avatar không phụ thuộc localStorage từng máy."""
-        return await asyncio.to_thread(self._directory_profiles, tenant, user_uuids=user_uuids)

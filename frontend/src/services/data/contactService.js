@@ -56,8 +56,6 @@ export class ContactService {
     Object.assign(this, { authService })
     this.state = reactive({ currentContacts: [], presences: {}, favoriteIds: [] })
     this.pendingFavorites = new Map()
-    this.avatarRequests = new Map()
-    this.avatarUrls = new Set()
     this.currentContacts = []
     this.presences = {}
     this.presencePollTimer = null
@@ -84,94 +82,6 @@ export class ContactService {
       }
       window.addEventListener('wazo-presence-updated', this.presenceListener)
     }
-  }
-
-  /** Đọc hồ sơ IdP dùng chung theo lô 100 UUID; thiếu backend thì giữ dữ liệu Wazo hiện có. */
-  async getSharedProfiles(userUuids) {
-    const context = captureSessionContext()
-    const request = createSessionFetch(context)
-    const token = this.authService.getToken()
-    const uuids = [...new Set(userUuids.filter(Boolean))]
-    if (!token || !uuids.length) return []
-    const profiles = []
-    try {
-      for (let offset = 0; offset < uuids.length; offset += 100) {
-        const query = new URLSearchParams()
-        uuids.slice(offset, offset + 100).forEach((uuid) => query.append('user_uuid', uuid))
-        const response = await request('/api/auth/directory-profiles?' + query.toString(), {
-          headers: { 'X-Auth-Token': token },
-          signal: AbortSignal.timeout(5000),
-        })
-        if (!response.ok) {
-          logger.warn(
-            'API',
-            `Chưa tải được hồ sơ nhân viên dùng chung (HTTP ${response.status}); giữ dữ liệu Wazo.`,
-          )
-          break
-        }
-        const data = await response.json()
-        if (Array.isArray(data.items)) profiles.push(...data.items)
-      }
-      assertSessionContext(context)
-      return profiles
-    } catch (error) {
-      if (!isSessionContextCurrent(context)) throw error
-      logger.warn('API', 'Chưa tải được hồ sơ nhân viên bổ sung; giữ danh bạ Wazo.')
-      return profiles
-    }
-  }
-
-  /** Gắn phòng ban thật vào từng liên hệ để bộ lọc đọc cùng nguồn với hồ sơ đăng nhập. */
-  async enrichDirectoryContacts(contacts) {
-    const profiles = await this.getSharedProfiles(contacts.map((contact) => contact.uuid))
-    const profilesByUuid = new Map(profiles.map((profile) => [profile.user_uuid, profile]))
-    return contacts.map((contact) => {
-      const profile = profilesByUuid.get(contact.uuid)
-      if (!profile) return contact
-      return {
-        ...contact,
-        dept: profile.department || contact.dept,
-        name: profile.name || contact.name,
-        hasEmployeeAvatar: Boolean(profile.has_avatar),
-      }
-    })
-  }
-
-  /** Tải thumbnail qua backend cùng origin; gộp request và thu hồi ObjectURL khi logout. */
-  async getEmployeeAvatar(userUuid) {
-    if (!userUuid || !this.authService.getToken()) return ''
-    const cached = this.avatarRequests.get(userUuid)
-    if (cached && cached.expiresAt > Date.now()) return cached.promise
-    const context = captureSessionContext()
-    const request = createSessionFetch(context)
-    const entry = { expiresAt: Date.now() + 60000, promise: null }
-    entry.promise = (async () => {
-      try {
-        const response = await request(
-          '/api/auth/directory-profiles/' + encodeURIComponent(userUuid) + '/avatar',
-          {
-            headers: { 'X-Auth-Token': this.authService.getToken() },
-            signal: AbortSignal.timeout(7000),
-          },
-        )
-        if (!response.ok) return ''
-        const blob = await response.blob()
-        assertSessionContext(context)
-        if (
-          !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(blob.type) ||
-          blob.size > 2 * 1024 * 1024
-        )
-          return ''
-        const url = URL.createObjectURL(blob)
-        this.avatarUrls.add(url)
-        entry.expiresAt = Infinity
-        return url
-      } catch {
-        return '' // Ảnh lỗi không làm mất đăng nhập, danh bạ hoặc cuộc gọi.
-      }
-    })()
-    this.avatarRequests.set(userUuid, entry)
-    return entry.promise
   }
 
   /** Tải danh sách yêu thích từ Dird và nhận biết nguồn directory cần dùng khi bật/tắt favorite. */
@@ -498,13 +408,11 @@ export class ContactService {
         return this.currentContacts || []
       }
 
-      let contacts = mapDirectoryContacts(contactsData, {
+      const contacts = mapDirectoryContacts(contactsData, {
         favoriteIds: favorites,
         defaultSource: this.defaultSourceName || 'wazo_user',
       })
       if (contacts === null) return this.currentContacts || []
-      contacts = await this.enrichDirectoryContacts(contacts)
-      assertSessionContext(sessionContext)
       for (const contact of contacts.filter((item) => item.isFavorite)) {
         for (const id of [contact.id, contact.uuid, contact.rawId, contact.number]) {
           if (id && !this.favoriteIds.includes(id)) this.favoriteIds.push(id)
@@ -529,8 +437,7 @@ export class ContactService {
       (contact) =>
         (myUuid && contact.uuid === myUuid) || (myExtension && contact.number === myExtension),
     )
-    // Hồ sơ IdP của phiên hiện tại ưu tiên hơn department cũ từ Dird.
-    if (this.authService.singleIdProfile?.department || !currentUser?.dept) return
+    if (!currentUser?.dept) return
     userSessionState.department = currentUser.dept
     localStorage.setItem('smartcall_department', currentUser.dept)
     localStorage.setItem('smartcall_user_department', currentUser.dept)
@@ -716,9 +623,6 @@ export class ContactService {
 
   /** Dừng polling và xóa danh bạ/presence/favorite/request tạm để không lẫn dữ liệu giữa tài khoản. */
   reset() {
-    for (const url of this.avatarUrls) URL.revokeObjectURL(url)
-    this.avatarUrls.clear()
-    this.avatarRequests.clear()
     this.pendingFavorites.clear()
     this.defaultSourceName = 'wazo_user'
     this.wazoSourceUuid = ''

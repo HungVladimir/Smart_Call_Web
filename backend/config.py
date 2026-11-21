@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     session_ttl: int = 3600
     database_path: Path = ROOT / "data" / "identity.sqlite3"
     tls_ca_file: str = ""
-    employee_photo_url: str = "http://kor4.samsung.net/employee/empsearch/rest/v1/photo/tinythumb"
     wazo_url: str = "https://107.126.11.126:9443"
     wazo_admin_username: str = ""
     wazo_admin_password: str = ""

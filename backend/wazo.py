@@ -1,8 +1,6 @@
 """Cấp tài khoản WebRTC qua Confd; chỉ trả token của user, tuyệt đối không trả token quản trị."""
 import hashlib
 import secrets
-import re
-from urllib.parse import quote
 from httpx import BasicAuth
 from oidc import fail
 
@@ -238,57 +236,6 @@ class WazoClient:
             token=admin_token,
             json=create_user_payload,
         )
-
-    async def validate_directory_token(self, token):
-        """Xác minh token user trên đúng Wazo/tenant trước khi cho đọc hồ sơ và ảnh nội bộ."""
-        if not token or len(token) > 4096:
-            fail("DIRECTORY_AUTH_REQUIRED", "Cần đăng nhập Wazo để đọc hồ sơ nhân viên.", 401)
-        response = await self.client.get(
-            self.settings.wazo_url + "/api/auth/0.1/token/" + quote(token, safe=""),
-            headers={"X-Auth-Token": token},
-        )
-        if response.status_code in (401, 403, 404):
-            fail("DIRECTORY_AUTH_REQUIRED", "Phiên Wazo không còn hợp lệ.", 401)
-        if response.status_code != 200:
-            fail("DIRECTORY_AUTH_UNAVAILABLE", "Không xác minh được phiên Wazo.", 502)
-        data = response.json().get("data") or {}
-        metadata = data.get("metadata") or {}
-        user_uuid = metadata.get("pbx_user_uuid") or metadata.get("uuid") or data.get("pbx_user_uuid")
-        if not user_uuid:
-            fail("DIRECTORY_AUTH_REQUIRED", "Token không phải phiên người dùng Wazo.", 403)
-        tenant_uuid = data.get("tenant_uuid") or metadata.get("tenant_uuid")
-        if not tenant_uuid:
-            user = await self.request("GET", "/api/confd/1.1/users/" + quote(user_uuid, safe=""), token=token)
-            tenant_uuid = user.get("tenant_uuid")
-        if tenant_uuid != self.settings.wazo_tenant_uuid:
-            fail("DIRECTORY_TENANT_FORBIDDEN", "Phiên không thuộc tenant danh bạ.", 403)
-        return user_uuid
-
-    async def employee_photo(self, employee_id):
-        """Proxy ảnh từ host cấu hình cố định; không chuyển token/cookie Wazo hoặc IdP sang máy ảnh."""
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", str(employee_id or "")):
-            fail("AVATAR_NOT_FOUND", "Chưa có mã nhân viên hợp lệ để lấy ảnh.", 404)
-        photo_request = self.client.build_request("GET", self.settings.employee_photo_url,
-                                                  params={"epid": employee_id}, timeout=5)
-        for header in ("cookie", "authorization", "x-auth-token"):
-            photo_request.headers.pop(header, None)
-        response = await self.client.send(photo_request, stream=True, follow_redirects=False)
-        try:
-            media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-            # HTML/trang SSO/redirect không phải ảnh; không trả nội dung đó về trình duyệt.
-            if response.status_code != 200 or media_type not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
-                fail("AVATAR_NOT_FOUND", "Máy chủ ảnh chưa trả ảnh nhân viên.", 404)
-            chunks, total_bytes = [], 0
-            async for chunk in response.aiter_bytes(chunk_size=65536):
-                total_bytes += len(chunk)
-                if total_bytes > 2 * 1024 * 1024:
-                    fail("AVATAR_TOO_LARGE", "Ảnh nhân viên vượt giới hạn 2 MB.", 502)
-                chunks.append(chunk)
-            if not total_bytes:
-                fail("AVATAR_NOT_FOUND", "Ảnh nhân viên rỗng.", 404)
-            return b"".join(chunks), media_type
-        finally:
-            await response.aclose()
 
     async def revoke_session(self, result, client_id):
         """Thu hồi token/refresh mới cấp nếu phiên backend bị hủy trước khi giao cho Web."""

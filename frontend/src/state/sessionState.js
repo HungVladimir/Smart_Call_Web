@@ -6,5 +6,4 @@ export const userSessionState = reactive({
   userUuid: localStorage.getItem('smartcall_user_uuid') || '',
   displayName: localStorage.getItem('smartcall_username') || '',
   department: localStorage.getItem('smartcall_department') || '',
-  hasEmployeeAvatar: false,
 })

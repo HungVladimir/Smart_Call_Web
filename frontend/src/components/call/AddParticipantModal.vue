@@ -51,11 +51,7 @@
             />
           </div>
           <div class="add-item-avatar" :style="{ backgroundColor: getAvatarColor(c.name) }">
-            <EmployeeAvatar
-              :user-uuid="c.uuid || ''"
-              :enabled="Boolean(c.hasEmployeeAvatar)"
-              :fallback="getInitials(c.name)"
-            />
+            {{ getInitials(c.name) }}
           </div>
           <div class="add-item-info">
             <div class="add-item-name">{{ c.name }}</div>
@@ -83,7 +79,6 @@
 </template>
 
 <script setup>
-import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 import { ref, computed, watch } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 

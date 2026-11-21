@@ -22,7 +22,6 @@ const ports = vi.hoisted(() => ({
     delegateAddParticipantsToHost: vi.fn(),
   },
   contactService: {
-    getEmployeeAvatar: vi.fn(async () => ''),
     currentContacts: [],
     getContacts: vi.fn(),
     isContactAvailableForCall: vi.fn(),

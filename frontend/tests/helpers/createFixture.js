@@ -21,7 +21,6 @@ export function createFixture() {
     extension: '1000',
     displayName: 'Fixture',
     department: '',
-    hasEmployeeAvatar: false,
   })
   Object.assign(callState, {
     activeCall: null,

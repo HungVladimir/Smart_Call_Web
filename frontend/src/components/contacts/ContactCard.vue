@@ -50,11 +50,7 @@
     <!-- Avatar tròn chữ contactái -->
     <div class="avatar-wrap">
       <div class="contact-avatar" :style="{ backgroundColor: getAvatarColor(contact.name) }">
-        <EmployeeAvatar
-          :user-uuid="contact.uuid || ''"
-          :enabled="Boolean(contact.hasEmployeeAvatar)"
-          :fallback="getInitials(contact.name)"
-        />
+        {{ getInitials(contact.name) }}
       </div>
     </div>
 
@@ -169,7 +165,6 @@
 </template>
 
 <script setup>
-import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 /** Một liên hệ: chỉ hiển thị và phát hành động, không sở hữu danh sách hoặc gọi API. */
 defineProps({

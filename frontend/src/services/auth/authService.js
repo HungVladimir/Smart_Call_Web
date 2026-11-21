@@ -524,7 +524,6 @@ export class AuthService {
     userSessionState.userUuid = ''
     userSessionState.displayName = ''
     userSessionState.department = ''
-    userSessionState.hasEmployeeAvatar = false
     callState.activeCall = null
     callState.incomingCall = null
     callState.callNotice = null
@@ -1049,18 +1048,9 @@ export class AuthService {
     }
     assertSessionContext(context)
     const profile = mapUserProfile(session, confdUser, username)
-    const sharedProfiles = await this.contactService.getSharedProfiles([session.uuid])
-    assertSessionContext(context)
-    const sharedProfile = sharedProfiles.find((item) => item.user_uuid === session.uuid)
-    if (sharedProfile) {
-      profile.displayName = sharedProfile.name || profile.displayName
-      profile.department = sharedProfile.department || profile.department
-    }
-    profile.hasEmployeeAvatar = Boolean(sharedProfile?.has_avatar)
     if (this.singleIdProfile) {
       profile.displayName = this.singleIdProfile.name || profile.displayName
-      profile.department = this.singleIdProfile.department || profile.department
-      profile.hasEmployeeAvatar = Boolean(this.singleIdProfile.employee_id)
+      profile.department = this.singleIdProfile.department || ''
     }
     Object.assign(userSessionState, profile)
     localStorage.setItem('smartcall_user_uuid', profile.userUuid)

@@ -131,13 +131,7 @@
               :class="{ 'group-avatar': !room.isDirect }"
               :style="{ backgroundColor: room.avatarBg }"
             >
-              <EmployeeAvatar
-                :user-uuid="roomPeerUuid(room)"
-                :enabled="room.isDirect"
-                :fallback="
-                  room.icon || (!room.isDirect ? '👥' : room.title.slice(0, 2).toUpperCase())
-                "
-              />
+              {{ room.icon || (!room.isDirect ? '👥' : room.title.slice(0, 2).toUpperCase()) }}
               <span
                 v-if="room.isDirect"
                 class="status-badge-dot"
@@ -371,11 +365,7 @@
                 @change="toggleSelectGroupMember(c.uuid)"
               />
               <div class="contact-avatar-mini" :style="{ backgroundColor: getContactAvatarBg(c) }">
-                <EmployeeAvatar
-                  :user-uuid="c.uuid || ''"
-                  :enabled="Boolean(c.hasEmployeeAvatar)"
-                  :fallback="(c.name || c.number || 'U').slice(0, 2).toUpperCase()"
-                />
+                {{ (c.name || c.number || 'U').slice(0, 2).toUpperCase() }}
               </div>
               <div class="contact-detail-mini">
                 <strong>{{ c.name }}</strong>
@@ -430,10 +420,7 @@
                 class="avatar-direct-modal"
                 :style="{ backgroundColor: currentRoom.avatarBg || '#0284c7' }"
               >
-                <EmployeeAvatar
-                  :user-uuid="roomPeerUuid(currentRoom)"
-                  :fallback="currentRoom.title.slice(0, 2).toUpperCase()"
-                />
+                {{ currentRoom.title.slice(0, 2).toUpperCase() }}
               </div>
               <div class="direct-member-meta">
                 <h4>{{ currentRoom.title }}</h4>
@@ -550,10 +537,7 @@
                     class="member-avatar-mini"
                     :style="{ backgroundColor: m.isAdmin ? '#f59e0b' : '#3b82f6' }"
                   >
-                    <EmployeeAvatar
-                      :user-uuid="m.uuid || m.id || ''"
-                      :fallback="(m.name || 'U').slice(0, 2).toUpperCase()"
-                    />
+                    {{ (m.name || 'U').slice(0, 2).toUpperCase() }}
                   </div>
                   <span
                     class="member-status-dot"
@@ -605,7 +589,6 @@
 </template>
 
 <script setup>
-import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 import MessageList from '../components/messages/MessageList.vue'
 import MessageComposer from '../components/messages/MessageComposer.vue'
 import {
@@ -1557,21 +1540,6 @@ const handleVideoCallClick = () => {
         type: 'info',
       },
     }),
-  )
-}
-
-/** Tìm UUID người đối thoại để hiện avatar cá nhân; nhóm tiếp tục dùng biểu tượng nhóm. */
-const roomPeerUuid = (room) => {
-  if (!room?.isDirect) return ''
-  const peer = (room.members || []).find(
-    (member) => (member.uuid || member.id) !== userSessionState.userUuid,
-  )
-  return (
-    peer?.uuid ||
-    peer?.id ||
-    room.peerUuid ||
-    contactService.findContactByExtension(room.ext)?.uuid ||
-    ''
   )
 }
 
