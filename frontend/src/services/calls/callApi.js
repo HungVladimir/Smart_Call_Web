@@ -1,4 +1,8 @@
-import { captureSessionContext, createSessionFetch } from '../auth/sessionScope.js'
+import {
+  captureSessionContext,
+  createSessionFetch,
+  isSessionContextCurrent,
+} from '../auth/sessionScope.js'
 
 import { logger } from '../common/loggerService.js'
 
@@ -144,6 +148,92 @@ export class CallControlApi {
       })
       return res.ok
     } catch (e) {
+      return false
+    }
+  }
+  /** Gửi cleanup bằng snapshot credential cũ; không cập nhật state và không bị scope logout hủy. */
+  async cleanupSessionCalls({ token, host, conferenceId, callIds = [] }) {
+    if (!token || !host) return false
+    const paths = [
+      ...(conferenceId
+        ? ['/api/calld/1.0/users/me/conferences/adhoc/' + encodeURIComponent(conferenceId)]
+        : []),
+      ...[...new Set(callIds.filter(Boolean))].map(
+        (id) => '/api/calld/1.0/users/me/calls/' + encodeURIComponent(id),
+      ),
+    ]
+    const results = await Promise.all(
+      paths.map(async (path) => {
+        try {
+          const response = await globalThis.fetch(host + path, {
+            method: 'DELETE',
+            headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+            signal: AbortSignal.timeout(4000),
+          })
+          return response.ok || response.status === 404
+        } catch {
+          return false
+        }
+      }),
+    )
+    return results.every(Boolean)
+  }
+
+  /** Phiên mới dọn bridge do cùng user làm host trước khi thu hồi token của máy cũ. */
+  async endPreviousHostedConferences(context = captureSessionContext()) {
+    const fetch = createSessionFetch(context)
+    const token = this.authService.getToken()
+    const host = this.authService.getHostUrl()
+    if (!token || this.authService.callService.hasActiveCall()) return false
+    try {
+      const response = await fetch(host + '/api/calld/1.0/users/me/calls', {
+        headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!response.ok) throw new Error('Không đọc được cuộc gọi cũ: HTTP ' + response.status)
+      const data = await response.json()
+      const calls = Array.isArray(data.items) ? data.items : Array.isArray(data) ? data : null
+      if (!calls) throw new Error('Danh sách cuộc gọi cũ không hợp lệ.')
+      if (this.authService.callService.hasActiveCall()) return false
+      // bridges là ID bridge Calld trả về. DELETE adhoc chỉ thành công nếu server xác nhận user là host.
+      // Bridge thường hoặc hội nghị mà user chỉ tham gia sẽ trả 404; không cúp nhánh của thành viên.
+      const ids = [
+        ...new Set(
+          calls
+            .flatMap((call) => (Array.isArray(call.bridges) ? call.bridges : []))
+            .filter((id) => typeof id === 'string' && id),
+        ),
+      ]
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const result = await fetch(
+              host + '/api/calld/1.0/users/me/conferences/adhoc/' + encodeURIComponent(id),
+              {
+                method: 'DELETE',
+                headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+                signal: AbortSignal.timeout(4000),
+              },
+            )
+            return result.ok || result.status === 404
+          } catch {
+            return false
+          }
+        }),
+      )
+      if (!results.every(Boolean)) throw new Error('Chưa xác nhận giải tán hết hội nghị cũ.')
+      return true
+    } catch (error) {
+      logger.warn('CALL', 'Không hoàn tất dọn hội nghị phiên cũ:', error.message)
+      if (isSessionContextCurrent(context))
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: {
+              type: 'warning',
+              message: 'Chưa xác nhận kết thúc hội nghị ở thiết bị cũ. Vui lòng kiểm tra tổng đài.',
+            },
+          }),
+        )
       return false
     }
   }

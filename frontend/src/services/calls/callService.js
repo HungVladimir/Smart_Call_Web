@@ -198,7 +198,12 @@ export class CallService {
   }
 
   /** Kết thúc đúng nhánh hoặc toàn cuộc gọi và thu hồi tài nguyên liên quan. */
-  finalizeCallTermination(reason = 'ended', session = null, forceEnd = false) {
+  finalizeCallTermination(
+    reason = 'ended',
+    session = null,
+    forceEnd = false,
+    remoteCleanup = true,
+  ) {
     // 1. Kiểm tra nếu cuộc gọi nhóm đang diễn ra và chỉ có 1 nhánh phụ bị ngắt (không forceEnd)
     if (
       !forceEnd &&
@@ -533,12 +538,14 @@ export class CallService {
     if (this.groupCallService.state.isGroupCall && this.groupCallService.state.isGroupHost) {
       this.groupCallService.clearAllParticipantInviteTimeouts()
       this.groupCallService.clearPrimaryInviteTimeout()
-      if (this.groupCallService.state.activeAdhocConferenceId) {
+      if (remoteCleanup && this.groupCallService.state.activeAdhocConferenceId) {
         this.callControlApi
           .deleteConference(this.groupCallService.state.activeAdhocConferenceId)
           .catch(() => {})
       }
-      const childCallIds = Array.from(this.groupCallService.state.extensionToWazoCallIdMap.values())
+      const childCallIds = remoteCleanup
+        ? Array.from(this.groupCallService.state.extensionToWazoCallIdMap.values())
+        : []
       for (const cId of childCallIds) {
         if (cId) {
           this.callControlApi.hangupServerCall(cId).catch(() => {})

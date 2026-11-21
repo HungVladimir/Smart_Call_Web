@@ -164,7 +164,7 @@ export class AuthService {
       // mẫu
       // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ
       if (this.session.uuid && this.currentSessionUuid && this.clientId) {
-        this.revokeOtherDeviceSessions(
+        await this.revokeOtherDeviceSessions(
           this.session.uuid,
           this.currentSessionUuid,
           this.clientId,
@@ -179,6 +179,8 @@ export class AuthService {
       }
     }
 
+    // Không để login đã bị hủy kết nối SIP sau khi chờ cleanup các phiên cũ.
+    assertSessionContext({ epoch: context.epoch, userUuid: this.session?.uuid || '' })
     const authenticatedContext = captureSessionContext()
     this.eventConnection.connect()
 
@@ -399,6 +401,18 @@ export class AuthService {
     if (!preserveSingleId && localStorage.getItem('smartcall_auth_method') === 'singleid') {
       this.endSingleIdSession().catch(() => {})
     }
+    // Snapshot chỉ dùng để kết thúc tài nguyên cũ, không tái công bố trạng thái đã đăng xuất.
+    const group = this.callService.groupCallService.state
+    const cleanupSnapshot =
+      group.isGroupCall && group.isGroupHost
+        ? {
+            token: this.session?.token || '',
+            host: this.getHostUrl(),
+            conferenceId: group.activeAdhocConferenceId,
+            callIds: [...group.extensionToWazoCallIdMap.values()],
+          }
+        : null
+    const primarySession = this.callService.currentCallSession || callState.activeCall?.session
     const previousSession = this.session
     const sdkNeedsCleanup =
       Boolean(previousSession) || this.sdkAuthentication.isAuthenticationPending
@@ -414,7 +428,22 @@ export class AuthService {
     } catch (e) {
       /* ignore */
     }
-    this.callService.finalizeCallTermination('ended')
+    if (cleanupSnapshot)
+      this.callService.callControlApi.cleanupSessionCalls(cleanupSnapshot).then((ok) => {
+        if (!ok)
+          logger.warn(
+            'CALL',
+            'Cleanup phiên cũ chưa được server xác nhận; phiên mới cần dọn bằng token hợp lệ.',
+          )
+      })
+    if (primarySession) {
+      try {
+        Promise.resolve(this.sdk.Phone.hangup(primarySession)).catch(() => {})
+      } catch {
+        /* SDK đã ngắt. */
+      }
+    }
+    this.callService.finalizeCallTermination('ended', null, true, false)
     this.eventConnection.disconnect()
     this.singleIdProfile = null
     this.singleIdCsrf = ''
@@ -571,6 +600,10 @@ export class AuthService {
       if (res.ok) {
         const data = await res.json()
         const items = Array.isArray(data.items) ? data.items : []
+        if (items.some((item) => item.uuid && item.uuid !== currentSessionUuid)) {
+          await this.callService.callControlApi.endPreviousHostedConferences(sessionContext)
+          assertSessionContext(sessionContext)
+        }
         for (const s of items) {
           const sUuid = s.uuid
           if (sUuid && sUuid !== currentSessionUuid) {
