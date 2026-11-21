@@ -17,6 +17,11 @@ class WazoClient:
         if token:
             headers["X-Auth-Token"] = token
         response = await self.client.request(method, self.settings.wazo_url + path, headers=headers, **kwargs)
+        # Username do email quyết định: để Wazo chặn trùng, không tự thêm hậu tố hay chiếm tài khoản cũ.
+        if response.status_code == 409 and method == "POST" and path == "/api/confd/1.1/users":
+            fail("WAZO_CREATE_CONFLICT",
+                 "Wazo báo xung đột khi tạo tài khoản. Kiểm tra username lấy từ email, tài khoản xác thực còn sót hoặc máy lẻ bị trùng; không tự liên kết theo username.",
+                 409)
         if response.status_code >= 400:
             fail("WAZO_REQUEST_FAILED",
                  f"Wazo từ chối {method} {path.split('?')[0]} (HTTP {response.status_code}). Kiểm tra quyền và cấu hình trên tổng đài.",
@@ -236,6 +241,16 @@ class WazoClient:
         finally:
             await self.client.delete(self.settings.wazo_url + "/api/auth/0.1/token/" + result["token"])
 
+    def username_from_email(self, email):
+        """Lấy nguyên phần trước @ làm username auth; chuẩn hóa chữ thường theo email từ IdP."""
+        normalized_email = str(email or "").strip().casefold()
+        username, separator, domain = normalized_email.rpartition("@")
+        # Không bỏ ký tự hay nối hậu tố: username phải phản ánh đúng email công ty đã xác thực.
+        if (not separator or not username or not domain or "@" in username
+                or len(username) > 256 or any(character.isspace() or ord(character) < 32 for character in normalized_email)):
+            fail("WAZO_EMAIL_INVALID", "Email Single ID không hợp lệ để tạo username Wazo.", 409)
+        return username
+
     async def provision(self, session, client_id):
         """Cấp phát có khóa phân tán; tài khoản cũ không bị reset mật khẩu hay đổi máy lẻ."""
         s = self.settings
@@ -252,7 +267,8 @@ class WazoClient:
             admin = await self.token(s.wazo_admin_username, s.wazo_admin_password, "smartcall-provision", user=False)
             identity, profile = session["identity"], session["profile"]
             digest = hashlib.sha256(identity.encode()).hexdigest()
-            marker, default_username = "smartcall:sso:" + digest, "sso_" + digest[:28]
+            marker = "smartcall:sso:" + digest
+            default_username = self.username_from_email(profile["email"])
             mapping = await self.store.mapping(identity, s.wazo_tenant_uuid)
             user = (await self.request("GET", "/api/confd/1.1/users/" + mapping["user_uuid"], token=admin["token"])
                     if mapping else await self.find_email(profile["email"], admin["token"]))
@@ -270,7 +286,8 @@ class WazoClient:
                      "Email đã có tài khoản Wazo. Cần cơ chế SSO hoặc cho phép thử mật khẩu cấu hình; backend không đổi mật khẩu cũ.", 409)
             auth = user.get("auth") or {}
             username = mapping["username"] if mapping else auth.get("username")
-            if not username and managed:
+            # Chỉ user vừa tạo mới có username theo quy tắc mới; user cũ phải đọc username thật.
+            if not username and created:
                 username = default_username
             if not username:
                 auth_user = await self.request("GET", "/api/auth/0.1/users/" + user["uuid"], token=admin["token"])

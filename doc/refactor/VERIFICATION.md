@@ -158,3 +158,16 @@ Postman: lấy token bằng Basic Auth tài khoản cấp phát; đọc GET /api
 Kiểm chứng: 24/24 test backend, pip check đạt. Có regression query recurse/no full, auth tenant khác target, context/user khác tenant, giới hạn và hết user_ranges. Test dùng transport giả, chưa gọi Wazo thật. Frontend không thay đổi. Giữ nguyên backend/main.py của người dùng. Khi cập nhật máy công ty, giữ credential Wazo đã điền trong .env và áp dụng các dòng tenant/context/kho số trên, rồi khởi động lại backend.
 
 Nguồn: https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/wazo_confd/helpers/restful.py (_build_tenant_list và build_tenant).
+
+
+## Username auth từ email cố định — 21/11/2026
+
+Theo xác nhận của người dùng, email công ty là duy nhất và không thay đổi. Tài khoản Wazo tạo mới lấy phần trước @ của email làm auth.username, chuẩn hóa chữ thường và bỏ khoảng trắng đầu/cuối. Ví dụ vhung99.nguyen@samsung.com → vhung99.nguyen. Không dùng replace chuỗi samsung.com, không tự thêm hậu tố hoặc hash khi trùng username. Domain vẫn do kiểm tra email của OIDC và SMARTCALL_ALLOWED_EMAIL_DOMAINS kiểm soát; không thay đổi allowlist trong lượt này.
+
+Mapping SQLite vẫn có khóa issuer/sub + tenant và lưu user_uuid/username thật. Tài khoản đã có mapping tiếp tục dùng username cũ sso_..., không tự đổi tên trên server. Khi khôi phục tài khoản SmartCall đã tồn tại nhưng mất mapping, đọc auth username thật theo UUID nếu danh sách Confd không trả auth; không đoán username mới từ email cho user cũ.
+
+Username auth dùng cho xin token API Wazo, không phải máy lẻ. SIP vẫn có credential riêng như trước. Thay đổi quy tắc này chưa sửa hoặc xác nhận nguyên nhân lỗi SIP Unregistered đã báo. Tài khoản đã tạo không tự được cấp lại khi xóa trên Wazo: cơ chế phục hồi mapping 404 là vấn đề riêng còn tồn đọng.
+
+Nếu POST tạo user trả 409, backend báo WAZO_CREATE_CONFLICT, yêu cầu kiểm tra username/auth còn sót hoặc máy lẻ trùng. Không tự liên kết chỉ vì username trùng, không reset mật khẩu, không đổi sang username có hậu tố; kiểm tra uniqueness cuối cùng do Wazo thực thi, kể cả khi có công cụ khác tạo đồng thời.
+
+Kiểm chứng: 29/29 test backend, pip check và git diff --check đạt. Có kiểm thử local-part chứa dấu chấm/số, username legacy trong mapping, khôi phục username cũ khi thiếu inline auth, email sai và xung đột tạo user. Chưa gọi Wazo thật. Frontend không thay đổi; giữ nguyên phần backend/main.py do người dùng tự sửa.

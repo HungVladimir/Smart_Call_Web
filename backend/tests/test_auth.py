@@ -284,6 +284,8 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(204)
             if path == "/api/confd/1.1/users" and method == "GET":
                 return httpx.Response(200, json={"items": self.users, "total": len(self.users)})
+            if path == "/api/auth/0.1/users/u1":
+                return httpx.Response(200, json={"username": self.users[0]["auth"]["username"]})
             if path == "/api/confd/1.1/users/u1":
                 return httpx.Response(200, json=self.users[0])
             if path.endswith("/contexts"):
@@ -323,6 +325,61 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(again["created"])
         self.assertEqual(len(self.created_payloads), 1)
         self.assertFalse(self.store.gate.acquired)
+
+    async def test_new_auth_username_is_email_local_part(self):
+        """Email có dấu chấm/số được lấy nguyên local-part, không còn tiền tố sso_ hay hash."""
+        self.session["profile"]["email"] = "  VHung99.Nguyen@Samsung.com  "
+        result = await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(result["username"], "vhung99.nguyen")
+        self.assertEqual(self.created_payloads[0]["auth"]["username"], "vhung99.nguyen")
+        self.assertEqual(self.store.links[(self.identity, "tenant")]["username"], "vhung99.nguyen")
+
+    async def test_existing_mapping_keeps_legacy_username(self):
+        """Đổi quy tắc tạo mới không làm user sso_ đã liên kết mất quyền đăng nhập."""
+        self.users = [{"uuid": "u1", "email": self.session["profile"]["email"], "enabled": True}]
+        self.store.links[(self.identity, "tenant")] = dict(user_uuid="u1", username="sso_legacy", managed=True)
+        result = await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(result["username"], "sso_legacy")
+        self.assertEqual(self.created_payloads, [])
+
+    async def test_recovered_managed_user_reads_real_auth_username(self):
+        """Mất mapping không được đoán username mới cho user tạo bằng quy tắc hash trước đây."""
+        marker = "smartcall:sso:" + hashlib.sha256(self.identity.encode()).hexdigest()
+        self.users = [{"uuid": "u1", "email": self.session["profile"]["email"], "enabled": True,
+                       "userfield": marker, "auth": {"username": "sso_legacy"}}]
+        original_request = self.wazo.request
+
+        async def omit_inline_auth(method, path, **kwargs):
+            # GET danh sách trên server có thể không trả trường auth, buộc tra theo UUID.
+            if method == "GET" and path == "/api/confd/1.1/users":
+                return {"items": [{key: value for key, value in self.users[0].items() if key != "auth"}], "total": 1}
+            return await original_request(method, path, **kwargs)
+
+        self.wazo.request = omit_inline_auth
+        result = await self.wazo.provision(self.session, "web_fixture")
+        self.assertEqual(result["username"], "sso_legacy")
+        self.assertEqual(self.created_payloads, [])
+
+    async def test_invalid_email_stops_before_user_creation(self):
+        """Không tạo username rỗng hoặc nhận email có khoảng trắng bên trong."""
+        for email in ("@samsung.com", "employee", "em ployee@samsung.com", "a@b@samsung.com"):
+            with self.subTest(email=email), self.assertRaises(HTTPException) as caught:
+                self.session["profile"]["email"] = email
+                await self.wazo.provision(self.session, "web_fixture")
+            self.assertEqual(caught.exception.detail["code"], "WAZO_EMAIL_INVALID")
+        self.assertEqual(self.created_payloads, [])
+
+    async def test_create_conflict_never_links_by_username(self):
+        """Username hoặc số bị Wazo từ chối phải dừng, không nhận tài khoản khác cùng username."""
+        async def conflict(request):
+            return httpx.Response(409, json={"error": "already exists"})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(conflict)) as conflict_client:
+            self.wazo.client = conflict_client
+            with self.assertRaises(HTTPException) as caught:
+                await self.wazo.request("POST", "/api/confd/1.1/users", token="admin-token", json={})
+        self.assertEqual(caught.exception.detail["code"], "WAZO_CREATE_CONFLICT")
+        self.assertEqual(self.store.links, {})
 
     async def test_existing_account_is_not_reset_or_recreated(self):
         """Tài khoản cũ cần linking, không tự đổi password/line."""
