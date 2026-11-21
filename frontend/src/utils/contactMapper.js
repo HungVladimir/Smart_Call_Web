@@ -42,6 +42,15 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
         item.lines?.[0]?.extensions?.[0]?.exten ||
         '',
     )
+    // Marker liên kết SSO là dữ liệu kỹ thuật, không phải tên phòng ban.
+    const userfield = String(item.userfield || '')
+    const department =
+      item.department ||
+      item.society ||
+      item.title ||
+      (!userfield.startsWith('smartcall:sso:') ? userfield : '') ||
+      item.description ||
+      ''
     return {
       id,
       rawId,
@@ -50,8 +59,7 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
       number,
       source: item.source || item.backend || defaultSource,
       email: item.email || item.emails?.[0]?.email || '',
-      dept:
-        item.department || item.society || item.title || item.userfield || item.description || '',
+      dept: String(department).normalize('NFC').trim().replace(/\s+/g, ' '),
       status: 'offline',
       statusLabel: 'Ngoại tuyến',
       isMobileApp: false,

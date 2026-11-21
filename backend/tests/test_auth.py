@@ -89,6 +89,15 @@ class MemoryStore:
         """Dọn cookie session tương ứng."""
         self.values.pop((resource, identifier), None)
 
+    async def save_directory_profile(self, tenant, identity, user_uuid, profile):
+        """Giữ hồ sơ giả thay DB thật cho test ranh giới HTTP."""
+        self.values[("profile", tenant, user_uuid)] = dict(profile, user_uuid=user_uuid)
+
+    async def directory_profiles(self, tenant, user_uuids):
+        """Chỉ trả hồ sơ đúng tenant/UUID cho kiểm thử API."""
+        return [self.values[("profile", tenant, uuid)] for uuid in user_uuids
+                if ("profile", tenant, uuid) in self.values]
+
     async def replace_mapping(self, identity, tenant, expected_user_uuid, value):
         """Giả thay liên kết có điều kiện như Store SQLite thật."""
         if self.links[(identity, tenant)]["user_uuid"] != expected_user_uuid:
@@ -247,6 +256,17 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         response = await self.web.post("/api/auth/logout", headers=headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual((await self.web.get("/api/auth/user_info")).status_code, 401)
+
+    async def test_successful_wazo_session_persists_verified_idp_profile(self):
+        """Department/EP ID lưu từ phiên IdP, không lấy từ body trình duyệt."""
+        info = await self.authenticated()
+        self.app.state.wazo.provision.return_value = {"token": "user-token", "user_uuid": "u1"}
+        response = await self.web.post("/api/auth/wazo-session", json={"client_id": "web_fixture", "employee_id": "forged"},
+            headers={"Origin": self.settings.public_origin, "X-CSRF-Token": info["csrf_token"]})
+        self.assertEqual(response.status_code, 200, response.text)
+        profile = self.store.values[("profile", "tenant", "u1")]
+        self.assertEqual(profile["employee_id"], "EP1")
+        self.assertEqual(profile["department"], "Department")
 
     async def test_logout_during_provision_revokes_new_wazo_session(self):
         """Phiên backend bị hủy giữa cấp phát thì token mới không được giao cho browser."""

@@ -5,8 +5,8 @@ import secrets
 import ssl
 import time
 import httpx
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import FastAPI, Request, Query
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
 from config import Settings
@@ -133,6 +133,9 @@ def create_app(settings=None):
             current = await require_session(request, csrf=True)
             if current["identity"] != session["identity"]:
                 fail("SESSION_CHANGED", "Phiên đã thay đổi trong lúc cấp tài khoản.", 401)
+            await app.state.store.save_directory_profile(
+                settings.wazo_tenant_uuid, session["identity"], result["user_uuid"], session["profile"],
+            )
         except Exception:
             try:
                 await app.state.wazo.revoke_session(result, body.client_id)
@@ -140,6 +143,25 @@ def create_app(settings=None):
                 pass  # Không giao credential ra ngoài; token vẫn có thời hạn phía Wazo.
             raise
         return result
+
+    @app.get("/api/auth/directory-profiles")
+    async def directory_profiles(request: Request, user_uuid: list[str] = Query(min_length=1, max_length=100)):
+        """Cho user cùng tenant đọc tên/phòng ban/avatar flag; không công khai EP ID hoặc identity."""
+        await app.state.wazo.validate_directory_token(request.headers.get("x-auth-token", ""))
+        profiles = await app.state.store.directory_profiles(settings.wazo_tenant_uuid, user_uuid)
+        return {"items": [{"user_uuid": profile["user_uuid"], "name": profile["name"],
+                           "department": profile["department"], "has_avatar": bool(profile["employee_id"])}
+                          for profile in profiles]}
+
+    @app.get("/api/auth/directory-profiles/{user_uuid}/avatar")
+    async def employee_avatar(user_uuid: str, request: Request):
+        """Trả ảnh cùng origin sau xác thực token user; EP ID được lấy từ DB, không nhận URL từ client."""
+        await app.state.wazo.validate_directory_token(request.headers.get("x-auth-token", ""))
+        profiles = await app.state.store.directory_profiles(settings.wazo_tenant_uuid, [user_uuid])
+        if not profiles:
+            fail("AVATAR_NOT_FOUND", "Chưa có hồ sơ Single ID của người dùng này.", 404)
+        content, media_type = await app.state.wazo.employee_photo(profiles[0]["employee_id"])
+        return Response(content, media_type=media_type, headers={"X-Content-Type-Options": "nosniff"})
 
     @app.post("/api/auth/idp-logout")
     async def prepare_idp_logout(request: Request):

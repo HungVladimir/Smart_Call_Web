@@ -27,7 +27,11 @@
           <div class="pulse-ring"></div>
           <div class="pulse-ring delay"></div>
           <div class="avatar-circle" :style="{ background: avatarBg }">
-            <span class="avatar-initials">{{ initials }}</span>
+            <EmployeeAvatar
+              :user-uuid="callerContact?.uuid || ''"
+              :enabled="Boolean(callerContact?.hasEmployeeAvatar)"
+              :fallback="initials"
+            />
           </div>
         </div>
 
@@ -83,9 +87,10 @@
 </template>
 
 <script setup>
+import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 import { computed, watch } from 'vue'
 import { callToneService } from '@/services/audio/audioService.js'
-import { authService } from '@/services/index.js'
+import { authService, contactService } from '@/services/index.js'
 
 const props = defineProps({
   isOpen: {
@@ -99,6 +104,11 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['accept', 'reject', 'timeout'])
+
+/** Lấy hồ sơ đã bổ sung avatar theo máy lẻ gọi đến, không tạo request trong component. */
+const callerContact = computed(() =>
+  contactService.findContactByExtension(props.callData?.extension || props.callData?.number),
+)
 
 // Lấy thông tin người gọi
 const callerName = computed(() => {

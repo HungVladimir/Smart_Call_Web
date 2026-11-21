@@ -30,7 +30,7 @@ export function mapUserProfile(session, confdUser = {}, username = '') {
       confdUser.department ||
       confdUser.society ||
       confdUser.title ||
-      confdUser.userfield ||
+      (String(confdUser.userfield || '').startsWith('smartcall:sso:') ? '' : confdUser.userfield) ||
       confdUser.description ||
       '',
   }

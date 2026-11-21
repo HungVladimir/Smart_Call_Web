@@ -1,10 +1,14 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router/index.js'
+import { contactService } from '@/services/index.js'
 import { logger } from '@/services/common/loggerService.js'
 import './assets/main.css'
 
 const app = createApp(App)
+
+// Avatar dùng chung loader từ service; component không cần import singleton SDK.
+app.provide('loadEmployeeAvatar', (userUuid) => contactService.getEmployeeAvatar(userUuid))
 
 // Tấm lưới bảo vệ toàn cục: Bắt toàn bộ lỗi giao diện và lifecycle ngầm trong Vue
 app.config.errorHandler = (err, instance, info) => {

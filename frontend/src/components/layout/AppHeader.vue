@@ -36,7 +36,13 @@
       </select>
 
       <div class="user-profile">
-        <div class="avatar-sm">{{ userInitials }}</div>
+        <div class="avatar-sm">
+          <EmployeeAvatar
+            :user-uuid="userSessionState.userUuid"
+            :enabled="userSessionState.hasEmployeeAvatar"
+            :fallback="userInitials"
+          />
+        </div>
         <div class="user-info">
           <span class="user-name">{{ userDisplayName }}</span>
         </div>
@@ -114,6 +120,7 @@
 </template>
 
 <script setup>
+import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { authService } from '@/services/index.js'

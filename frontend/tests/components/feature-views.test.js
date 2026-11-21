@@ -17,6 +17,7 @@ const ports = vi.hoisted(() => ({
   phoneAdapter: { applyAudioDevices: vi.fn(async () => {}) },
   settingsService: { loadCallServices: vi.fn(), saveCallServices: vi.fn() },
   contactService: {
+    getEmployeeAvatar: vi.fn(async () => ''),
     currentContacts: [],
     findContactByExtension: vi.fn(),
     findContactByUuid: vi.fn(),

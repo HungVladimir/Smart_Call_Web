@@ -23,7 +23,11 @@
       >
         <template v-if="modelValue && contact">
           <div class="preview-avatar" :style="{ backgroundColor: avatarColor }">
-            {{ avatarInitials }}
+            <EmployeeAvatar
+              :user-uuid="contact.uuid || ''"
+              :enabled="Boolean(contact.hasEmployeeAvatar)"
+              :fallback="avatarInitials"
+            />
           </div>
           <div class="preview-info">
             <div class="preview-header-line">
@@ -102,6 +106,7 @@
   </section>
 </template>
 <script setup>
+import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 import { computed } from 'vue'
 import { getAvatarInitials, getAvatarColor } from '../../utils/avatar.js'
 

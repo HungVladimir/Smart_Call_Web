@@ -240,3 +240,14 @@ Mapping có UUID trả 404 được tìm lại qua email rồi tạo nếu cần
 Công cụ backend/manage_identity_db.py hỗ trợ list/add/delete, đọc đúng Settings.database_path, lọc tenant/username, hiển thị issuer/sub riêng; INSERT không ghi đè và DELETE có tenant+UUID. Tự backup bằng SQLite API trước ghi. Công cụ chỉ chỉnh DB, không gọi API Wazo/IdP/Redis; cần dừng backend khi sửa để test. Xem backend/IDENTITY_DB_GUIDE.md để biết lệnh đầy đủ và ý nghĩa managed.
 
 Kiểm chứng: 38/38 test backend, 178/178 test frontend (17 file), lint/architecture/build/format:check/pip check đạt. Có test CAS SQLite, khôi phục UUID 404, lỗi 403 không tạo lại, payload name và sửa endpoint legacy không sửa credential, CLI backup/unique/delete đúng tenant, reconnect gộp/hủy/health trả muộn và SIP_NOT_READY. Build còn cảnh báo chunk lớn đã có. Không gọi server thật; giữ nguyên backend/main.py do người dùng tự sửa.
+
+
+## Department và avatar Single ID dùng chung — 21/11/2026
+
+Department cũ chỉ có trong hồ sơ phiên, không được nối vào contact.dept từ Dird nên bộ lọc không có dữ liệu đúng. Đã bổ sung bảng directory_profiles trong SQLite, lưu tên/department/EP ID từ phiên IdP sau liên kết Wazo thành công; API danh bạ chỉ trả tên/department/has_avatar theo UUID trong tenant. ContactService ghép theo lô 100 UUID, bỏ marker SSO khỏi fallback department; chuẩn hóa tên phòng ban và sửa bộ đếm all.
+
+Avatar được proxy qua backend từ employee_photo_url với epid lấy từ DB. User đọc phải có token Wazo hợp lệ đúng tenant; API danh bạ không trả EP ID, route ảnh chỉ nhận UUID. Không chuyển credential/cookie sang host ảnh, không theo redirect, giới hạn ảnh 2 MB; lỗi quay về chữ viết tắt. Component EmployeeAvatar nhận loader ở main.js qua provide/inject; service quản lý lazy request, cache và thu hồi ObjectURL theo phiên. Áp dụng header/danh bạ/cuộc gọi/tin nhắn, giữ icon nhóm.
+
+Điều kiện chia sẻ: các Web dùng chung backend/database, user có hồ sơ sau ít nhất một lần đăng nhập Single ID mới. Backend localhost/SQLite riêng không tự chia sẻ; Android/Web cũ chưa sử dụng API thì chưa tự có avatar. Nguồn ảnh cần truy cập được từ backend, chưa có cơ chế đăng nhập riêng vào nguồn ảnh. Hướng dẫn/route/test chi tiết: backend/EMPLOYEE_PROFILES_GUIDE.md.
+
+Kiểm chứng: 45 test backend, 187 test frontend/19 file; lint, architecture, build, format:check và pip check đạt. Chưa gọi URL ảnh nhân viên thật hoặc kiểm chứng bằng browser trên mạng công ty. Giữ nguyên phần chạy uvicorn trực tiếp do người dùng thêm ở cuối backend/main.py trong working tree, không đưa phần đó vào commit này.
