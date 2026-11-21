@@ -4074,3 +4074,13 @@ Hiện getContacts tải limit=1000 rồi presence/polling cho currentContacts; 
 - Kiểm chứng bản gốc: 120/120 test đạt, build thành công. Bản refactor: 158/158 test; lint/architecture/build đạt. Build vẫn có cảnh báo chunk lớn. Các sửa giao diện cần người dùng xem trực tiếp trên môi trường thật.
 - Thử: vào Tin nhắn → tab Gọi điện → quay lại Tin nhắn; mở phòng đã có lịch sử; đăng nhập sai mật khẩu; thử lỗi kết nối; gọi thật rồi kiểm tra mic bật/tắt và hover thêm người. Ở refactor đối chiếu nút gọi/video trong header chat với bản gốc.
 - Giữ nguyên admin; không thực hiện phân trang danh bạ (mục 6). Không sửa hoặc đưa tài liệu backend mới vào commit này.
+
+## BƯỚC 85: HOST BỊ THU HỒI PHIÊN PHẢI KẾT THÚC NHÓM (21/11/2026)
+
+Logout chụp token SDK, conference ID và call ID trước khi đánh dấu bị thu hồi, rồi gửi DELETE giới hạn các tài nguyên đó bằng snapshot riêng có timeout, không cập nhật lại state sau ACK. Không đọc token mới từ localStorage. Hủy scope/cache/UI ngay, gửi SIP hangup nhánh chính trước disconnect. Finalize bỏ gửi trùng REST trong riêng đường logout nhưng vẫn dọn SDK/timer/state.
+
+Login mới đợi revokeOtherDevices hoàn tất trước kết nối SIP. Khi phát hiện session khác, dùng token mới đọc users/me/calls, gom bridges và thử DELETE adhoc từng ID trước khi thu hồi session cũ. Server Wazo kiểm tra WAZO_HOST_USER_UUID, vì vậy chỉ hội nghị do user làm host bị giải tán; bridge thường hoặc nhóm mà user chỉ tham gia trả 404. Không gửi DELETE các call ID không xác định từ danh sách server. Lỗi cleanup báo chưa xác nhận, không trì hoãn vô hiệu hóa credential. Kiểm tra scope sau await để login đã bị hủy không bật SIP lại.
+
+Kiểm chứng: 124/124 test bản gốc, build đạt. Thêm ca host bị kicked, ACK muộn, token cũ 401 nhưng token mới giải tán được, thứ tự trước revoke, 404 không cúp nhầm và cuộc gọi mới không bị dọn. Chưa thử Wazo thật. Cần cập nhật cả máy cũ và máy login mới; client cũ/Android chưa có bước phối hợp này hoặc mất mạng hoàn toàn vẫn cần cơ chế server nếu yêu cầu bảo đảm tuyệt đối. Đặc biệt hội nghị đang tạo mà server chưa trả ID là race cần xác minh trên tổng đài, không khẳng định Web xử lý mọi trường hợp mất kết nối.
+
+Nguồn đối chiếu: CallSchema.bridges và AdhocConferencesService.delete_from_user trong wazo-calld chính thức; endpoint giải tán xác minh host theo UUID của token.

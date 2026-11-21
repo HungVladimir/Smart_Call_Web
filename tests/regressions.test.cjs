@@ -1654,3 +1654,68 @@ test('Login hint: ẩn mặc định, chỉ hiện với lỗi kết nối và x
   assert.equal(c.ui.showCertificateHint.value, false)
   pending.reject(new Error('Invalid credentials')); await retry
 })
+
+
+test('Host revoke: snapshot gửi DELETE hội nghị/nhánh với token cũ, UI dọn ngay và không phục hồi sau ACK muộn', async () => {
+  const c = wazo(), requests = [], pending = deferred()
+  c.svc.session = { token: 'old-token', uuid: 'a' }
+  c.state.activeCall = { callId: 'old-call', number: '2000', status: 'connected' }
+  c.svc.currentCallSession = { sipCallId: 'old-sip' }
+  c.svc.isGroupCall = c.svc.isGroupHost = true; c.svc.activeAdhocConferenceId = 'old-conference'
+  for (const id of ['b', 'c', 'd']) c.svc.extensionToWazoCallIdMap.set(id, id + '-call')
+  c.fetch = async (url, options) => { requests.push({url, options}); await pending.promise; return response({},204) }
+  c.svc.handleSessionKicked()
+  assert.equal(c.state.activeCall, null); assert.equal(c.svc.isLogged(), false)
+  assert.equal(requests.filter(r => r.options.method === 'DELETE').length, 4)
+  assert.ok(requests.every(r => r.options.headers['X-Auth-Token'] === 'old-token'))
+  c.localStorage.setItem('smartcall_wazo_token','new-token')
+  pending.resolve(); await drain()
+  assert.equal(c.state.activeCall, null); assert.equal(c.svc.isGroupCall, false)
+})
+
+test('Phiên mới: giải tán bridge host trước DELETE session cũ; 404 bridge thường không cúp nhánh khác', async () => {
+  const c = wazo(), requests = []
+  c.svc.session = {token:'new-token',uuid:'a'}
+  c.fetch = async (url, options = {}) => {
+    requests.push({url,method:options.method||'GET'})
+    if (url.endsWith('/sessions')) return response({items:[{uuid:'current'},{uuid:'old'}]})
+    if (url.endsWith('/users/me/calls')) return response({items:[{call_id:'host',bridges:['group','normal','group']}]})
+    if (url.endsWith('/tokens')) return response({items:[]})
+    return response({},url.endsWith('/normal') ? 404 : 204)
+  }
+  await c.svc.revokeOtherDevices('a','current','web-new')
+  const conference = requests.findIndex(r => r.method==='DELETE' && r.url.endsWith('/adhoc/group'))
+  const session = requests.findIndex(r => r.method==='DELETE' && r.url.endsWith('/sessions/old'))
+  assert.ok(conference>=0 && session>conference)
+  assert.equal(requests.filter(r=>r.url.endsWith('/adhoc/group')).length,1)
+  assert.ok(!requests.some(r=>r.method==='DELETE' && r.url.includes('/users/me/calls/')))
+})
+
+test('Dọn phiên cũ: lỗi server báo chưa xác nhận, không chặn thu hồi credential và không đụng cuộc gọi mới', async () => {
+  const c = wazo()
+  c.fetch = async () => response({},403)
+  assert.equal(await c.svc.endPreviousHostedConferences(), false)
+  assert.ok(c.events.some(e=>e.type==='app-toast'))
+  let sent=0; c.fetch=async()=>{sent++; return response({items:[]})}
+  c.svc.currentCallSession = {sipCallId:'new'}
+  assert.equal(await c.svc.endPreviousHostedConferences(), false)
+  assert.equal(sent,0)
+})
+
+
+test('Token cũ đã 401: phiên mới dùng token hợp lệ giải tán hội nghị trước thu hồi session', async () => {
+  const old = wazo(), fresh = wazo(); let alive=true
+  old.svc.session={token:'old',uuid:'a'}; old.svc.isGroupCall=old.svc.isGroupHost=true
+  old.svc.activeAdhocConferenceId='group'; old.state.activeCall={callId:'old',number:'2000',status:'connected'}
+  old.fetch=async()=>response({},401)
+  old.svc.handleSessionKicked(); await drain(); assert.equal(alive,true)
+  fresh.svc.session={token:'new',uuid:'a'}
+  fresh.fetch=async(url,options={})=>{
+    if(url.endsWith('/sessions'))return response({items:[{uuid:'old'},{uuid:'current'}]})
+    if(url.endsWith('/users/me/calls'))return response({items:[{bridges:['group']}]})
+    if(url.endsWith('/adhoc/group')){assert.equal(options.headers['X-Auth-Token'],'new');alive=false;return response({},204)}
+    if(url.endsWith('/sessions/old'))assert.equal(alive,false)
+    return response({items:[]})
+  }
+  await fresh.svc.revokeOtherDevices('a','current','web-new'); assert.equal(alive,false)
+})

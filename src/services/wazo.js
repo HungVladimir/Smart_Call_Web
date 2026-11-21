@@ -515,7 +515,7 @@ class WazoService {
         // Thu hồi session cũ và refresh token của các thiết bị khác theo chuẩn mã nguồn tham chiếu mẫu
         // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ
         if (this.session.uuid && this.currentSessionUuid && this.currentClientId) {
-          this.revokeOtherDevices(this.session.uuid, this.currentSessionUuid, this.currentClientId).catch((err) => {
+          await this.revokeOtherDevices(this.session.uuid, this.currentSessionUuid, this.currentClientId).catch((err) => {
             logger.warn('AUTH', 'Lỗi khi thu hồi phiên thiết bị khác:', err.message)
           })
         } else {
@@ -523,6 +523,8 @@ class WazoService {
         }
       }
 
+      // Chờ cleanup phiên cũ không được cho login đã bị hủy kết nối lại SIP.
+      assertSessionContext({ epoch: loginContext.epoch, userUuid: this.session?.uuid || '' })
       const authenticatedContext = captureSessionContext()
       this.openWebSocketEvents()
 
@@ -645,6 +647,12 @@ class WazoService {
   }
 
   logout({ revoked = false, preserveStoredSession = false } = {}) {
+    // Giữ snapshot credential/tài nguyên của phiên cũ; không đọc token mới từ storage khi cleanup.
+    const cleanupSnapshot = this.isGroupCall && this.isGroupHost ? {
+      token: this.session?.token || '', host: this.getHostUrl(),
+      conferenceId: this.activeAdhocConferenceId, callIds: [...this.extensionToWazoCallIdMap.values()],
+    } : null
+    const primarySession = this.currentCallSession || callStore.activeCall?.session
     const hadSession = Boolean(this.session || this.getToken())
     this._isKicked = revoked
     invalidateSession()
@@ -654,7 +662,11 @@ class WazoService {
     recordService.clearSessionCache()
     logger.info('AUTH', 'Thực hiện đăng xuất khỏi hệ thống Wazo...')
     if (!preserveStoredSession) this.setPresence('unavailable', 'Ngoại tuyến').catch(() => {})
-    this._finalizeCallTermination('ended')
+    if (cleanupSnapshot) this.cleanupSessionCalls(cleanupSnapshot).then(ok => {
+      if (!ok) logger.warn('CALL', 'Cleanup phiên cũ chưa được server xác nhận; phiên mới cần dọn bằng token hợp lệ.')
+    })
+    if (primarySession) this._runPhoneCleanup(() => Wazo.Phone.hangup(primarySession))
+    this._finalizeCallTermination('ended', null, true, false)
     this.closeWebSocketEvents()
     this._authenticationGate.logout(hadSession || this._authenticationGate.isAuthenticationPending)
       .catch((error) => logger.warn('AUTH', 'Chưa dọn được phiên SDK. Cần tải lại trang:', error.message))
@@ -774,12 +786,72 @@ class WazoService {
     window.dispatchEvent(new CustomEvent('smartcall-session-kicked'))
   }
 
+  /** Gửi cleanup bằng snapshot credential cũ; không cập nhật state và không bị scope logout hủy. */
+  async cleanupSessionCalls({ token, host, conferenceId, callIds = [] }) {
+    if (!token || !host) return false
+    const paths = [
+      ...(conferenceId ? ['/api/calld/1.0/users/me/conferences/adhoc/' + encodeURIComponent(conferenceId)] : []),
+      ...[...new Set(callIds.filter(Boolean))].map(id => '/api/calld/1.0/users/me/calls/' + encodeURIComponent(id)),
+    ]
+    const results = await Promise.all(paths.map(async path => {
+      try {
+        const response = await globalThis.fetch(host + path, {
+          method: 'DELETE', headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+          signal: AbortSignal.timeout(4000),
+        })
+        return response.ok || response.status === 404
+      } catch { return false }
+    }))
+    return results.every(Boolean)
+  }
+
+  /** Phiên mới dọn bridge do cùng user làm host trước khi thu hồi token của máy cũ. */
+  async endPreviousHostedConferences(context = captureSessionContext()) {
+    const fetch = createSessionFetch(context)
+    const token = this.getToken()
+    const host = this.getHostUrl()
+    if (!token || this.hasActiveCall()) return false
+    try {
+      const response = await fetch(host + '/api/calld/1.0/users/me/calls', {
+        headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!response.ok) throw new Error('Không đọc được cuộc gọi cũ: HTTP ' + response.status)
+      const data = await response.json()
+      const calls = Array.isArray(data.items) ? data.items : Array.isArray(data) ? data : null
+      if (!calls) throw new Error('Danh sách cuộc gọi cũ không hợp lệ.')
+      if (this.hasActiveCall()) return false
+      // bridges là ID bridge Calld trả về. DELETE adhoc chỉ thành công nếu server xác nhận user là host.
+      // Bridge thường hoặc hội nghị mà user chỉ tham gia sẽ trả 404; không cúp nhánh của thành viên.
+      const ids = [...new Set(calls.flatMap(call => Array.isArray(call.bridges) ? call.bridges : [])
+        .filter(id => typeof id === 'string' && id))]
+      const results = await Promise.all(ids.map(async id => {
+        try {
+          const result = await fetch(host + '/api/calld/1.0/users/me/conferences/adhoc/' + encodeURIComponent(id), {
+            method: 'DELETE', headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+            signal: AbortSignal.timeout(4000),
+          })
+          return result.ok || result.status === 404
+        } catch { return false }
+      }))
+      if (!results.every(Boolean)) throw new Error('Chưa xác nhận giải tán hết hội nghị cũ.')
+      return true
+    } catch (error) {
+      logger.warn('CALL', 'Không hoàn tất dọn hội nghị phiên cũ:', error.message)
+      if (isSessionContextCurrent(context)) window.dispatchEvent(new CustomEvent('app-toast', {
+        detail: { type: 'warning', message: 'Chưa xác nhận kết thúc hội nghị ở thiết bị cũ. Vui lòng kiểm tra tổng đài.' },
+      }))
+      return false
+    }
+  }
+
   /**
    * Thu hồi toàn bộ phiên làm việc và refresh token của các thiết bị khác trên máy chủ Wazo Auth
    * Bám sát 100% mã nguồn tham chiếu mẫu:
    * - Bước 1: GET /api/auth/0.1/users/{user_uuid}/sessions -> DELETE .../sessions/{session_uuid} (loại trừ currentSessionUuid)
    * - Bước 2: GET /api/auth/0.1/users/{user_uuid}/tokens -> DELETE .../tokens/{client_id} (loại trừ currentClientId)
    */
+
   async revokeOtherDevices(userUuid, currentSessionUuid, currentClientId) {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
@@ -808,6 +880,10 @@ class WazoService {
       if (res.ok) {
         const data = await res.json()
         const items = Array.isArray(data.items) ? data.items : []
+        if (items.some(item => item.uuid && item.uuid !== currentSessionUuid)) {
+          await this.endPreviousHostedConferences(sessionContext)
+          assertSessionContext(sessionContext)
+        }
         for (const s of items) {
           const sUuid = s.uuid
           if (sUuid && sUuid !== currentSessionUuid) {
@@ -1386,7 +1462,7 @@ class WazoService {
   }
 
   // --- Kết thúc cuộc gọi và ghi nhận CDR tập trung tại một nơi duy nhất ---
-  _finalizeCallTermination(reason = 'ended', session = null, forceEnd = false) {
+  _finalizeCallTermination(reason = 'ended', session = null, forceEnd = false, remoteCleanup = true) {
     // 1. Kiểm tra nếu cuộc gọi nhóm đang diễn ra và chỉ có 1 nhánh phụ bị ngắt (không forceEnd)
     if (!forceEnd && this.isGroupCall && this.isGroupHost && session) {
       const endedSipId = session.sipCallId || (session.getId && session.getId()) || session.id
@@ -1612,10 +1688,10 @@ class WazoService {
     if (this.isGroupCall && this.isGroupHost) {
       this._clearAllSecondaryLegTimeouts()
       this._clearPrimaryLegTimeout()
-      if (this.activeAdhocConferenceId) {
+      if (remoteCleanup && this.activeAdhocConferenceId) {
         this.deleteAdhocConference(this.activeAdhocConferenceId).catch(() => {})
       }
-      const childCallIds = Array.from(this.extensionToWazoCallIdMap.values())
+      const childCallIds = remoteCleanup ? Array.from(this.extensionToWazoCallIdMap.values()) : []
       for (const cId of childCallIds) {
         if (cId) {
           this.hangupUserCall(cId).catch(() => {})
