@@ -1,6 +1,6 @@
 # Cấu hình và output cục bộ ở gốc dự án
-/.env
-/.env.*
+# /.env
+# /.env.*
 !/.env.example
 /node_modules/
 /dist/
@@ -13,7 +13,7 @@
 .refactor-tmp/
 
 # Tài liệu và dữ liệu tham khảo giữ trên máy
-doc/
+
 /FileQuest/
 /specs/
 .ua/

@@ -1,6 +1,6 @@
 # Cấu hình theo môi trường của máy
-.env
-.env.*
+# .env
+# .env.*
 !.env.example
 *.local
 
@@ -24,3 +24,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Bộ kiểm thử và cấu hình Vitest giữ trên máy
+/tests/
+/vitest.config.js

@@ -1,6 +1,6 @@
 # Cấu hình theo môi trường. Giữ ngoại lệ backend/.env đã được yêu cầu.
-.env
-.env.*
+# .env
+# .env.*
 !.env.example
 !/.env
 
@@ -23,6 +23,11 @@ coverage/
 htmlcov/
 .tox/
 .nox/
+
+# Bộ kiểm thử và tiện ích hỗ trợ cấu hình, kiểm tra dữ liệu cục bộ
+/tests/
+/import_reference_env.py
+/manage_identity_db.py
 
 # SQLite, dữ liệu và bản sao lưu tạo khi chạy cục bộ
 /data/
