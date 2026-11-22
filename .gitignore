@@ -1,40 +1,27 @@
-# Dependencies installed from package manifests
-node_modules/
-.pnp/
-.pnp.js
-
-# Build output
+# Cấu hình và output cục bộ ở gốc dự án
+/.env
+/.env.*
+!/.env.example
+/node_modules/
 /dist/
-/frontend/dist/
-/backend/dist/
-
-# Environment files and secrets (keep sample files in Git)
-.env
-.env.*
-!.env.example
-!/frontend/.env.example
-!/backend/.env.example
-# Giữ backend/.env trên Git theo yêu cầu thử nghiệm đã xác nhận trước đây.
-!backend/.env
-
-# Logs and temporary output
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+/dist-ssr/
+.cache/
 .temp/
 .temp-*
-.cache/
-.vite/
-.vite-temp/
-.vitest-cache/
-.eslintcache
+*.log
+*.log.*
 .refactor-tmp/
-coverage/
-**/coverage/
 
-# Local editor and operating system files
+# Tài liệu và dữ liệu tham khảo giữ trên máy
+doc/
+/FileQuest/
+/specs/
+.ua/
+.understand-anything/
+.specify/
+.tours/
+
+# IDE và hệ điều hành
 .vscode/*
 !.vscode/extensions.json
 .idea/
@@ -45,24 +32,3 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
-
-# Python local runtime/cache and private database files
-/backend/.venv/
-__pycache__/
-*.py[cod]
-/backend/data/
-
-# Reference material and analysis files excluded from the shared repository by user request
-doc/
-/FileQuest/
-/specs/
-
-# Keep source tests and their configuration tracked; ignore only generated test output
-
-# Generated AI/editor workspaces
-.ua/
-.understand-anything/
-.specify/
-.tours/
-
-

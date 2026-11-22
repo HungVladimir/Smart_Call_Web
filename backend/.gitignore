@@ -1,0 +1,35 @@
+# Cấu hình theo môi trường. Giữ ngoại lệ backend/.env đã được yêu cầu.
+.env
+.env.*
+!.env.example
+!/.env
+
+# Môi trường Python, cache và output đóng gói
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+/build/
+/dist/
+*.egg-info/
+
+# Kết quả kiểm thử sinh tự động
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+.tox/
+.nox/
+
+# SQLite, dữ liệu và bản sao lưu tạo khi chạy cục bộ
+/data/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3.backup-*
