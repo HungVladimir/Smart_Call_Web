@@ -37,7 +37,7 @@ if (!(Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 | API và phiên Single ID | [main.py](backend/main.py), [oidc.py](backend/oidc.py), [store.py](backend/store.py) |
 | Cấp tài khoản và phiên tổng đài | [wazo.py](backend/wazo.py) |
 
-Thư mục doc và backend/doc chứa tài liệu cục bộ. Xem backend/doc/HANDOFF.md nếu có tài liệu bàn giao trên máy.
+Xem [mục lục tài liệu](doc/README.md), [sơ đồ và bảng tra API](doc/SO_DO_VA_TRA_CUU_SMARTCALL.md), hoặc [bàn giao backend](backend/doc/HANDOFF.md).
 
 ## Kiểm tra thay đổi
 

@@ -5,6 +5,7 @@
 | Cần tìm | Đọc ở đâu |
 | --- | --- |
 | Lần thao tác từ màn hình tới Vue, FastAPI hoặc Wazo | [Toàn bộ luồng SmartCall](HUONG_DAN_TOAN_BO_LUONG_SMARTCALL.md) |
+| Xem sơ đồ tuần tự, tra tên hàm, endpoint và sự kiện | [Sơ đồ và bảng tra SmartCall](SO_DO_VA_TRA_CUU_SMARTCALL.md) |
 | Hiểu cấu trúc frontend và tìm file theo tính năng | [Hướng dẫn frontend cho người mới](HUONG_DAN_FRONTEND_CHO_NGUOI_MOI.md) |
 | Thay đổi kiến trúc, state hoặc ranh giới service | [Kiến trúc](refactor/ARCHITECTURE.md) và [hướng dẫn phát triển](refactor/DEVELOPMENT_GUIDE.md) |
 | Chạy Single ID, cấu hình Wazo hoặc kiểm tra mapping SQLite | [Vận hành backend](../backend/doc/README.md) |
