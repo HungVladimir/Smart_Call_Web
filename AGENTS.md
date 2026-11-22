@@ -5,6 +5,11 @@
 - Người dùng đã cho phép tự phân tích, refactor và sửa lỗi liên quan trong bản clone.
 - Làm việc trên `codex/refactor-architecture`, không cập nhật `main`.
 - Tên biến/hàm/lớp dùng tiếng Anh rõ nghĩa; comment giải thích và tài liệu dùng tiếng Việt, UTF-8.
+- Ưu tiên tách callback/lambda thành hàm có tên rõ nghĩa thay vì viết biểu thức rút gọn hoặc lồng nhiều callback. Áp dụng cho `.map()`, `.filter()`, promise chains, event handlers, Vue lifecycle hooks, `watch`/`computed` và callback SDK. Hàm có tên giúp người mới lần theo luồng, đặt breakpoint và đọc stack trace dễ hơn.
+- Chỉ giữ lambda inline khi thật sự ngắn, một biểu thức đơn giản và mục đích đã rõ ngay tại chỗ; nếu có điều kiện, xử lý lỗi, side effect, nhiều bước hoặc tên tham số viết tắt thì phải tách thành hàm có tên. Không dùng tên chung chung như `fn`, `cb`, `x`, `e` khi có thể đặt tên theo vai trò.
+- Comment tiếng Việt ngay trước mỗi khai báo hàm/method/getter/computed, handler, callback có tên và hàm trong test. Comment giải thích hàm dùng để làm gì, được gọi trong trường hợp nào và tác động phụ/giá trị trả về quan trọng; có thể viết dài để người mới hiểu, không cần hạn chế số lượng comment.
+- Với callback bắt buộc truyền inline cho API/framework, nếu callback không hiển nhiên thì ưu tiên khai báo hàm có tên và comment trước đó rồi truyền tên hàm vào. Không cố nhồi comment vào giữa lời gọi API.
+- Trước guard/điều kiện quan trọng, giải thích vì sao phải kiểm tra và hậu quả nếu bỏ qua; cập nhật hoặc xóa comment khi logic thay đổi để tránh tài liệu sai lệch.
 - Không thêm lại ghim tin, read receipts hoặc trạng thái đã gửi/đã xem. Theo yêu cầu mới 20/11/2026, khôi phục badge tin đến chưa mở và tạm lưu metadata bộ đếm qua localStorage, tách theo host/UUID; không lưu nội dung phòng/tin nhắn.
 - Không chèn dữ liệu mẫu vào ứng dụng. Fixture chỉ thuộc bộ kiểm thử.
 - Không tự giả định giao thức IdP, token exchange, API membership hoặc phân quyền chưa có hợp đồng.
@@ -27,3 +32,4 @@
 - Hiển thị nhóm chỉ đếm người đã kết nối; người đang mời tách riêng. Đồng bộ snapshot có revision và xin lại khi nhận máy/reconnect; không dùng groupTitle cũ để tính số.
 
 - Single ID dùng OIDC theo mã tham chiếu; không coi token IdP là token Wazo. Cấp phát qua backend với credential quản trị riêng, chỉ trả token user cho SDK. Không reset mật khẩu tài khoản cũ; mật khẩu 12345 chỉ là mặc định thử nghiệm theo yêu cầu người dùng. Ngoại lệ người dùng ngày 21/11/2026: backend/.env được track/push dù chứa credential; hai bản dán trong backend/doc vẫn không đưa lên Git.
+
