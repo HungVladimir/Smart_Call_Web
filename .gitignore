@@ -1,35 +1,40 @@
-# =================================================================
-# SMARTCALL WEB — CẤU HÌNH LOẠI TRỪ GIT (.GITIGNORE)
-# =================================================================
-
-# 1. Thư viện phụ thuộc (Dependencies - cài đặt tự động qua npm install)
-# Áp dụng cho thư mục gốc và mọi thư mục con, bao gồm frontend/backend.
+# Dependencies installed from package manifests
 node_modules/
 .pnp/
 .pnp.js
 
-# 2. Thư mục biên dịch đầu ra (Build Artifacts - sinh ra khi npm run build)
-dist/
-dist-ssr/
-*.local
+# Build output
+/dist/
+/frontend/dist/
+/backend/dist/
 
-# 3. Biến môi trường & Bí mật kết nối (TUYỆT ĐỐI KHÔNG PUSH LÊN GIT)
+# Environment files and secrets (keep sample files in Git)
 .env
-.env.local
-.env.*.local
-.env.development
-.env.production
+.env.*
 !.env.example
+!/frontend/.env.example
+!/backend/.env.example
+# Giữ backend/.env trên Git theo yêu cầu thử nghiệm đã xác nhận trước đây.
+!backend/.env
 
-# 4. Nhật ký lỗi và thực thi (Logs)
-logs/
+# Logs and temporary output
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+.temp/
+.temp-*
+.cache/
+.vite/
+.vite-temp/
+.vitest-cache/
+.eslintcache
+.refactor-tmp/
+coverage/
+**/coverage/
 
-# 5. Cấu hình IDE, Editor & Hệ điều hành
+# Local editor and operating system files
 .vscode/*
 !.vscode/extensions.json
 .idea/
@@ -41,38 +46,23 @@ Thumbs.db
 *.sln
 *.sw?
 
-# 6. Bộ nhớ tạm & Cache
-.temp/
-.cache/
-.eslintcache
-.vite/
-.vite-temp/
-.vitest-cache/
+# Python local runtime/cache and private database files
+/backend/.venv/
+__pycache__/
+*.py[cod]
+/backend/data/
 
-# 7. Tài liệu kỹ thuật nội bộ & Tệp tham chiếu tạm thời (không đưa lên Git)
-FileQuest/fileLogin*
-FileQuest/wazo_api_reference*.txt
-FileQuest/wazo_api_reference.md
+# Reference material and analysis files excluded from the shared repository by user request
+doc/
+/FileQuest/
+/specs/
 
-# 8. Dữ liệu sinh tự động từ công cụ phân tích & AI (Understand-Anything, Spec-Kit, Scratch)
+# Keep source tests and their configuration tracked; ignore only generated test output
+
+# Generated AI/editor workspaces
 .ua/
 .understand-anything/
 .specify/
-specs/
 .tours/
 
-# Cache riêng của bản refactor
-.refactor-tmp/
-**/coverage/
-**/.vite/
 
-# Backend Python và tài liệu tham chiếu chứa secret gốc
-backend/.venv/
-__pycache__/
-*.py[cod]
-backend/data/
-backend/doc/backendV1.py
-backend/doc/codeAuthRefer.py
-
-# Ngoại lệ người dùng yêu cầu ngày 21/11/2026: track đúng cấu hình backend này.
-!backend/.env
