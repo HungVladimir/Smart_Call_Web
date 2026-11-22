@@ -15,8 +15,8 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS identities (
     PRIMARY KEY(identity, tenant), UNIQUE(tenant, user_uuid))"""
 
 
+# Mô tả các lệnh và buộc lệnh ghi phải chỉ rõ bản ghi, không có lệnh xóa toàn bộ.
 def build_parser():
-    """Mô tả các lệnh và buộc lệnh ghi phải chỉ rõ bản ghi, không có lệnh xóa toàn bộ."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, help="Đường dẫn DB; mặc định đọc SMARTCALL_DATABASE_PATH/backend/.env.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -33,8 +33,8 @@ def build_parser():
     return parser
 
 
+# Sao lưu SQLite bằng API backup để có snapshot nhất quán, kể cả khi DB dùng WAL.
 def backup_database(database_path):
-    """Sao lưu SQLite bằng API backup để có snapshot nhất quán, kể cả khi DB dùng WAL."""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backup_path = database_path.with_name(database_path.name + ".backup-" + timestamp + "-" + uuid.uuid4().hex[:8])
     with closing(sqlite3.connect(database_path.as_uri() + "?mode=ro", uri=True)) as source:
@@ -43,8 +43,28 @@ def backup_database(database_path):
     return backup_path
 
 
+# Đọc danh sách theo bộ lọc bằng kết nối SQLite chỉ đọc và in kết quả JSON.
+def print_identity_mappings(database_path, arguments):
+    with closing(sqlite3.connect(database_path.as_uri() + "?mode=ro", uri=True)) as database:
+        database.row_factory = sqlite3.Row
+        query = "SELECT * FROM identities WHERE 1=1"
+        parameters = []
+        for column in ("tenant", "username"):
+            value = getattr(arguments, column)
+            if value is not None:
+                query += " AND " + column + "=?"
+                parameters.append(value)
+        records = []
+        for row in database.execute(query + " ORDER BY tenant, username", parameters):
+            record = dict(row)
+            issuer, separator, subject = record.pop("identity").partition("\0")
+            record.update(issuer=issuer, subject=subject if separator else "", managed=bool(record["managed"]))
+            records.append(record)
+    print(json.dumps({"database": str(database_path), "items": records}, ensure_ascii=False, indent=2))
+
+
+# Đọc an toàn hoặc ghi một mapping có backup; trả mã lỗi khác 0 nếu không thực hiện được.
 def run(arguments):
-    """Đọc an toàn hoặc ghi một mapping có backup; trả mã lỗi khác 0 nếu không thực hiện được."""
     if arguments.db is None:
         from config import Settings
         database_path = Settings().database_path.resolve()
@@ -53,22 +73,7 @@ def run(arguments):
     if not database_path.is_file() and arguments.command != "add":
         raise ValueError("Database chưa tồn tại: " + str(database_path))
     if arguments.command == "list":
-        with closing(sqlite3.connect(database_path.as_uri() + "?mode=ro", uri=True)) as database:
-            database.row_factory = sqlite3.Row
-            query = "SELECT * FROM identities WHERE 1=1"
-            parameters = []
-            for column in ("tenant", "username"):
-                value = getattr(arguments, column)
-                if value is not None:
-                    query += " AND " + column + "=?"
-                    parameters.append(value)
-            records = []
-            for row in database.execute(query + " ORDER BY tenant, username", parameters):
-                record = dict(row)
-                issuer, separator, subject = record.pop("identity").partition("\0")
-                record.update(issuer=issuer, subject=subject if separator else "", managed=bool(record["managed"]))
-                records.append(record)
-        print(json.dumps({"database": str(database_path), "items": records}, ensure_ascii=False, indent=2))
+        print_identity_mappings(database_path, arguments)
         return 0
     # Nên dừng backend khi test DB để phiên đang cấp phát không dùng mapping vừa bị sửa tay.
     fields = ("tenant", "user_uuid") if arguments.command == "delete" else ("issuer", "subject", "tenant", "user_uuid", "username")
@@ -92,8 +97,8 @@ def run(arguments):
         return 0 if result.rowcount == 1 else 1
 
 
+# Chuyển lỗi file/SQL thành thông báo terminal ngắn gọn, không in credential cấu hình.
 def main(argv=None):
-    """Chuyển lỗi file/SQL thành thông báo terminal ngắn gọn, không in credential cấu hình."""
     arguments = build_parser().parse_args(argv)
     try:
         return run(arguments)

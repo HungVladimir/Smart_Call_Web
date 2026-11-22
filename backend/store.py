@@ -8,35 +8,41 @@ from redis.asyncio import Redis
 
 class Store:
     """Đóng gói dữ liệu phiên và mapping bền vững theo issuer/sub/tenant."""
+    # Khởi tạo client; chưa kết nối Redis khi import module.
     def __init__(self, settings):
-        """Khởi tạo client; chưa kết nối Redis khi import module."""
         self.settings = settings
         self.redis = Redis.from_url(settings.redis_url, decode_responses=True,
                                     socket_timeout=5, socket_connect_timeout=5)
 
+    # Tạo khóa Redis theo namespace ứng dụng, nhóm dữ liệu và mã bản ghi.
     def key(self, resource, identifier):
-        """Tách namespace SmartCall khỏi dự án tham chiếu đang dùng cùng Redis."""
         return f"{self.settings.redis_prefix}:{resource}:{identifier}"
 
+    # Đọc JSON; giao dịch OIDC được lấy và xóa nguyên tử để chống replay.
     async def get(self, resource, identifier, consume=False):
-        """Đọc JSON; giao dịch OIDC được lấy và xóa nguyên tử để chống replay."""
         if not identifier:
             return None
         key = self.key(resource, identifier)
-        data = await (self.redis.getdel(key) if consume else self.redis.get(key))
-        return json.loads(data) if data else None
+        # Giao dịch xác thực chỉ được dùng một lần, kể cả khi hai request đến đồng thời.
+        if consume:
+            stored_json = await self.redis.getdel(key)
+        else:
+            stored_json = await self.redis.get(key)
+        if not stored_json:
+            return None
+        return json.loads(stored_json)
 
+    # Mọi dữ liệu phiên đều có thời hạn; không tạo key sống vô hạn.
     async def put(self, resource, identifier, value, ttl):
-        """Mọi dữ liệu phiên đều có thời hạn; không tạo key sống vô hạn."""
         await self.redis.set(self.key(resource, identifier), json.dumps(value), ex=max(1, int(ttl)))
 
+    # Xóa phiên server khi đăng xuất; không đụng mapping tài khoản.
     async def delete(self, resource, identifier):
-        """Xóa phiên server khi đăng xuất; không đụng mapping tài khoản."""
         if identifier:
             await self.redis.delete(self.key(resource, identifier))
 
+    # Thao tác SQLite có unique constraint; chạy trong worker để tránh chặn event loop.
     def _mapping(self, identity, tenant, value=None):
-        """Thao tác SQLite có unique constraint; chạy trong worker để tránh chặn event loop."""
         path = self.settings.database_path
         path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(path, timeout=10)) as db, db:
@@ -52,13 +58,12 @@ class Store:
                              (identity, tenant)).fetchone()
             return dict(row) if row else None
 
+    # Đọc/ghi mapping ngoài event loop; không lưu token hoặc credential vào SQLite.
     async def mapping(self, identity, tenant, value=None):
-        """Đọc/ghi mapping ngoài event loop; không lưu token hoặc credential vào SQLite."""
         return await asyncio.to_thread(self._mapping, identity, tenant, value)
 
-
+    # Thay binding cũ theo UUID kỳ vọng trong một transaction; không ghi đè sửa đổi khác.
     def _replace_mapping(self, identity, tenant, expected_user_uuid, value):
-        """Thay binding cũ theo UUID kỳ vọng trong một transaction; không ghi đè sửa đổi khác."""
         with closing(sqlite3.connect(self.settings.database_path, timeout=10)) as database, database:
             result = database.execute(
                 "UPDATE identities SET user_uuid=?, username=?, managed=? "
@@ -70,6 +75,6 @@ class Store:
                 from oidc import fail
                 fail("WAZO_MAPPING_CHANGED", "Liên kết tài khoản vừa thay đổi; vui lòng đăng nhập lại.", 409)
 
+    # Cập nhật UUID mới sau khi Wazo xác nhận UUID đã liên kết không còn tồn tại.
     async def replace_mapping(self, identity, tenant, expected_user_uuid, value):
-        """Cập nhật UUID mới sau khi Wazo xác nhận UUID đã liên kết không còn tồn tại."""
         await asyncio.to_thread(self._replace_mapping, identity, tenant, expected_user_uuid, value)

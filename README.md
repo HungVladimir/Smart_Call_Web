@@ -39,7 +39,7 @@ Các lệnh dev/build/test/lint/check ở gốc chuyển tiếp tới frontend. 
 - [Kết quả kiểm chứng và kiểm tra tích hợp](doc/refactor/VERIFICATION.md)
 - [Nhật ký toàn bộ đợt refactor](doc/refactor/PROGRESS.md)
 - [Prompt triển khai chi tiết](doc/refactor/IMPLEMENTATION_PROMPT.md)
-- [Ranh giới backend và IdP](backend/README.md)
+- Hướng dẫn backend nằm trong bản tài liệu cục bộ tại backend/doc/README.md.
 
 Các báo cáo trong `doc/audit/` và những bước triển khai cũ phản ánh phiên bản trước. Đường dẫn source hiện hành nằm dưới `frontend/src/`.
 

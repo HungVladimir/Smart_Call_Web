@@ -31,5 +31,5 @@
 
 - Hiển thị nhóm chỉ đếm người đã kết nối; người đang mời tách riêng. Đồng bộ snapshot có revision và xin lại khi nhận máy/reconnect; không dùng groupTitle cũ để tính số.
 
-- Single ID dùng OIDC theo mã tham chiếu; không coi token IdP là token Wazo. Cấp phát qua backend với credential quản trị riêng, chỉ trả token user cho SDK. Không reset mật khẩu tài khoản cũ; mật khẩu 12345 chỉ là mặc định thử nghiệm theo yêu cầu người dùng. Ngoại lệ người dùng ngày 21/11/2026: backend/.env được track/push dù chứa credential; hai bản dán trong backend/doc vẫn không đưa lên Git.
+- Single ID dùng OIDC Authorization Code; không coi token IdP là token Wazo. Cấp phát qua backend với credential quản trị riêng, chỉ trả token user cho SDK. Không reset mật khẩu tài khoản cũ; mật khẩu 12345 chỉ là mặc định thử nghiệm theo yêu cầu người dùng. Ngoại lệ người dùng ngày 21/11/2026: backend/.env được track/push dù chứa credential; tài liệu và cấu hình đầu vào cục bộ trong backend/doc thuộc diện Git ignore.
 

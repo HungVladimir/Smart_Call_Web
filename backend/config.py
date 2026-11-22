@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
-    """Tập trung cấu hình IdP/Wazo; không mang dependency của dự án mẫu vào SmartCall."""
+    """Nạp và kiểm tra cấu hình IdP, Wazo, Redis và SQLite của backend."""
     model_config = SettingsConfigDict(env_prefix="SMARTCALL_", env_file=ROOT / ".env", extra="ignore", hide_input_in_errors=True)
     public_origin: str = "http://localhost:8800"
     idp_issuer: str = ""
@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     wazo_extension_max: int = 9999
     wazo_existing_password_login: bool = False
 
+    # Chặn URL/số máy lẻ cấu hình sai trước khi có request cấp phát.
     @model_validator(mode="after")
     def validate_configuration(self):
-        """Chặn URL/số máy lẻ cấu hình sai trước khi có request cấp phát."""
         origin = urlsplit(self.public_origin)
         if origin.scheme not in ("http", "https") or not origin.netloc or origin.path not in ("", "/"):
             raise ValueError("PUBLIC_ORIGIN phải là origin, không kèm đường dẫn.")
@@ -59,12 +59,12 @@ class Settings(BaseSettings):
         self.wazo_url = self.wazo_url.rstrip("/")
         return self
 
+    # URL backend nhận code; phải đăng ký chính xác giá trị này ở IdP.
     @property
     def callback_uri(self):
-        """URL backend nhận code; phải đăng ký chính xác giá trị này ở IdP."""
         return self.public_origin + "/api/auth/callback"
 
+    # Cookie HTTPS được bật Secure; localhost HTTP là môi trường thử riêng.
     @property
     def secure_cookie(self):
-        """Cookie HTTPS được bật Secure; localhost HTTP là môi trường thử riêng."""
         return self.public_origin.startswith("https://")
