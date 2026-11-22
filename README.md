@@ -1,52 +1,49 @@
-# SmartCall Web — bản refactor
+# SmartCall Web
 
-Mã ứng dụng Web nằm trong **frontend/**. Đây là bản clone để refactor; bản gốc ở thư mục cùng cấp đã được push bản vá riêng lên main (5d5fe3e).
+Ứng dụng Web dùng Vue và Wazo cho thoại, tin nhắn và danh bạ. Backend FastAPI xác thực Single ID, quản lý phiên qua Redis và lưu liên kết tài khoản Wazo trong SQLite. Nhánh phát triển của bản này là codex/refactor-architecture.
 
-```text
-Smart_Call_Web_Refactor/
-├── frontend/       # Vue, WebRTC, các dịch vụ Wazo, kiểm thử
-├── backend/        # Chuẩn bị API/IdP; chưa có server triển khai
-├── doc/refactor/   # Kiến trúc, hướng dẫn, kiểm chứng, nhật ký
-└── FileQuest/      # Tham chiếu Android; không tham gia build Web
-```
+## Chạy frontend
 
-## Bắt đầu
+Dùng Node theo phiên bản khai báo trong frontend/package.json. Tại thư mục gốc dự án:
 
-Dùng Node đáp ứng `frontend/package.json#engines`; phiên bản đã kiểm tra: **22.19.0**.
-
-```powershell
+~~~powershell
 npm --prefix frontend ci
 if (!(Test-Path frontend/.env)) { Copy-Item frontend/.env.example frontend/.env }
-# Điền host tổng đài thực tế vào frontend/.env
 npm run dev
-```
+~~~
 
-Không ghi đè `.env` đã có. File này được Git ignore. Vite đọc cấu hình từ `frontend/`; các biến `VITE_*` được đưa vào mã trình duyệt, vì vậy chỉ chứa cấu hình công khai, không chứa secret IdP.
+Đặt VITE_WAZO_HOST theo môi trường. Vite mặc định phục vụ Web tại http://localhost:8800 và chuyển request /api sang backend tại cổng 8801.
 
-```powershell
+## Chạy backend cho Single ID
+
+Cần Python và một Redis hỗ trợ GETDEL. Tạo môi trường Python một lần và giữ cấu hình hiện có khi cập nhật code.
+
+~~~powershell
+python -m venv backend/.venv
+.\backend\.venv\Scripts\python.exe -m pip install -r backend/requirements.lock.txt
+if (!(Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
+.\backend\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8801
+~~~
+
+Điền cấu hình IdP, Redis và Wazo cho môi trường của bạn theo danh sách biến trong backend/.env.example. Origin Web và callback đăng ký với IdP phải khớp môi trường đang chạy. Mở Web trên origin đó rồi chọn đăng nhập Single ID.
+
+## Đọc code từ đâu
+
+| Muốn đọc | Bắt đầu ở đây |
+| --- | --- |
+| Màn hình và điều hướng | [router](frontend/src/router/index.js) và [views](frontend/src/views) |
+| Cách các dịch vụ frontend kết nối với nhau | [createServices.js](frontend/src/services/createServices.js) |
+| Danh bạ, cuộc gọi, tin nhắn | [contactService.js](frontend/src/services/data/contactService.js), [callService.js](frontend/src/services/calls/callService.js), [chatService.js](frontend/src/services/data/chatService.js) |
+| API và phiên Single ID | [main.py](backend/main.py), [oidc.py](backend/oidc.py), [store.py](backend/store.py) |
+| Cấp tài khoản và phiên tổng đài | [wazo.py](backend/wazo.py) |
+
+Thư mục doc và backend/doc chứa tài liệu cục bộ. Xem backend/doc/HANDOFF.md nếu có tài liệu bàn giao trên máy.
+
+## Kiểm tra thay đổi
+
+~~~powershell
 npm run check
-npm --prefix frontend run format:check
-```
+.\backend\.venv\Scripts\python.exe -X utf8 -m unittest discover -s backend/tests
+~~~
 
-Các lệnh dev/build/test/lint/check ở gốc chuyển tiếp tới frontend. Build tạo `frontend/dist/`. Không có package dependency riêng ở gốc; không cần chạy npm install tại gốc.
-
-## Tài liệu
-
-- [Hướng dẫn frontend chi tiết cho người mới](doc/HUONG_DAN_FRONTEND_CHO_NGUOI_MOI.md)
-- [Sơ đồ kiến trúc và cây thư mục](doc/refactor/ARCHITECTURE.md)
-- [Luồng đọc code, quy ước và cách mở rộng](doc/refactor/DEVELOPMENT_GUIDE.md)
-- [Audit sau refactor: bằng chứng và trạng thái xử lý](doc/refactor/FOLLOWUP_AUDIT_2026-11-19.md)
-- [Kết quả kiểm chứng và kiểm tra tích hợp](doc/refactor/VERIFICATION.md)
-- [Nhật ký toàn bộ đợt refactor](doc/refactor/PROGRESS.md)
-- [Prompt triển khai chi tiết](doc/refactor/IMPLEMENTATION_PROMPT.md)
-- Hướng dẫn backend nằm trong bản tài liệu cục bộ tại backend/doc/README.md.
-
-Các báo cáo trong `doc/audit/` và những bước triển khai cũ phản ánh phiên bản trước. Đường dẫn source hiện hành nằm dưới `frontend/src/`.
-
-Ứng dụng tiếp tục dùng Wazo SDK/API hiện hành. Chưa triển khai SSO mới hoặc backend. Cần thử SIP, media, hội nghị và ghi âm trên tổng đài thật trước khi thay bản đang sử dụng.
-
-## Cấu trúc dành cho người mới
-
-Source dùng views/components/services/state/composables/utils/router/config/assets. Không còn app/core/features/shared bên trong src. Màn hình gọi được chia thành DialerPanel, ActiveCallPanel, ContactsPanel/ContactCard và AddParticipantModal. Đọc chương 3 và 20 trong tài liệu nhập môn trước khi mở toàn bộ service.
-
-Service hiện được gom một cấp theo auth/calls/audio/realtime/data/common. Xem chương 3 của handbook để chọn nhóm theo việc cần sửa.
+Frontend kiểm tra lint, import, test và build. Bộ test backend dùng dữ liệu và dịch vụ mô phỏng. Khi kiểm tra triển khai, thử riêng callback Single ID, đăng ký SIP, thoại nhóm và ghi âm trên tổng đài.

@@ -160,7 +160,7 @@ export class AuthService {
       this.historyService.reload()
       logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
 
-      // Thu hồi session cũ và refresh token của các thiết bị khác theo chuẩn mã nguồn tham chiếu
+      // Thu hồi phiên và refresh token cũ để giữ một phiên đang hoạt động.
       // mẫu
       // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ
       if (this.session.uuid && this.currentSessionUuid && this.clientId) {
@@ -465,7 +465,7 @@ export class AuthService {
     this.sdkCleanupPromise = this.sdkAuthentication
       .logout(sdkNeedsCleanup)
       .catch((error) => logger.warn('AUTH', 'SDK chưa hoàn tất logout từ xa:', error.message))
-    // Xóa sạch toàn bộ session storage keys theo Issue 2 & plan
+    // Xóa dữ liệu phiên đã lưu để lượt đăng nhập kế tiếp bắt đầu sạch.
     const sessionKeys = [
       'smartcall_auth_method',
       'smartcall_wazo_token',

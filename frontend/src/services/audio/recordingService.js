@@ -33,11 +33,6 @@ export class RecordingService {
     return recordingState.isRecording
   }
 
-  /** Đọc thời lượng ghi âm hiện tại từ recordingState để hiển thị trên UI. */
-  getRecordingDuration() {
-    return recordingState.duration
-  }
-
   /** Dùng cùng host với AuthService; tùy chọn chỉ dành cho endpoint media đã được xác định. */
   getHost(customHost = '') {
     const raw = customHost || this.authService.getHostUrl()
@@ -290,56 +285,6 @@ export class RecordingService {
     return promise
   }
 
-  /** Gửi lệnh tạm dừng ghi âm server cho cuộc gọi đang được ghi, xử lý theo khả năng API hiện tại. */
-  async pauseRecording(callId = null) {
-    const sessionContext = captureSessionContext()
-    const fetch = createSessionFetch(sessionContext)
-    const serverCallId = callId || recordingState.currentCallId
-    if (!serverCallId) return false
-    const token = this.authService.getToken()
-    const host = this.getHost()
-    try {
-      const res = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/pause`, {
-        method: 'PUT',
-        headers: { 'X-Auth-Token': token, Accept: 'application/json' },
-      })
-      return res.ok
-    } catch (e) {
-      return false
-    }
-  }
-
-  /** Gửi lệnh tiếp tục ghi âm server sau khi tạm dừng và chỉ dùng kết quả của phiên hiện tại. */
-  async resumeRecording(callId = null) {
-    const sessionContext = captureSessionContext()
-    const fetch = createSessionFetch(sessionContext)
-    const serverCallId = callId || recordingState.currentCallId
-    if (!serverCallId) return false
-    const token = this.authService.getToken()
-    const host = this.getHost()
-    try {
-      const res = await fetch(
-        `${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/resume`,
-        {
-          method: 'PUT',
-          headers: { 'X-Auth-Token': token, Accept: 'application/json' },
-        },
-      )
-      return res.ok
-    } catch (e) {
-      return false
-    }
-  }
-
-  /** Kiểm tra metadata của CDR để xác định cuộc gọi có bản ghi có thể phát/tải hay không. */
-  hasRecordingForCall(call) {
-    if (!call) return false
-    if (call.hasRecording) return true
-    if (Array.isArray(call.recordings) && call.recordings.length > 0) return true
-    if (call.recordingUuid) return true
-    return false
-  }
-
   /** Chọn bản ghi của CDR và lấy URL audio phù hợp để player phát. */
   async getAudioUrlForCall(call, { wazoHost = '', token = '' } = {}) {
     const sessionContext = captureSessionContext()
@@ -395,23 +340,6 @@ export class RecordingService {
       logger.error('RECORD', `Lỗi tải file ghi âm từ máy chủ Wazo (CDR ${cdrId}):`, err.message)
       return null
     }
-  }
-
-  /**
-   * Tải audio có xác thực, tạo ObjectURL theo chủ sở hữu phiên và tái sử dụng cache RAM khi hợp
-   * lệ.
-   */
-  async getRecordingAudioUrl(callOrId, options = {}) {
-    const call =
-      typeof callOrId === 'string' ? { id: callOrId, recordingUuid: callOrId } : callOrId || {}
-    return this.getAudioUrlForCall(call, options)
-  }
-
-  /** Tải một bản ghi từ server và tạo thao tác lưu file trong trình duyệt. */
-  async downloadRecording(callOrId, filename = null) {
-    const call =
-      typeof callOrId === 'string' ? { id: callOrId, recordingUuid: callOrId } : callOrId || {}
-    return this.downloadRecordingForCall(call, filename)
   }
 
   /** Chọn bản ghi của cuộc gọi rồi ủy quyền tải file qua luồng ghi âm dùng chung. */

@@ -158,6 +158,19 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()
 
+    # Tên IdP chỉ có khoảng trắng phải đi qua các giá trị dự phòng trước khi dựng hồ sơ Wazo.
+    def test_blank_display_name_uses_next_name_or_email(self):
+        oidc = OidcClient(config(), None)
+        claims = {"email": "employee@samsung.com", "sub": "employee", "formattedName": "  "}
+        profile = oidc.build_profile({**claims, "name": "  Employee Name  "})
+        self.assertEqual(profile["name"], "Employee Name")
+        self.assertEqual(profile["firstname"], "Name")
+        self.assertEqual(profile["lastname"], "Employee")
+
+        profile = oidc.build_profile(claims)
+        self.assertEqual(profile["name"], claims["email"])
+        self.assertEqual(profile["firstname"], claims["email"])
+
     async def test_full_flow_browser_binding_pkce_and_no_token_leak(self):
         """IdP code flow trả đúng profile, cookie riêng và không lộ token trong URL/JSON."""
         state, response = await self.begin()

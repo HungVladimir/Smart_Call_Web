@@ -131,12 +131,18 @@ class OidcClient:
             fail("EMAIL_NOT_ALLOWED", "Email không thuộc phạm vi được cấp tài khoản SmartCall.", 403)
         if claims.get("email_verified") is False or (settings.idp_require_verified_email and claims.get("email_verified") is not True):
             fail("EMAIL_NOT_VERIFIED", "IdP chưa xác nhận email.", 403)
-        name = str(claims.get("formattedName") or claims.get("name") or claims.get("enFormattedName") or email)
-        parts = name.split()
+        # Bỏ tên rỗng để luôn có ít nhất một phần tên cho hồ sơ Wazo.
+        name = email
+        for field in ("formattedName", "name", "enFormattedName"):
+            display_name = str(claims.get(field) or "").strip()
+            if display_name:
+                name = display_name
+                break
+        name_parts = name.split()
         return dict(name=name, email=email, department=claims.get("department") or claims.get("enDepartment") or "",
                        employee_id=claims.get("epId") or "", subject=claims["sub"],
-                       firstname=claims.get("given_name") or parts[-1],
-                       lastname=claims.get("family_name") or " ".join(parts[:-1]))
+                       firstname=claims.get("given_name") or name_parts[-1],
+                       lastname=claims.get("family_name") or " ".join(name_parts[:-1]))
 
     # Hoàn tất đăng nhập và giới hạn phiên SmartCall theo hạn ID token.
     async def finish(self, code, transaction):

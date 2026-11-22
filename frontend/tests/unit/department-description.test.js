@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { invalidateSession } from '../../src/services/auth/sessionScope.js'
 import { mapDirectoryContacts } from '../../src/utils/contactMapper.js'
 import { mapUserProfile } from '../../src/utils/userProfile.js'
 import { useContactFilters } from '../../src/composables/useContactFilters.js'
@@ -88,3 +89,54 @@ it('hồ sơ đăng nhập ưu tiên description và bỏ userfield kỹ thuật
   ).toBe('AI')
   expect(mapUserProfile({ uuid: 'a' }, { userfield: 'smartcall:sso:hash' }).department).toBe('')
 })
+
+/** Kiểm tra hai người gọi cùng chia kết quả và lỗi tải không bị báo thành cập nhật mới. */
+async function checkSharedDirectoryRefresh() {
+  const pending = deferred()
+  const favorites = vi.spyOn(app.contactService, 'fetchFavorites').mockResolvedValue([])
+  app.contactService.currentContacts = [{ uuid: 'cached' }]
+  fetch.mockReturnValue(pending.promise)
+
+  const firstRefresh = app.contactService.refreshDirectory()
+  const secondRefresh = app.contactService.refreshDirectory()
+  const backgroundContacts = app.contactService.getContacts()
+
+  expect(secondRefresh).toBe(firstRefresh)
+  pending.resolve(response({}, 503))
+  expect(await firstRefresh).toEqual({ status: 'cached', contacts: [{ uuid: 'cached' }] })
+  expect(await backgroundContacts).toEqual([{ uuid: 'cached' }])
+  expect(favorites).toHaveBeenCalledTimes(1)
+}
+
+/** Danh bạ rỗng do API trả thành công vẫn ghi đè dữ liệu cũ trong phiên hiện tại. */
+async function checkEmptyDirectoryRefresh() {
+  vi.spyOn(app.contactService, 'fetchFavorites').mockResolvedValue([])
+  app.contactService.currentContacts = [{ uuid: 'cached' }]
+  fetch
+    .mockResolvedValueOnce(response({ items: [{ uuid: 'source', name: 'wazo' }] }))
+    .mockResolvedValueOnce(response({ items: [] }))
+
+  expect(await app.contactService.refreshDirectory()).toEqual({ status: 'updated', contacts: [] })
+  expect(app.contactService.currentContacts).toEqual([])
+}
+
+/** Khi đổi phiên giữa lúc tải, lượt cũ không đọc danh bạ đang thuộc phiên mới. */
+async function checkCancelledDirectoryRefresh() {
+  const pending = deferred()
+  vi.spyOn(app.contactService, 'fetchFavorites').mockResolvedValue([])
+  fetch.mockReturnValue(pending.promise)
+  const refresh = app.contactService.refreshDirectory()
+  await Promise.resolve()
+
+  invalidateSession()
+  app.contactService.reset()
+  app.contactService.currentContacts = [{ uuid: 'new-session' }]
+  pending.resolve(response({}, 503))
+
+  expect(await refresh).toEqual({ status: 'cancelled', contacts: [] })
+  expect(app.contactService.currentContacts).toEqual([{ uuid: 'new-session' }])
+}
+
+it('chia sẻ lượt tải danh bạ và báo rõ dữ liệu cũ', checkSharedDirectoryRefresh)
+it('chấp nhận danh bạ rỗng được xác nhận từ Dird', checkEmptyDirectoryRefresh)
+it('dừng lượt tải danh bạ của phiên đã đổi', checkCancelledDirectoryRefresh)

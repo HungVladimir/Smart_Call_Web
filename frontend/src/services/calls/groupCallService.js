@@ -383,6 +383,7 @@ export class GroupCallService {
     }
   }
 
+  /** Kết thúc nhánh mời chính khi hết thời gian chờ và gỡ bộ đếm tương ứng. */
   cancelPrimaryInvite(targetExt) {
     this.clearPrimaryInviteTimeout()
     const primary = this.callService.currentCallSession
@@ -509,6 +510,7 @@ export class GroupCallService {
     this._secondaryInviteTimers.clear()
   }
 
+  /** Hủy lời mời đang chờ của một người, giữ nguyên các nhánh gọi còn lại. */
   cancelParticipantInvite(targetExt) {
     this.clearParticipantInviteTimeout(targetExt)
     const session = this.state.secondaryCallSessions.get(targetExt)
@@ -682,6 +684,7 @@ export class GroupCallService {
       this.callService.finalizeCallTermination(reason, session)
   }
 
+  /** Đối chiếu các nhánh tại tổng đài với hội nghị của host trước khi cập nhật trạng thái nhóm. */
   async synchronizeActiveCalls() {
     const sessionContext = captureSessionContext()
     if (!this.callService.hasActiveCall() || !this.state.isGroupCall || !this.state.isGroupHost)

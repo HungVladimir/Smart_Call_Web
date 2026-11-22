@@ -496,7 +496,7 @@ export class ChatService {
 
         const token = this.authService.getToken()
         if (token) {
-          // Đảm bảo danh bạ đã nạp để tra cứu tên người đối phương chuẩn xác 100% (Issue 3)
+          // Nạp danh bạ khi chưa có để xác định tên hiển thị trong phòng chat riêng.
           if (
             !this.contactService.currentContacts ||
             this.contactService.currentContacts.length === 0
@@ -547,7 +547,7 @@ export class ChatService {
                     !room.name.toLowerCase().includes('group')))
               const isGroup = !isDirect
 
-              // Phân giải thông tin đối phương nếu là phòng 1-1 theo quy tắc SSOT (Issue 3)
+              // Dùng danh bạ để xác định người đối thoại trong phòng chat riêng.
               // TUYỆT ĐỐI KHÔNG dùng room.name từ server cho phòng 1-1
               let displayTitle = ''
               let directExt = existing?.ext || ''

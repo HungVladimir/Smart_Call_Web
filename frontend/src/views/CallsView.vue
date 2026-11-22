@@ -402,21 +402,23 @@ const loadContacts = async (silent = false) => {
   }
 }
 
-/** Làm mới danh bạ theo thao tác người dùng, sử dụng cùng luồng loadContacts. */
-const refreshContacts = async () => {
+/** Báo kết quả đồng bộ sau khi người dùng bấm nút làm mới danh bạ. */
+async function refreshContacts() {
   loadingContacts.value = true
   try {
-    const fresh = await contactService.getContacts()
+    const result = await contactService.refreshDirectory()
+    if (result.status === 'cancelled') return
+    const hasNewData = result.status === 'updated'
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `✅ Đã làm mới danh bạ (${fresh.length} liên hệ)!`,
-          type: 'success',
+          message: hasNewData
+            ? `Đã làm mới danh bạ (${result.contacts.length} liên hệ).`
+            : 'Không thể làm mới danh bạ. Danh sách hiện có vẫn được giữ.',
+          type: hasNewData ? 'success' : 'error',
         },
       }),
     )
-  } catch (err) {
-    console.warn('Lỗi làm mới danh bạ:', err)
   } finally {
     loadingContacts.value = false
   }
@@ -601,43 +603,30 @@ const onRefreshContactsEvent = () => {
   loadContacts(true)
 }
 
-// Khi component được gắn vào DOM, nạp dữ liệu và đăng ký các listener/tài nguyên cần cho giao diện
-// này.
-onMounted(async () => {
+/** Đăng ký sự kiện của màn hình gọi trong suốt vòng đời component. */
+function registerCallViewListeners() {
   window.addEventListener('smartcall-call-ended', onCallEnded)
   window.addEventListener('smartcall-refresh-contacts', onRefreshContactsEvent)
   window.addEventListener('focus', onWindowFocus)
+}
 
-  if (route.query.q) {
-    searchTerm.value = String(route.query.q)
-  }
+/** Nhận từ khóa trong URL và tải danh bạ khi màn hình gọi được hiển thị. */
+function activateCallsView() {
+  if (route.query.q) searchTerm.value = String(route.query.q)
+  loadContacts(contacts.value.length > 0)
+}
 
-  if (contactService.currentContacts && contactService.currentContacts.length > 0) {
-    loadContacts(true)
-  } else {
-    loadContacts(false)
-  }
-})
-
-// Khi View được KeepAlive mở lại, đồng bộ dữ liệu/tài nguyên với phiên hiện tại thay vì dùng trạng
-// thái cũ.
-onActivated(() => {
-  if (route.query.q) {
-    searchTerm.value = String(route.query.q)
-  }
-  if (contactService.currentContacts && contactService.currentContacts.length > 0) {
-  }
-  loadContacts(true)
-})
-
-// Khi component bị hủy, gỡ listener và dọn tài nguyên thuộc vòng đời này để callback cũ không tiếp
-// tục tác động UI.
-onUnmounted(() => {
+/** Gỡ listener và xóa nhật ký bàn phím khi component kết thúc vòng đời. */
+function disposeCallsView() {
   window.removeEventListener('smartcall-call-ended', onCallEnded)
   window.removeEventListener('smartcall-refresh-contacts', onRefreshContactsEvent)
   window.removeEventListener('focus', onWindowFocus)
   dtmfLog.value = ''
-})
+}
+
+onMounted(registerCallViewListeners)
+onActivated(activateCallsView)
+onUnmounted(disposeCallsView)
 </script>
 
 <style>

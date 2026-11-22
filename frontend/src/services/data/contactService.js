@@ -56,6 +56,7 @@ export class ContactService {
     Object.assign(this, { authService })
     this.state = reactive({ currentContacts: [], presences: {}, favoriteIds: [] })
     this.pendingFavorites = new Map()
+    this.pendingDirectoryRefresh = null
     this.currentContacts = []
     this.presences = {}
     this.presencePollTimer = null
@@ -322,26 +323,34 @@ export class ContactService {
     return p.line_state === 'available' || p.state === 'available' || p.connected === true
   }
 
-  /** Kiểm tra các trường tên, máy lẻ và thông tin liên hệ có khớp từ khóa tìm kiếm. */
-  matchesSearch(contact, query) {
-    if (!query || !query.trim()) return true
-    const q = query.toLowerCase().trim()
-    const name = String(contact.name || '').toLowerCase()
-    const dept = String(contact.dept || '').toLowerCase()
-    const num = String(contact.number || '').toLowerCase()
-    return name.includes(q) || dept.includes(q) || num.includes(q)
+  /** Trả danh sách cho caller nền. Khi tải lỗi, giữ danh sách đã có của phiên hiện tại. */
+  async getContacts() {
+    const result = await this.refreshDirectory()
+    return result.contacts
   }
 
-  /** Nạp favorites và dữ liệu Dird, chuẩn hóa schema, ghép presence rồi công bố danh bạ reactive. */
-  async getContacts() {
+  /** Dùng chung một lượt tải trong cùng phiên, kể cả khi nhiều màn hình mở cùng lúc. */
+  refreshDirectory() {
     const sessionContext = captureSessionContext()
+    const pending = this.pendingDirectoryRefresh
+    if (pending && isSessionContextCurrent(pending.sessionContext)) return pending.promise
+
+    // Chỉ dọn lượt tải mà callback này sở hữu. Phiên mới có thể đã bắt đầu lượt khác.
+    const clearPendingRefresh = () => {
+      if (this.pendingDirectoryRefresh?.promise === promise) this.pendingDirectoryRefresh = null
+    }
+    const promise = this.fetchDirectory(sessionContext).finally(clearPendingRefresh)
+    this.pendingDirectoryRefresh = { sessionContext, promise }
+    return promise
+  }
+
+  /** Tải danh bạ Dird, bổ sung phòng ban/presence và báo rõ dữ liệu mới hay dữ liệu cũ. */
+  async fetchDirectory(sessionContext) {
     const fetch = createSessionFetch(sessionContext)
-    await this.fetchFavorites()
-    // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
-    // muộn sau hủy/đổi phiên.
-    if (!isSessionContextCurrent(sessionContext)) return []
-    const favorites = this.favoriteIds || []
     try {
+      await this.fetchFavorites()
+      assertSessionContext(sessionContext)
+      const favorites = this.favoriteIds || []
       const token = this.authService.getToken()
       // Thiếu token thì dừng trước khi gọi server; không gửi request bằng credential rỗng hoặc tự
       // tạo token thay thế.
@@ -371,7 +380,7 @@ export class ContactService {
           }
           if (sourceUuid) {
             this.wazoSourceUuid = sourceUuid
-            // Lấy toàn bộ danh sách liên hệ từ nguồn (limit=1000)
+            // Đọc trang danh bạ tối đa 1.000 mục từ nguồn đã chọn.
             const contactsRes = await fetch(
               `${host}/api/dird/0.1/backends/wazo/sources/${sourceUuid}/contacts?limit=1000`,
               {
@@ -404,15 +413,15 @@ export class ContactService {
       }
 
       if (!contactsData) {
-        // Stale-While-Revalidate: Giữ nguyên danh sách hiện tại nếu không lấy được dữ liệu mới
-        return this.currentContacts || []
+        assertSessionContext(sessionContext)
+        return { status: 'cached', contacts: this.currentContacts }
       }
 
       let contacts = mapDirectoryContacts(contactsData, {
         favoriteIds: favorites,
         defaultSource: this.defaultSourceName || 'wazo_user',
       })
-      if (contacts === null) return this.currentContacts || []
+      if (contacts === null) return { status: 'cached', contacts: this.currentContacts }
       contacts = await this.loadContactDescriptions(contacts)
       assertSessionContext(sessionContext)
       for (const contact of contacts.filter((item) => item.isFavorite)) {
@@ -424,10 +433,12 @@ export class ContactService {
       const finalContacts = await this.loadPresencesForContacts(contacts)
       assertSessionContext(sessionContext)
       this.startPresencePolling()
-      return this._filterContacts(finalContacts)
-    } catch (err) {
-      logger.warn('API', 'Không thể nạp danh bạ từ máy chủ Wazo:', err.message)
-      return this.currentContacts || []
+      return { status: 'updated', contacts: this.publishDirectory(finalContacts) }
+    } catch (error) {
+      // Phiên đã đổi thì không trả danh bạ thuộc tài khoản đang đăng nhập sau đó.
+      if (!isSessionContextCurrent(sessionContext)) return { status: 'cancelled', contacts: [] }
+      logger.warn('API', 'Không thể nạp danh bạ từ máy chủ Wazo:', error.message)
+      return { status: 'cached', contacts: this.currentContacts }
     }
   }
 
@@ -507,8 +518,8 @@ export class ContactService {
     localStorage.setItem('smartcall_user_department', currentUser.dept)
   }
 
-  /** Áp dụng bộ lọc đầu vào lên danh bạ đã chuẩn hóa trước khi trả cho caller. */
-  _filterContacts(list) {
+  /** Bỏ liên hệ trùng và liên hệ của chính mình trước khi công bố danh bạ cho các màn hình. */
+  publishDirectory(list) {
     const meUuid = this.authService.session?.uuid || localStorage.getItem('smartcall_user_uuid')
     let meExten = this.authService.getCurrentExtension()
     /** Bỏ domain/khoảng trắng khỏi máy lẻ để so sánh các giá trị từ API/SDK cùng một quy tắc. */
@@ -562,7 +573,7 @@ export class ContactService {
     const host = this.authService.host.startsWith('http')
       ? this.authService.host
       : `https://${this.authService.host}`
-    const uuids = contacts.map((c) => c.uuid).filter(Boolean)
+    const uuids = contacts.map((contact) => contact.uuid).filter(Boolean)
 
     if (uuids.length === 0) return contacts
 
@@ -583,32 +594,30 @@ export class ContactService {
       const items = Array.isArray(data.items)
         ? data.items
         : data.items && typeof data.items === 'object'
-          ? Object.entries(data.items).map(([uuid, val]) => ({ uuid, ...val }))
+          ? Object.entries(data.items).map(([uuid, presence]) => ({ uuid, ...presence }))
           : []
 
-      for (const it of items) {
-        const u = it.uuid || it.user_uuid
-        if (u) {
-          this.presences[u] = it
-        }
+      for (const presence of items) {
+        const userUuid = presence.uuid || presence.user_uuid
+        if (userUuid) this.presences[userUuid] = presence
       }
 
-      contacts.forEach((c) => {
-        const st = this.statusOf(c.uuid)
-        c.status = st.key
-        c.statusLabel = st.label
-        const p = c.uuid && this.presences[c.uuid]
-        const statusStr = String(p?.status || '').toLowerCase()
-        c.isMobileApp = Boolean(
-          st.key !== 'offline' &&
-          st.key !== 'unavailable' &&
-          p &&
-          (statusStr.includes('smartcall-android') ||
-            statusStr.includes('android') ||
-            p.mobile === true ||
-            p.lines?.some((l) => l.mobile)),
+      for (const contact of contacts) {
+        const contactStatus = this.statusOf(contact.uuid)
+        const presence = this.presences[contact.uuid]
+        const presenceLabel = String(presence?.status || '').toLowerCase()
+        contact.status = contactStatus.key
+        contact.statusLabel = contactStatus.label
+        contact.isMobileApp = Boolean(
+          contactStatus.key !== 'offline' &&
+          contactStatus.key !== 'unavailable' &&
+          presence &&
+          (presenceLabel.includes('smartcall-android') ||
+            presenceLabel.includes('android') ||
+            presence.mobile === true ||
+            presence.lines?.some((line) => line.mobile)),
         )
-      })
+      }
     } catch (e) {
       logger.warn('API', 'Không thể nạp trạng thái presence từ chatd:', e.message)
     }
@@ -688,6 +697,7 @@ export class ContactService {
   /** Dừng polling và xóa danh bạ/presence/favorite/request tạm để không lẫn dữ liệu giữa tài khoản. */
   reset() {
     this.pendingFavorites.clear()
+    this.pendingDirectoryRefresh = null
     this.defaultSourceName = 'wazo_user'
     this.wazoSourceUuid = ''
     this.stopPresencePolling()

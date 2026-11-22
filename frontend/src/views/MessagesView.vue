@@ -951,7 +951,7 @@ const loadRooms = async () => {
     // muộn sau hủy/đổi phiên.
     if (!isSessionContextCurrent(context)) return
     hasLoadedRooms = true
-    // Giữ nguyên phòng đang mở nếu có, KHÔNG tự ý chọn rooms[0] để bảo toàn badge (Issue 6)
+    // Giữ phòng đang mở. Tự chọn phòng khác có thể làm mất huy hiệu tin chưa mở.
     if (currentRoom.value) {
       const found = rooms.value.find((r) => r.id === currentRoom.value.id)
       if (found) currentRoom.value = found
