@@ -323,3 +323,9 @@ Nguồn API: https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/w
 - Gọi 1-1 giữ nguyên đường phát lời từ chối từ Wazo. Ở phía gọi, nút **Thêm người** và lệnh mời chờ Calld xác nhận bridge với đúng người đối thoại trên đúng SIP Call-ID. Web nhận máy có thể bật nút sau ACK nhận cuộc gọi.
 - Host gọi nhóm tắt audio riêng của từng nhánh mời từ lúc SDK tạo thẻ audio. Host chỉ mở một đường nghe đã xác nhận. Nhánh chưa có đối tác giữ trạng thái đang mời, không được ghép hoặc tính vào số người kết nối. Các thành viên tiếp theo được tính sau khi API hội nghị trả thành công. A tiếp tục là host.
 - Đã kiểm thử frontend bằng SDK và API mô phỏng cho gọi 1-1, gọi B và C ngay từ đầu, mời C khi đang nói với B, ghép thành công và cuộc gọi kết thúc trong lúc chờ API. Chưa kiểm tra âm thanh trên tổng đài thật. Nếu Wazo trộn thông báo của C vào luồng A–B từ phía máy chủ, Web không thể tách lời đó khỏi luồng thoại.
+
+## Thử nghiệm danh bạ phân trang — 24/11/2026
+
+Nhánh thử `codex/directory-search-pagination` bổ sung Gần đây, tìm trực tiếp qua trang Dird, yêu thích theo nhu cầu và bộ chọn thành viên độc lập với trang. Luồng gọi, chat, CDR và nhóm tra cứu theo định danh, presence theo lô. Lọc bộ phận xác nhận mô tả qua Confd theo UUID nếu Dird không trả trường. Bản thử chưa có tab Online/Offline toàn cục vì còn phải xác minh nguồn và quyền trên Wazo thật.
+
+Chạy nghiệm thu với token người dùng thường. Kiểm tra nguồn `default`, tra tên có dấu/không dấu, máy lẻ ngoài 1.000 mục đầu, hai trang kế tiếp, quyền Confd, Web–Android, từ chối gọi và gọi lại từ lịch sử. Đo tải trên môi trường kiểm thử khi có fixture đại diện và đối chiếu số request Dird/Chatd. [Kế hoạch và tình huống](../../tasks/plan.md) · [Checklist](../../tasks/todo.md).

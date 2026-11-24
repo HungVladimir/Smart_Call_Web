@@ -496,18 +496,6 @@ export class ChatService {
 
         const token = this.authService.getToken()
         if (token) {
-          // Nạp danh bạ khi chưa có để xác định tên hiển thị trong phòng chat riêng.
-          if (
-            !this.contactService.currentContacts ||
-            this.contactService.currentContacts.length === 0
-          ) {
-            try {
-              await this.contactService.getContacts()
-            } catch (e) {
-              /* ignore */
-            }
-          }
-
           const host = this.authService.host.startsWith('http')
             ? this.authService.host
             : `https://${this.authService.host}`
@@ -530,6 +518,22 @@ export class ChatService {
               this.authService.getCurrentExtension() ||
               localStorage.getItem('smartcall_extension') ||
               ''
+            const missing = new Set()
+            for (const room of items) {
+              for (const user of Array.isArray(room.users) ? room.users : []) {
+                const uuid = typeof user === 'string' ? user : user?.uuid
+                if (uuid && uuid !== myUuid && !this.contactService.findContactByUuid(uuid))
+                  missing.add(uuid)
+              }
+              if (missing.size >= 60) break
+            }
+            if (missing.size && this.contactService.hydrateContactsByUuid) {
+              try {
+                await this.contactService.hydrateContactsByUuid([...missing].slice(0, 60))
+              } catch {
+                /* Chatd vẫn cung cấp dữ liệu phòng nếu Dird chưa sẵn sàng. */
+              }
+            }
 
             // Đồng bộ dữ liệu phòng thật từ máy chủ Wazo
             assertSessionContext(sessionContext)
@@ -928,7 +932,7 @@ export class ChatService {
   }
 
   /** Tìm phòng một-một hiện có theo UUID/máy lẻ hoặc tạo phòng server cần thiết trước khi gửi tin. */
-  async getOrCreateDirectRoom(ext, name, currentUserName = 'Người dùng') {
+  async getOrCreateDirectRoom(ext, name, currentUserName = 'Người dùng', expectedUuid = '') {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (!this.rooms || this.rooms.length === 0) {
@@ -945,25 +949,24 @@ export class ChatService {
       .trim()
     const isSelf = cleanExt === myExt
     const displayTitle = isSelf ? `${name || currentUserName} (Bạn)` : name || `Máy lẻ ${cleanExt}`
+    const targetUuid = isSelf ? myUuid : await this.contactService.resolveUserUuid(cleanExt)
+    assertSessionContext(sessionContext)
+    if (!targetUuid) throw new Error('Không xác định được người nhận từ số máy lẻ này.')
+    if (expectedUuid && expectedUuid !== targetUuid)
+      throw new Error('Máy lẻ đã đổi người sử dụng. Vui lòng chọn lại người nhận.')
+    /** Không tái dùng phòng của người cũ khi máy lẻ đã được cấp cho UUID khác. */
+    function belongsToPeer(room) {
+      if (!room.isDirect) return false
+      if (isSelf) return room.ext === cleanExt
+      return (
+        room.peerUuid === targetUuid ||
+        room.members?.some((member) => (member.uuid || member.id) === targetUuid)
+      )
+    }
 
     // 1. Kiểm tra xem đã có phòng 1-1 Wazo server thật (UUID 36 ký tự) tương ứng với máy lẻ này
     // chưa
-    const foundReal = this.rooms.find(
-      (r) =>
-        !r.id.startsWith('direct-') &&
-        r.isDirect &&
-        (String(r.ext || '')
-          .split('@')[0]
-          .trim() === cleanExt ||
-          (r.members &&
-            r.members.length === 2 &&
-            r.members.some(
-              (m) =>
-                String(m.ext || '')
-                  .split('@')[0]
-                  .trim() === cleanExt,
-            ))),
-    )
+    const foundReal = this.rooms.find((r) => !r.id.startsWith('direct-') && belongsToPeer(r))
 
     if (foundReal) {
       if (isSelf && !foundReal.title.includes('(Bạn)')) {
@@ -971,16 +974,6 @@ export class ChatService {
       }
       return foundReal
     }
-
-    // 2. Tra cứu User UUID của đối phương qua ContactService
-    let targetUuid = null
-    const targetContact = this.contactService.findContactByExtension(cleanExt)
-    if (targetContact?.uuid) {
-      targetUuid = targetContact.uuid
-    } else {
-      targetUuid = await this.contactService.resolveUserUuid(cleanExt)
-    }
-    assertSessionContext(sessionContext)
 
     // 3. Gọi Wazo Chatd API để tìm phòng 1-1 có sẵn hoặc tạo phòng mới trên server tổng đài
     let realRoomUuid = null
@@ -1004,20 +997,28 @@ export class ChatService {
           const checkData = await checkRes.json()
           if (Array.isArray(checkData.items) && checkData.items.length > 0) {
             // Lọc đúng phòng 1-1 thuần túy (đúng 2 user, không phải phòng nhóm)
-            const directItem = checkData.items.find(
-              (it) =>
+            /** Kiểm tra hai UUID thật kể cả khi phiên bản Chatd bỏ qua tham số user_uuid. */
+            function matchesDirectRoom(it) {
+              const users =
                 Array.isArray(it.users) &&
-                it.users.length === 2 &&
+                it.users.map((user) => (typeof user === 'string' ? user : user?.uuid))
+              return (
+                Array.isArray(it.users) &&
+                users.length === 2 &&
+                users.includes(myUuid) &&
+                users.includes(targetUuid) &&
                 (!it.name ||
                   (!it.name.toLowerCase().includes('nhóm') &&
-                    !it.name.toLowerCase().includes('group'))),
-            )
+                    !it.name.toLowerCase().includes('group')))
+              )
+            }
+            const directItem = checkData.items.find(matchesDirectRoom)
             if (directItem) {
               realRoomUuid = directItem.uuid
               logger.info('CHAT', `Tìm thấy phòng 1-1 chuẩn xác trên Wazo Chatd: ${realRoomUuid}`)
             }
           }
-        }
+        } else throw new Error('Chưa kiểm tra được phòng chat hiện có trên Wazo.')
 
         // Bước 3.2: Nếu chưa có phòng trên server, gọi POST /api/chatd/1.0/users/me/rooms để tạo
         if (!realRoomUuid) {
@@ -1059,6 +1060,7 @@ export class ChatService {
       const dummyRoom = this.rooms.find(
         (r) =>
           r.id.startsWith('direct-') &&
+          belongsToPeer(r) &&
           String(r.ext || '')
             .split('@')[0]
             .trim() === cleanExt,
@@ -1092,6 +1094,7 @@ export class ChatService {
         icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
         isDirect: true,
         ext: cleanExt,
+        peerUuid: targetUuid,
         memberCount: 2,
         updatedAt: Date.now(),
         members: [
@@ -1114,6 +1117,7 @@ export class ChatService {
     // 5. Dự phòng ngoại tuyến (Offline Fallback) khi không gọi được server
     let dummy = this.rooms.find(
       (r) =>
+        belongsToPeer(r) &&
         String(r.ext || '')
           .split('@')[0]
           .trim() === cleanExt,
@@ -1126,7 +1130,7 @@ export class ChatService {
     }
 
     dummy = {
-      id: `direct-${cleanExt}`,
+      id: `direct-${targetUuid}`,
       title: displayTitle,
       preview: 'Bắt đầu cuộc trò chuyện...',
       time: 'Mới',
@@ -1134,6 +1138,7 @@ export class ChatService {
       icon: (name || cleanExt || 'U').slice(0, 2).toUpperCase(),
       isDirect: true,
       ext: cleanExt,
+      peerUuid: targetUuid,
       memberCount: 2,
       updatedAt: 0,
       members: [

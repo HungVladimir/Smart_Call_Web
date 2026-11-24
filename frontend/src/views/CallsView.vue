@@ -81,7 +81,26 @@
       />
 
       <!-- CỘT 3: DANH BẠ NHÂN VIÊN (CONTACTS PANEL) -->
+      <PagedContactsPanel
+        v-if="pagedDirectory"
+        :active="directoryActive"
+        :busy="isCalling || isDialing || preparingGroup"
+        :my-extension="userSessionState.extension"
+        :search-query="searchTerm"
+        :recent-contacts="recentContacts"
+        :load-page="loadDirectoryPage"
+        :refresh-presence="refreshVisiblePresence"
+        :selection-revision="groupSelectionRevision"
+        @call="handleCallFromPanel"
+        @message="handleMessage"
+        @favorite="toggleFavorite"
+        @refresh="refreshRecentPresence"
+        @start-group="handleStartGroupCallFromContacts"
+        @clear-search="clearSearch"
+        @clear-recent="clearRecentContacts"
+      />
       <ContactsPanel
+        v-else
         :contacts="contacts"
         :loading-contacts="loadingContacts"
         :is-calling="isCalling"
@@ -108,6 +127,8 @@
       :group="groupCallService.state"
       :my-extension="userSessionState.extension"
       :can-invite-contact="canInviteContact"
+      :load-page="pagedDirectory ? loadDirectoryPage : null"
+      :submitting="submittingInvite"
       @close="closeAddParticipantModal"
       @confirm="confirmAddParticipants"
     />
@@ -115,7 +136,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   callService,
@@ -132,9 +153,51 @@ import DialerPanel from '@/components/call/DialerPanel.vue'
 import ActiveCallPanel from '@/components/call/ActiveCallPanel.vue'
 import ContactsPanel from '@/components/contacts/ContactsPanel.vue'
 import AddParticipantModal from '@/components/call/AddParticipantModal.vue'
+import PagedContactsPanel from '@/components/contacts/PagedContactsPanel.vue'
+import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
 
 // View chỉ nối router/state với service và chuyển dữ liệu cho các cụm giao diện.
 const searchTerm = ref('')
+const pagedDirectory =
+  typeof contactService.searchDirectory === 'function' &&
+  import.meta.env.VITE_SMARTCALL_PAGED_DIRECTORY !== 'false'
+const directoryActive = ref(false)
+const preparingGroup = ref(false)
+const submittingInvite = ref(false)
+const groupSelectionRevision = ref(0)
+let inviteDialogVersion = 0
+/** Hiển thị lịch sử của phiên hiện tại với tên và presence đã biết. */
+const recentContacts = computed(() => (pagedDirectory ? contactService.getRecentContacts() : []))
+
+/** Đọc trang hiện tại và tải trạng thái nền cho riêng các liên hệ trên trang. */
+async function loadDirectoryPage(query) {
+  const page =
+    query.tab === 'favorites'
+      ? await contactService.getFavoritePage(query)
+      : await contactService.searchDirectory(query)
+  if (!query.signal?.aborted) {
+    void contactService.refreshDirectoryPresence(page.contacts)
+    if (!query.department)
+      void contactService.enrichPageDepartments(page.contacts, { signal: query.signal })
+  }
+  return page
+}
+
+/** Làm mới presence của người gần đây mà không mở danh bạ. */
+function refreshRecentPresence() {
+  if (pagedDirectory && directoryActive.value)
+    void contactService.refreshDirectoryPresence(recentContacts.value)
+}
+
+/** Chuyển lệnh tải presence khi panel lấy lại focus hoặc khi socket mở lại. */
+function refreshVisiblePresence(contacts, force) {
+  void contactService.refreshDirectoryPresence(contacts, force)
+}
+
+/** Xóa lịch sử tra liên hệ của phiên đang dùng. */
+function clearRecentContacts() {
+  contactService.clearRecentContacts()
+}
 /**
  * Truyền điều kiện khả dụng của ContactService xuống component dưới dạng hàm, không để UI tự đọc
  * API.
@@ -144,23 +207,32 @@ const canInviteContact = (contact) => contactService.isContactAvailableForCall(c
 const openAddParticipantModal = () => {
   // Chặn thao tác nếu nhánh vừa kết thúc hoặc cuộc gọi chỉ được tổng đài trả lời.
   if (!groupCallService.canInviteParticipants()) return
+  inviteDialogVersion++
   showAddParticipantModal.value = true
 }
 /** Đóng modal mời người; lựa chọn tạm thuộc component và được reset theo vòng đời mở/đóng. */
 const closeAddParticipantModal = () => {
+  inviteDialogVersion++
   showAddParticipantModal.value = false
 }
 /** Service quyết định host/ủy quyền; View chỉ hiển thị lỗi khi không gửi được yêu cầu. */
 const confirmAddParticipants = async (extensions) => {
-  closeAddParticipantModal()
+  if (submittingInvite.value) return
+  const version = inviteDialogVersion
+  submittingInvite.value = true
   try {
-    await groupCallService.addParticipantsToGroupCall(extensions)
+    const targets = pagedDirectory ? await prepareSelectedTargets(extensions) : extensions
+    if (!targets.length || !showAddParticipantModal.value || inviteDialogVersion !== version) return
+    await groupCallService.addParticipantsToGroupCall(targets)
+    if (inviteDialogVersion === version) closeAddParticipantModal()
   } catch (error) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: { message: error.message || 'Không thể thêm người vào cuộc gọi.', type: 'warning' },
       }),
     )
+  } finally {
+    submittingInvite.value = false
   }
 }
 
@@ -169,6 +241,7 @@ const route = useRoute()
 const router = useRouter()
 
 const extension = ref('')
+let autoDialTimer
 
 const dtmfLog = ref('')
 
@@ -178,7 +251,9 @@ const mobileTab = ref('dialer')
  * Đọc danh bạ hiện tại theo cơ chế phản ứng của Vue, không tạo bản sao dữ liệu riêng cho giao
  * diện.
  */
-const contacts = computed(() => contactService.currentContacts)
+const contacts = computed(() =>
+  pagedDirectory ? contactService.getKnownContacts() : contactService.currentContacts,
+)
 
 const loadingContacts = ref(false)
 
@@ -211,6 +286,31 @@ const matchedDialContact = computed(() => {
   )
 })
 
+/** Gợi ý tên cho số đang nhập, bỏ tra cứu nếu người dùng đổi số trước khi hết debounce. */
+function previewDialTarget(value, previous, onCleanup) {
+  if (!pagedDirectory || !directoryActive.value || !/^\d{3,}$/.test(value) || callState.activeCall)
+    return
+  const context = captureSessionContext()
+  /** Chỉ gắn trạng thái của người vẫn còn trong ô nhập hiện tại. */
+  async function lookupPreview() {
+    try {
+      const contact = await contactService.getOrLookupContact(value)
+      if (
+        contact &&
+        directoryActive.value &&
+        extension.value === value &&
+        isSessionContextCurrent(context)
+      )
+        await contactService.refreshDirectoryPresence([contact])
+    } catch {
+      // Service gọi sẽ trình bày lỗi khi người dùng thực sự bấm Gọi.
+    }
+  }
+  const timer = setTimeout(lookupPreview, 300)
+  onCleanup(() => clearTimeout(timer))
+}
+watch(extension, previewDialTarget)
+
 /** Định dạng số giây đàm thoại thành phút:giây để hiển thị trên khung gọi và thanh gọi nhỏ. */
 const formattedDuration = computed(() => {
   const s = callState.activeCall?.duration || 0
@@ -229,6 +329,15 @@ const durationText = computed(() => {
 
 /** Kiểm tra lại số người, trạng thái khả dụng và cuộc gọi đang chạy rồi gọi GroupCallService. */
 const handleStartGroupCallFromContacts = async (extensions) => {
+  if (pagedDirectory) {
+    const targets = await prepareSelectedTargets(extensions)
+    if (targets.length < 2 || !directoryActive.value) return
+    if (isCalling.value || isDialing.value) return
+    mobileTab.value = 'dialer'
+    const result = await groupCallService.startGroupCall(targets)
+    if (result?.success) groupSelectionRevision.value++
+    return
+  }
   let selectedGroupExtensions = [...extensions]
   if (selectedGroupExtensions.length < 2) {
     window.dispatchEvent(
@@ -295,6 +404,44 @@ const handleStartGroupCallFromContacts = async (extensions) => {
   })
 }
 
+/** Xác minh lựa chọn từ nhiều trang một lần, giữ guard phiên và cuộc gọi khi API trả muộn. */
+async function prepareSelectedTargets(contacts) {
+  if (preparingGroup.value) return []
+  const context = captureSessionContext()
+  const generation = callService.callGeneration
+  const callId = callState.activeCall?.callId
+  preparingGroup.value = true
+  try {
+    const result = await contactService.prepareGroupTargets(contacts)
+    if (
+      !isSessionContextCurrent(context) ||
+      generation !== callService.callGeneration ||
+      callState.activeCall?.callId !== callId
+    )
+      return []
+    if (result.rejected.length)
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: { type: 'warning', message: 'Không thể mời: ' + result.rejected.join(', ') },
+        }),
+      )
+    return result.extensions
+  } catch (error) {
+    if (isSessionContextCurrent(context))
+      window.dispatchEvent(
+        new CustomEvent('app-toast', {
+          detail: {
+            type: 'warning',
+            message: error.message || 'Chưa kiểm tra được người được mời.',
+          },
+        }),
+      )
+    return []
+  } finally {
+    preparingGroup.value = false
+  }
+}
+
 /** Nhập số/gửi DTMF trước tiếng phản hồi; phím số không khởi tạo AudioContext đồng bộ. */
 const pressKey = (key) => {
   if (!callState.activeCall) {
@@ -334,9 +481,18 @@ const clearSearch = () => {
 const handleDial = async () => {
   const targetExtension = extension.value.trim()
   if (!targetExtension) return
-  await callService.startCall(targetExtension)
-  extension.value = ''
-  cleanCallQueryParams()
+  const expectedUuid =
+    route.query.number === targetExtension ? String(route.query.peerUuid || '') : ''
+  const context = captureSessionContext()
+  const result = expectedUuid
+    ? await callService.startCall(targetExtension, { expectedUuid })
+    : await callService.startCall(targetExtension)
+  if (pagedDirectory && result?.success && isSessionContextCurrent(context))
+    contactService.rememberRecentContact(contactService.findContactByExtension(targetExtension))
+  if (extension.value.trim() === targetExtension) {
+    if (result?.success || !pagedDirectory) extension.value = ''
+    cleanCallQueryParams()
+  }
 }
 
 /**
@@ -345,7 +501,7 @@ const handleDial = async () => {
  */
 const handleCallFromPanel = async (contact) => {
   if (!contact?.number) return
-  if (['offline', 'unavailable'].includes(contact.status)) {
+  if (!pagedDirectory && ['offline', 'unavailable'].includes(contact.status)) {
     if (
       confirm(
         'Máy lẻ ' + contact.number + ' đang ngoại tuyến. Bạn muốn chuyển sang nhắn tin không?',
@@ -356,11 +512,19 @@ const handleCallFromPanel = async (contact) => {
   }
   mobileTab.value = 'dialer'
   extension.value = ''
-  await callService.startCall(contact.number, { name: contact.name, dept: contact.dept })
+  const context = captureSessionContext()
+  const result = await callService.startCall(contact.number, {
+    name: contact.name,
+    dept: contact.dept,
+    expectedUuid: pagedDirectory ? contact.uuid : undefined,
+  })
+  if (pagedDirectory && result?.success && isSessionContextCurrent(context))
+    contactService.rememberRecentContact(contact)
 }
 
 /** Mở MessagesView với định danh liên hệ để service tìm/tạo phòng một-một đúng người. */
 const handleMessage = (contact) => {
+  if (pagedDirectory) contactService.rememberRecentContact(contact)
   const ext = contact.number || (contact.email ? contact.email.split('@')[0] : contact.id)
   router.push({
     path: '/messages',
@@ -442,6 +606,7 @@ const cleanCallQueryParams = () => {
     const remainingQuery = { ...route.query }
     delete remainingQuery.number
     delete remainingQuery.autocall
+    delete remainingQuery.peerUuid
     delete remainingQuery.active
     delete remainingQuery.direction
     delete remainingQuery.name
@@ -564,6 +729,7 @@ watch(
 watch(
   () => route.query.number,
   (newNum) => {
+    clearTimeout(autoDialTimer)
     if (newNum) {
       if (route.query.active === 'true' || isCalling.value) {
         // Đang trong cuộc gọi (hoặc vừa nhận cuộc gọi từ Modal), không đưa số vào ô nhập bàn phím
@@ -573,9 +739,18 @@ watch(
       extension.value = String(newNum)
       if (route.query.autocall === 'true') {
         if (!callState.activeCall && !callService.hasActiveCall()) {
-          setTimeout(() => {
-            handleDial()
-          }, 150)
+          const context = captureSessionContext()
+          /** Chỉ tự quay đúng số ban đầu nếu lệnh URL, ô nhập và phiên còn khớp. */
+          function dialFromRoute() {
+            if (
+              route.path === '/calls' &&
+              String(route.query.number) === String(newNum) &&
+              extension.value === String(newNum) &&
+              isSessionContextCurrent(context)
+            )
+              void handleDial()
+          }
+          autoDialTimer = setTimeout(dialFromRoute, 150)
         } else {
           cleanCallQueryParams()
         }
@@ -590,6 +765,7 @@ watch(
   () => callState.activeCall,
   (newCall, oldCall) => {
     if (!newCall && oldCall) {
+      closeAddParticipantModal()
       extension.value = ''
       cleanCallQueryParams()
     }
@@ -598,16 +774,19 @@ watch(
 
 /** Làm mới danh bạ nền khi tab được người dùng chú ý trở lại. */
 const onWindowFocus = () => {
-  loadContacts(true)
+  if (pagedDirectory) refreshRecentPresence()
+  else loadContacts(true)
 }
 
 /** Nhận yêu cầu làm mới danh bạ từ các thành phần khác và dùng cùng loadContacts. */
 const onRefreshContactsEvent = () => {
-  loadContacts(true)
+  if (pagedDirectory) refreshRecentPresence()
+  else loadContacts(true)
 }
 
 /** Đăng ký sự kiện của màn hình gọi trong suốt vòng đời component. */
 function registerCallViewListeners() {
+  if (pagedDirectory) activateCallsView()
   window.addEventListener('smartcall-call-ended', onCallEnded)
   window.addEventListener('smartcall-refresh-contacts', onRefreshContactsEvent)
   window.addEventListener('focus', onWindowFocus)
@@ -615,12 +794,21 @@ function registerCallViewListeners() {
 
 /** Nhận từ khóa trong URL và tải danh bạ khi màn hình gọi được hiển thị. */
 function activateCallsView() {
+  directoryActive.value = true
   if (route.query.q) searchTerm.value = String(route.query.q)
-  loadContacts(contacts.value.length > 0)
+  if (pagedDirectory) refreshRecentPresence()
+  else loadContacts(contacts.value.length > 0)
+}
+
+/** Hủy truy vấn tìm khi rời tab giữ bằng KeepAlive. */
+function deactivateDirectory() {
+  directoryActive.value = false
+  clearTimeout(autoDialTimer)
 }
 
 /** Gỡ listener và xóa nhật ký bàn phím khi component kết thúc vòng đời. */
 function disposeCallsView() {
+  clearTimeout(autoDialTimer)
   window.removeEventListener('smartcall-call-ended', onCallEnded)
   window.removeEventListener('smartcall-refresh-contacts', onRefreshContactsEvent)
   window.removeEventListener('focus', onWindowFocus)
@@ -629,6 +817,7 @@ function disposeCallsView() {
 
 onMounted(registerCallViewListeners)
 onActivated(activateCallsView)
+onDeactivated(deactivateDirectory)
 onUnmounted(disposeCallsView)
 </script>
 

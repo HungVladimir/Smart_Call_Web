@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import { normalizeDirectoryText as removeVietnameseTones } from '../utils/contactMapper.js'
 
 /** Lọc danh bạ cho giao diện; không tải API và không giữ bản sao của state liên hệ. */
 export function useContactFilters({ getContacts, isAvailableForCall, getCurrentExtension }) {
@@ -31,17 +32,6 @@ export function useContactFilters({ getContacts, isAvailableForCall, getCurrentE
     if (selectedDepartment.value === 'all') return getContacts().length
     return getDepartmentCount(selectedDepartment.value)
   })
-
-  /** Bỏ dấu tiếng Việt và chuẩn hóa chữ để tìm kiếm không phân biệt dấu/hoa thường. */
-  const removeVietnameseTones = (str) => {
-    return (str || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/đ/g, 'd')
-      .replace(/Đ/g, 'D')
-      .toLowerCase()
-      .trim()
-  }
 
   /** Kết hợp từ khóa, tab, phòng ban và điều kiện gọi nhóm để trả danh sách liên hệ hiển thị. */
   const filteredContacts = computed(() => {

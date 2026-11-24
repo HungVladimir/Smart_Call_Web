@@ -713,7 +713,11 @@ export class CallService {
     if (!sipId || !target || String(call?.sip_call_id || '') !== sipId) return ''
     if (!Array.isArray(call.bridges) || !call.bridges.length || !call.talking_to) return ''
 
-    const expectedUuid = this.contactService.findContactByExtension(target)?.uuid
+    const active = callState.activeCall
+    const expectedUuid =
+      normalizeExtension(active?.number) === target && active?.peerUuid
+        ? active.peerUuid
+        : this.contactService.findContactByExtension(target)?.uuid
     const peers = Object.entries(call.talking_to)
     for (const [peerId, peerUuid] of peers) {
       if (peerId && expectedUuid && peerUuid === expectedUuid) return peerId
@@ -1125,8 +1129,11 @@ export class CallService {
     this.isDialing = true
     try {
       let target = this.contactService.findContactByExtension(targetExtension)
-      if (!target && !meta.allowUnknown)
-        target = await this.contactService.getOrLookupContact(targetExtension)
+      const verifyTarget =
+        !meta.allowUnknown &&
+        (!target || this.contactService.isPagedIdentity(target) || meta.expectedUuid)
+      if (verifyTarget) target = await this.contactService.getOrLookupContact(targetExtension)
+      if (verifyTarget && target) await this.contactService.refreshDirectoryPresence([target])
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
@@ -1134,6 +1141,8 @@ export class CallService {
       if (this.hasActiveCall()) return reject('BUSY_LOCAL', 'Đã có cuộc gọi khác đang hoạt động.')
       if (!target && !meta.allowUnknown)
         return reject('TARGET_NOT_FOUND', 'Không tìm thấy máy lẻ trong danh bạ hệ thống.')
+      if (meta.expectedUuid && target?.uuid !== meta.expectedUuid)
+        return reject('TARGET_CHANGED', 'Máy lẻ đã đổi người sử dụng. Vui lòng tìm và chọn lại.')
       const restriction = getContactCallRestriction(target)
       if (restriction) return reject(restriction.reason, restriction.message)
       if (navigator.mediaDevices?.enumerateDevices) {
@@ -1153,6 +1162,7 @@ export class CallService {
         session: null,
         callId: localCallId,
         number: targetExtension,
+        peerUuid: target?.uuid || '',
         name: meta.name || target?.name || 'Máy lẻ ' + targetExtension,
         dept: meta.dept || target?.dept || '',
         direction: 'outbound',

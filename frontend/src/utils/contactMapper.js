@@ -1,3 +1,13 @@
+/** Chuẩn hóa tên để lọc tiếng Việt trong tập mục đã tải, không đổi từ khóa gửi lên Wazo. */
+export function normalizeDirectoryText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/đ/gi, 'd')
+    .toLocaleLowerCase('vi')
+    .trim()
+}
+
 /**
  * Chuẩn hóa hai dạng phản hồi Dird (items hoặc bảng cột) thành Contact dùng cho Web.
  * Hàm thuần: không gọi API, không sửa state và không ghi localStorage.
@@ -10,7 +20,10 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
       ...Object.fromEntries(
         data.column_types.map((column, index) => [column, row.column_values?.[index]]),
       ),
-      id: row.id || row.column_values?.[data.column_types.indexOf('id')],
+      id:
+        row.relations?.source_entry_id ||
+        row.id ||
+        row.column_values?.[data.column_types.indexOf('id')],
       uuid: row.relations?.user_uuid,
       source: row.source || row.backend,
       favorited: row.favorited,

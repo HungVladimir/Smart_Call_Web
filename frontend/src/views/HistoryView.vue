@@ -219,7 +219,6 @@ import { useRecordingPlayer } from '../composables/useRecordingPlayer.js'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { historyService } from '@/services/index.js'
-import { contactService } from '@/services/index.js'
 import { recordingService } from '@/services/index.js'
 import { callState } from '@/state/callState.js'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
@@ -438,22 +437,12 @@ const handleCallback = (call) => {
     alert('Không tìm thấy số máy lẻ để gọi lại!')
     return
   }
-  const target = contactService.findContactByExtension(call.extension)
-  if (target && (target.status === 'offline' || target.status === 'unavailable')) {
-    const confirmMessage = confirm(
-      `Máy lẻ [${target.name || call.extension}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
-    )
-    if (confirmMessage) {
-      router.push({ path: '/messages', query: { ext: call.extension, name: target.name } })
-    }
-    return
-  }
-
   router.push({
     path: '/calls',
     query: {
       number: call.extension,
       autocall: 'true',
+      ...(call.peerUuid ? { peerUuid: call.peerUuid } : {}),
     },
   })
 }
@@ -465,6 +454,7 @@ const handleChat = (call) => {
     query: {
       name: call.name,
       ext: call.extension,
+      ...(call.peerUuid ? { uuid: call.peerUuid } : {}),
     },
   })
 }

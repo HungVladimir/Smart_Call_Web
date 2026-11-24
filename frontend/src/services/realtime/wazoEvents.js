@@ -27,10 +27,11 @@ export class EventConnection {
    * Giữ AuthService và callback xử lý envelope, chuẩn bị thế hệ socket/reconnect để callback cũ bị
    * vô hiệu.
    */
-  constructor({ authService, onEnvelope, onConnected = () => {} }) {
+  constructor({ authService, onEnvelope, onConnected = () => {}, onDisconnected = () => {} }) {
     this.authService = authService
     this.onEnvelope = onEnvelope
     this.onConnected = onConnected
+    this.onDisconnected = onDisconnected
     this.socket = null
     this.connectedAt = 0
     this.retryTimer = null
@@ -93,6 +94,7 @@ export class EventConnection {
         if (!current()) return
         this.socket = null
         eventConnectionState.status = 'disconnected'
+        this.onDisconnected()
         const revoked =
           [4001, 4003, 4401].includes(event.code) ||
           /401|expired|invalid|session|kicked/i.test(event.reason || '')

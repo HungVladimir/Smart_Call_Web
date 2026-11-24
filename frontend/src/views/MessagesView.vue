@@ -348,7 +348,17 @@
 
           <label class="form-label"> CHỌN ĐỒNG NGHIỆP THAM GIA (TỐI THIỂU 2 NGƯỜI): </label>
           <div class="contact-select-box">
-            <div v-if="availableContactsForGroup.length === 0" class="no-contacts-hint">
+            <div
+              v-if="groupDirectory.loading.value && !availableContactsForGroup.length"
+              class="no-contacts-hint"
+            >
+              Đang tìm đồng nghiệp…
+            </div>
+            <div v-else-if="groupDirectory.error.value" class="no-contacts-hint" role="alert">
+              {{ groupDirectory.error.value }}
+              <button type="button" @click="groupDirectory.retry">Thử lại</button>
+            </div>
+            <div v-else-if="availableContactsForGroup.length === 0" class="no-contacts-hint">
               Không tìm thấy đồng nghiệp phù hợp trong danh bạ
             </div>
             <label
@@ -375,6 +385,14 @@
                 {{ getStatusLabel(c.status) }}
               </span>
             </label>
+            <button
+              v-if="groupDirectory.nextOffset.value !== null && !groupDirectory.error.value"
+              type="button"
+              :disabled="groupDirectory.loading.value"
+              @click="groupDirectory.loadMore"
+            >
+              Xem thêm
+            </button>
           </div>
 
           <div class="select-counter-hint" :class="{ valid: selectedGroupMemberUuids.length >= 2 }">
@@ -384,6 +402,19 @@
               nhóm)</span
             >
             <span v-else> (Đủ điều kiện tạo nhóm)</span>
+          </div>
+          <div
+            v-if="pagedDirectory && selectedGroupMemberUuids.length"
+            aria-label="Đồng nghiệp đã chọn"
+          >
+            <button
+              v-for="uuid in selectedGroupMemberUuids"
+              :key="uuid"
+              type="button"
+              @click="toggleSelectGroupMember(uuid)"
+            >
+              {{ contactService.findContactByUuid(uuid)?.name || 'Đồng nghiệp' }} ×
+            </button>
           </div>
         </div>
 
@@ -608,6 +639,7 @@ import { contactService } from '@/services/index.js'
 import { authService, groupCallService } from '@/services/index.js'
 import { userSessionState } from '@/state/sessionState.js'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
+import { useDirectoryPages } from '@/composables/useDirectoryPages.js'
 
 let viewActive = true
 let roomSelectionVersion = 0
@@ -623,6 +655,25 @@ const pendingForwardMessages = ref([])
 const newGroupTitle = ref('')
 const groupContactSearch = ref('')
 const selectedGroupMemberUuids = ref([])
+const pagedDirectory =
+  typeof contactService.searchDirectory === 'function' &&
+  import.meta.env.VITE_SMARTCALL_PAGED_DIRECTORY !== 'false'
+
+/** Chỉ tải danh bạ cho bộ chọn thành viên khi modal đang mở. */
+function getGroupDirectoryQuery() {
+  if (!pagedDirectory || !showCreateGroupModal.value) return null
+  const term = groupContactSearch.value.trim()
+  return { term, waitForInput: term.length === 1 }
+}
+
+/** Bổ sung presence của trang đang chọn mà không chặn kết quả tìm tên. */
+async function requestGroupDirectoryPage(query) {
+  const page = await contactService.searchDirectory(query)
+  if (!query.signal?.aborted) void contactService.refreshDirectoryPresence(page.contacts)
+  return page
+}
+
+const groupDirectory = useDirectoryPages(getGroupDirectoryQuery, requestGroupDirectoryPage)
 const isSubmittingGroup = ref(false)
 const messageListRef = ref(null)
 const isLoadingRooms = ref(false)
@@ -894,6 +945,8 @@ const getStatusLabel = (status) => {
       return 'Đang đổ chuông'
     case 'away':
       return 'Vắng mặt'
+    case 'unknown':
+      return 'Chưa rõ'
     case 'dnd':
       return 'Không làm phiền'
     default:
@@ -912,7 +965,7 @@ const getContactAvatarBg = (contact) => {
 
 // Danh sách đồng nghiệp từ danh bạ Wazo có thể chọn để tạo nhóm chat
 const availableContactsForGroup = computed(() => {
-  const list = contactService.currentContacts || []
+  const list = pagedDirectory ? groupDirectory.contacts.value : contactService.currentContacts || []
   const myExt = (
     userSessionState.extension ||
     localStorage.getItem('smartcall_extension') ||
@@ -926,11 +979,12 @@ const availableContactsForGroup = computed(() => {
   const q = groupContactSearch.value.trim().toLowerCase()
 
   return list.filter((c) => {
+    if (!c.uuid) return false
     // Loại trừ chính mình
     if (c.uuid && myUuid && c.uuid === myUuid) return false
     if (c.number && myExt && c.number === myExt) return false
     // Lọc theo từ khóa tìm kiếm
-    if (q) {
+    if (q && !pagedDirectory) {
       const matchName = (c.name || '').toLowerCase().includes(q)
       const matchExt = (c.number || '').toLowerCase().includes(q)
       return matchName || matchExt
@@ -1058,40 +1112,22 @@ const checkDirectChatRoute = async () => {
     const selectionVersion = ++roomSelectionVersion
     const context = captureSessionContext()
     const ext = String(route.query.ext).split('@')[0].trim()
+    const expectedUuid = String(route.query.uuid || '')
     const isSelf = ext === currentUserExt.value
     const rawName = route.query.name ? String(route.query.name) : `Máy lẻ ${ext}`
     const name = isSelf && !rawName.includes('(Bạn)') ? `${rawName} (Bạn)` : rawName
-
-    // 1. Tìm ngay trong RAM (0ms) - Bắt buộc phải là phòng 1-1 (isDirect)
-    let target = chatService.rooms.find(
-      (r) =>
-        r.isDirect &&
-        (String(r.ext || '')
-          .split('@')[0]
-          .trim() === ext ||
-          (r.members &&
-            r.members.length === 2 &&
-            r.members.some(
-              (m) =>
-                String(m.ext || '')
-                  .split('@')[0]
-                  .trim() === ext,
-            ))),
-    )
-
-    if (target) {
-      if (isSelf && !target.title.includes('(Bạn)')) {
-        target.title = `${target.title} (Bạn)`
-      }
-      currentRoom.value = target
-    }
 
     // Xóa sạch query URL ngay lập tức để tránh re-trigger khi switch tab
     router.replace({ path: '/messages', query: {} }).catch(() => {})
 
     // 2. Phân giải hoặc nâng cấp phòng Wazo Chatd server thật
     try {
-      const serverRoom = await chatService.getOrCreateDirectRoom(ext, name, currentUserName.value)
+      const serverRoom = await chatService.getOrCreateDirectRoom(
+        ext,
+        name,
+        currentUserName.value,
+        expectedUuid,
+      )
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (
@@ -1109,7 +1145,16 @@ const checkDirectChatRoute = async () => {
         }
       }
     } catch (err) {
-      console.warn('Lỗi phân giải phòng chat direct:', err)
+      if (
+        viewActive &&
+        selectionVersion === roomSelectionVersion &&
+        isSessionContextCurrent(context)
+      )
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: { type: 'warning', message: err.message || 'Chưa xác định được người nhận.' },
+          }),
+        )
     }
 
     scrollToBottom()
@@ -1193,6 +1238,7 @@ onActivated(async () => {
 // bị hủy.
 onDeactivated(() => {
   viewActive = false
+  showCreateGroupModal.value = false
   syncVisibleRoom()
   roomSelectionVersion += 1
 })
@@ -1226,7 +1272,10 @@ const openCreateGroupModal = (initialContact = null, messagesToForward = []) => 
   pendingForwardMessages.value = Array.isArray(messagesToForward) ? [...messagesToForward] : []
 
   // Đảm bảo danh bạ đã nạp đầy đủ
-  if (!contactService.currentContacts || contactService.currentContacts.length === 0) {
+  if (
+    !pagedDirectory &&
+    (!contactService.currentContacts || contactService.currentContacts.length === 0)
+  ) {
     contactService.getContacts().catch(() => {})
   }
 
@@ -1419,7 +1468,20 @@ const startVoiceCall = async () => {
   isStartingVoiceCall.value = true
   try {
     if (currentRoom.value.isDirect) {
-      const targetExt = String(currentRoom.value.ext || '').trim()
+      const myUuid = authService.getCurrentUserUuid?.()
+      const peer = room.members?.find((member) => (member.uuid || member.id) !== myUuid)
+      const peerUuid = room.peerUuid || peer?.uuid || peer?.id
+      if (pagedDirectory && peerUuid && !contactService.findContactByUuid(peerUuid)) {
+        try {
+          await contactService.hydrateContactsByUuid([peerUuid])
+        } catch {
+          /* Máy lẻ lưu trong phòng vẫn được kiểm tra khi quay. */
+        }
+      }
+      if (!isSessionContextCurrent(context) || currentRoom.value?.id !== room.id) return
+      const targetExt = String(
+        (peerUuid && contactService.findContactByUuid(peerUuid)?.number) || room.ext || '',
+      ).trim()
       if (!targetExt) {
         window.dispatchEvent(
           new CustomEvent('app-toast', {
@@ -1433,7 +1495,11 @@ const startVoiceCall = async () => {
       }
       window.dispatchEvent(
         new CustomEvent('app-action', {
-          detail: { type: 'dial', value: targetExt },
+          detail: {
+            type: 'dial',
+            value: targetExt,
+            ...(peerUuid && pagedDirectory ? { peerUuid } : {}),
+          },
         }),
       )
       // App mở /calls kèm number/autocall; điều hướng lần hai sẽ làm mất lệnh tự gọi.
@@ -1448,6 +1514,18 @@ const startVoiceCall = async () => {
       const myUuid = String(
         userSessionState.userUuid || localStorage.getItem('smartcall_user_uuid') || '',
       ).trim()
+      if (pagedDirectory) {
+        const missing = currentRoomMembers.value
+          .filter((member) => !member.ext && !member.number)
+          .map((member) => member.uuid || member.id)
+          .filter((uuid) => uuid && uuid !== myUuid)
+        try {
+          await contactService.hydrateContactsByUuid(missing)
+        } catch {
+          /* Giữ các máy lẻ đã biết nếu Dird gặp lỗi. */
+        }
+        if (!isSessionContextCurrent(context) || currentRoom.value?.id !== room.id) return
+      }
       const memberExts = []
       for (const m of currentRoomMembers.value) {
         const mId = m.id || m.uuid

@@ -138,11 +138,31 @@ export class GroupCallService {
       return { success: false, reason: 'NO_VALID_TARGETS' }
     }
 
+    const generation = this.callService.callGeneration
+    const unresolved = cleanList.filter((extension) => this.needsInviteTarget(extension))
+    const verified = new Set()
+    if (unresolved.length) {
+      const result = await this.contactService.prepareGroupTargets(unresolved)
+      for (const extension of result.extensions) verified.add(extension)
+      // Trong lúc kiểm tra đích, người dùng có thể đã thực hiện một cuộc gọi khác.
+      if (
+        !isSessionContextCurrent(sessionContext) ||
+        generation !== this.callService.callGeneration ||
+        this.callService.hasActiveCall() ||
+        this.callService.isDialing ||
+        this.state.isGroupCall
+      )
+        return { success: false, reason: 'CANCELED' }
+    }
+
     // Lọc loại bỏ các máy lẻ đang bận (talking/holding), đang đổ chuông (ringing/progressing), không làm phiền (dnd) hoặc offline
     const availableTargets = []
     const busyTargets = []
     for (const ext of cleanList) {
-      if (this.contactService.isContactAvailableForCall(ext)) {
+      if (
+        (!unresolved.includes(ext) || verified.has(ext)) &&
+        this.contactService.isContactAvailableForCall(ext)
+      ) {
         availableTargets.push(ext)
       } else {
         const c = this.contactService.findContactByExtension(ext)
@@ -258,7 +278,42 @@ export class GroupCallService {
     // Modal có thể còn mở sau khi nhánh thoại kết thúc hoặc tổng đài chỉ phát thông báo.
     if (!this.canInviteParticipants())
       throw new Error('Chỉ thêm người sau khi đã xác nhận người đối thoại.')
-    return this.dialGroupParticipants(extensions)
+    const unresolved = extensions.filter((extension) => this.needsInviteTarget(extension))
+    let eligible = extensions
+    if (unresolved.length) {
+      const context = captureSessionContext()
+      const generation = this.callService.callGeneration
+      const callId = callState.activeCall?.callId
+      const result = await this.contactService.prepareGroupTargets(unresolved)
+      if (
+        !isSessionContextCurrent(context) ||
+        generation !== this.callService.callGeneration ||
+        callState.activeCall?.callId !== callId ||
+        !this.canInviteParticipants()
+      )
+        return
+      eligible = extensions.filter(
+        (extension) => !unresolved.includes(extension) || result.extensions.includes(extension),
+      )
+      if (result.rejected.length)
+        window.dispatchEvent(
+          new CustomEvent('app-toast', {
+            detail: { type: 'warning', message: 'Không thể mời: ' + result.rejected.join(', ') },
+          }),
+        )
+    }
+    if (eligible.length) return this.dialGroupParticipants(eligible)
+  }
+
+  /** Host có thể nhận yêu cầu mời máy lẻ chưa từng thấy khi thành viên chọn từ trang khác. */
+  needsInviteTarget(extension) {
+    const contact = this.contactService.findContactByExtension(extension)
+    if (this.contactService.isPagedIdentity(contact))
+      return (
+        !this.contactService.isVerifiedExtensionOwner(contact) ||
+        this.contactService.directoryContactStatus(contact.uuid).status === 'unknown'
+      )
+    return !contact && !this.contactService.isContactAvailableForCall(extension)
   }
 
   /** Điều phối các nhánh đã yêu cầu, gồm lời mời ban đầu khi cả nhóm còn đang đổ chuông. */
@@ -998,10 +1053,8 @@ export class GroupCallService {
     if (this._groupSyncRequestKeys.has(key)) return false
     const host = this.state.groupHostExtension || normalizeExtension(call.number || call.extension)
     let contact = this.contactService.findContactByExtension(host)
-    if (!contact?.uuid && typeof this.contactService.getContacts === 'function') {
-      await this.contactService.getContacts()
-      contact = this.contactService.findContactByExtension(host)
-    }
+    if (!contact?.uuid && typeof this.contactService.getOrLookupContact === 'function')
+      contact = await this.contactService.getOrLookupContact(host)
     if (
       !contact?.uuid ||
       !isSessionContextCurrent(context) ||

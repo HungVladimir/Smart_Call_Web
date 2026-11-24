@@ -57,11 +57,20 @@ export function createServices(sdk) {
   const eventConnection = new EventConnection({
     authService,
     onEnvelope: (envelope) => handleWazoEvent(eventContext, envelope),
-    onConnected: () =>
-      groupCallService
-        ._requestGroupStateSync('socket-' + groupCallService._createGroupSignalId())
-        .catch(() => {}),
+    onConnected: resyncConnectedServices,
+    onDisconnected: markDirectoryPresenceStale,
   })
+  /** Trạng thái từ socket cũ không còn đủ tin cậy sau khi mất kết nối. */
+  function markDirectoryPresenceStale() {
+    contactService.invalidateDirectoryPresence()
+  }
+  /** Khôi phục hội nghị và yêu cầu các view đang mở đồng bộ lại presence sau reconnect. */
+  function resyncConnectedServices() {
+    window.dispatchEvent(new Event('smartcall-directory-reconnect'))
+    return groupCallService
+      ._requestGroupStateSync('socket-' + groupCallService._createGroupSignalId())
+      .catch(() => {})
+  }
   eventContext.eventConnection = eventConnection
   authService.attachLifecycle({
     callService,

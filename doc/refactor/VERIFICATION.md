@@ -55,6 +55,12 @@ npm --prefix frontend run format:check
 
 Trước khi dùng thay bản gốc, thử login/restore/revoke hai thiết bị; gọi/nhận/cúp; host/nhánh phụ; ghi âm và CDR; Chatd tombstone; thiết bị mic/loa và chứng chỉ trên tổng đài thật.
 
+## Nhánh thử danh bạ phân trang — 24/11/2026
+
+`npm run check` đạt lint, kiểm tra kiến trúc, 206 test frontend và build. Backend đạt 44 test. Bộ test mới mô phỏng 3.000 liên hệ, người ngoài 1.000 mục đầu, quay số và mở phòng chat với cache rỗng, gọi lại sau khi đổi chủ máy lẻ, mời qua nhiều truy vấn, thiếu quyền đọc phòng ban và REST presence đến muộn.
+
+Nghiệm thu Wazo công ty bằng tài khoản thường. Kiểm tra tên có dấu/không dấu, mã máy lẻ chính xác, phân trang, bộ phận, hai máy Web gọi/mời thêm Android và gọi lại từ lịch sử. Kiểm tra request khi mở Gần đây, khi kết nối lại và khi đổi từ khóa. Tải đồng thời và quyền Confd trên máy chủ triển khai vẫn cần đo.
+
 ## Bổ sung khi gom service và giải thích code
 
 Services có 6 nhóm auth/calls/audio/realtime/data/common, một cấp nhóm; index.js/createServices.js ở gốc. Toàn frontend vẫn 53 file với 20 thư mục con. Bộ 121 test được giữ nguyên, không thêm test chỉ để kiểm tra nội dung comment. Comment được kiểm chứng bằng đối chiếu AST và template/style với snapshot trước khi chú thích; kết quả cuối: 461/461 mục có giải thích, AST của 52 module không đổi, template/style không đổi; 121/121 test, lint, architecture, build và format:check đều đạt.
