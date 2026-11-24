@@ -73,6 +73,7 @@
         :my-extension="userSessionState.extension"
         :duration-text="durationText"
         :dtmf-log="dtmfLog"
+        :can-add-participant="groupCallService.canInviteParticipants()"
         @mute="toggleMute"
         @record="toggleRecord"
         @hangup="hangupCall"
@@ -141,6 +142,8 @@ const searchTerm = ref('')
 const canInviteContact = (contact) => contactService.isContactAvailableForCall(contact)
 /** Mở modal lựa chọn người; việc mời thật chỉ bắt đầu sau khi người dùng xác nhận. */
 const openAddParticipantModal = () => {
+  // Chặn thao tác nếu nhánh vừa kết thúc hoặc cuộc gọi chỉ được tổng đài trả lời.
+  if (!groupCallService.canInviteParticipants()) return
   showAddParticipantModal.value = true
 }
 /** Đóng modal mời người; lựa chọn tạm thuộc component và được reset theo vòng đời mở/đóng. */

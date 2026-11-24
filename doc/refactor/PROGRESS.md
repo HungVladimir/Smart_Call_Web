@@ -317,3 +317,9 @@ Cách test:
 Kiểm chứng: 43/43 test backend, 185/185 test frontend (18 file), lint/architecture/build/format:check/pip check đạt. Có test description tạo mới, cập nhật tài khoản cũ, bỏ qua trùng/rỗng, token sai không ghi, lỗi PUT thu hồi token, mapper/search/filter và fallback Confd có guard phiên. Chưa gọi ghi tài khoản thật trên Wazo công ty trong lượt này. Build còn cảnh báo chunk lớn đã có. Đoạn uvicorn người dùng thêm trong backend/main.py được giữ ngoài commit.
 
 Nguồn API: https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/wazo_confd/plugins/user/schema.py (description) và https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/wazo_confd/helpers/restful.py (PUT partial).
+
+## Xử lý lời tổng đài khi từ chối cuộc gọi — 23/11/2026
+
+- Gọi 1-1 giữ nguyên đường phát lời từ chối từ Wazo. Ở phía gọi, nút **Thêm người** và lệnh mời chờ Calld xác nhận bridge với đúng người đối thoại trên đúng SIP Call-ID. Web nhận máy có thể bật nút sau ACK nhận cuộc gọi.
+- Host gọi nhóm tắt audio riêng của từng nhánh mời từ lúc SDK tạo thẻ audio. Host chỉ mở một đường nghe đã xác nhận. Nhánh chưa có đối tác giữ trạng thái đang mời, không được ghép hoặc tính vào số người kết nối. Các thành viên tiếp theo được tính sau khi API hội nghị trả thành công. A tiếp tục là host.
+- Đã kiểm thử frontend bằng SDK và API mô phỏng cho gọi 1-1, gọi B và C ngay từ đầu, mời C khi đang nói với B, ghép thành công và cuộc gọi kết thúc trong lúc chờ API. Chưa kiểm tra âm thanh trên tổng đài thật. Nếu Wazo trộn thông báo của C vào luồng A–B từ phía máy chủ, Web không thể tách lời đó khỏi luồng thoại.

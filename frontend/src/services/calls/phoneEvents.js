@@ -146,110 +146,24 @@ function createCallAcceptedHandler(callService) {
     // Chỉ xử lý event đã khớp nhánh SIP đang quản lý; event tới sớm được giữ tạm, event của nhánh
     // khác bị bỏ qua.
     if (!callService.acceptManagedCallEvent('accepted', callSession)) return
-    callService.answeredSipIds.add(callService.getSipSessionId(callSession))
     // Không dựng lại cuộc gọi từ event đến muộn khi cả nhánh active và incoming đã được dọn.
     if (!callState.activeCall && !callState.incomingCall) return
     const acceptedEpoch = callService.callGeneration
     const acceptedContext = captureSessionContext()
-    // 1. Kiểm tra xem session này có phải là nhánh phụ (Secondary Leg) trong cuộc gọi nhóm hay
-    // không
-    const acceptedSipId =
-      callSession?.sipCallId || (callSession?.getId && callSession.getId()) || callSession?.id
-    let isSecondaryLeg = false
-    let matchedSecExt = null
-    for (const [
-      secExt,
-      secSession,
-    ] of callService.groupCallService.state.secondaryCallSessions.entries()) {
-      const secSipId =
-        secSession?.sipCallId || (secSession?.getId && secSession.getId()) || secSession?.id
-      // Đối chiếu ID nhánh/hội nghị hiện tại; không dùng sự kiện hoặc kết quả của cuộc gọi khác để
-      // đổi state.
-      if (
-        secSession === callSession ||
-        (acceptedSipId && secSipId && String(secSipId) === String(acceptedSipId))
-      ) {
-        isSecondaryLeg = true
-        matchedSecExt = secExt
-        break
-      }
-    }
-
-    // Xử lý riêng cho nhánh phụ (Secondary Leg) trong cuộc gọi nhóm do Host điều phối
+    // SIP accepted có thể là Playback/voicemail. Với host gọi nhóm, chỉ Calld được xác nhận
+    // người nghe và mở audio. Giữ timer mời để nhánh chỉ có thông báo vẫn được dọn.
     if (
       callService.groupCallService.state.isGroupCall &&
-      callService.groupCallService.state.isGroupHost &&
-      isSecondaryLeg
+      callService.groupCallService.state.isGroupHost
     ) {
-      logger.success(
-        'CALL',
-        `🟢 Nhánh phụ [${matchedSecExt || 'N/A'}] đã nghe máy trong cuộc gọi nhóm.`,
-      )
-      callService.callToneService.stopRingbackTone()
-      if (matchedSecExt) {
-        callService.groupCallService.state.secondaryCallSessions.set(matchedSecExt, callSession)
-        callService.groupCallService.clearParticipantInviteTimeout(matchedSecExt)
-      }
-
-      if (callState.incomingCall) {
-        callState.incomingCall = null
-      }
-
-      if (callState.activeCall) {
-        callState.activeCall.status = 'connected'
-        if (!callState.activeCall.startTime) {
-          callState.activeCall.startTime = Date.now()
-          callService.startCallDurationTimer()
-        }
-        if (!callService.groupCallService.state.activeAdhocConferenceId) {
-          const stream = callService.sdk.Phone.getRemoteStream(callSession)
-          if (stream) callService.phoneAdapter.playCallAudio(stream)
-        }
-        // Giữ nguyên thời gian bắt đầu (startTime) của cuộc gọi nhóm đang diễn ra, không reset về
-        // 0
-        if (!callService.currentCallSession) {
-          callService.currentCallSession = callSession
-          callState.activeCall.session = callSession
-        }
-      } else {
-        callService.currentCallSession = callSession
-        const ext =
-          matchedSecExt ||
-          callSession?.number ||
-          callSession?.callerNumber ||
-          callSession?.extension ||
-          ''
-        const contact = callService.contactService.findContactByExtension(ext)
-        callState.activeCall = {
-          session: callSession,
-          callId: `rec-${Date.now()}`,
-          number: ext,
-          name: contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp'),
-          dept: contact?.dept || '',
-          direction: 'outbound',
-          status: 'connected',
-          startTime: Date.now(),
-          duration: 0,
-          isMuted: false,
-          isRecorded: false,
-        }
-        callService.startCallDurationTimer()
-      }
-
-      // Tự động kết nối nhánh phụ vừa nghe máy vào Ad-hoc Conference qua Asterisk ConfBridge
-      callService.groupCallService._markGroupParticipantConnected(matchedSecExt)
       callService.groupCallService.syncActiveCallsToAdhocConference()
-
-      // Khi đã có ConfBridge, giữ nguyên đường âm thanh của hội nghị.
-      window.dispatchEvent(new CustomEvent('wazo-accepted', { detail: callSession }))
+      callService.groupCallService.scheduleConferenceRetry(acceptedEpoch)
       return
     }
 
+    callService.answeredSipIds.add(callService.getSipSessionId(callSession))
     callService.currentCallSession = callSession
-    logger.success(
-      'CALL',
-      '🟢 Sự kiện Wazo: Cuộc gọi đã được kết nối! Đang đàm thoại 2 chiều (Full-Duplex).',
-    )
+    logger.success('CALL', '🟢 Sự kiện Wazo: Phiên SIP đã trả lời, có thể phát âm thanh.')
     callService.callToneService.stopRingbackTone()
 
     if (callState.incomingCall) {
@@ -285,77 +199,15 @@ function createCallAcceptedHandler(callService) {
     }
 
     callService.startCallDurationTimer()
-    callService.groupCallService.clearPrimaryInviteTimeout()
-    if (callService.groupCallService.state.isGroupHost)
-      callService.groupCallService._markGroupParticipantConnected(callState.activeCall?.number)
-    else callService.groupCallService._requestGroupStateSync('accepted').catch(() => {})
-
-    // Xóa timer timeout 30s của nhánh phụ nếu đây là nhánh phụ vừa nghe máy
-    for (const [
-      secExt,
-      secSession,
-    ] of callService.groupCallService.state.secondaryCallSessions.entries()) {
-      const secSipId =
-        secSession?.sipCallId || (secSession?.getId && secSession.getId()) || secSession?.id
-      // Đối chiếu ID nhánh/hội nghị hiện tại; không dùng sự kiện hoặc kết quả của cuộc gọi khác để
-      // đổi state.
-      if (
-        secSession === callSession ||
-        (acceptedSipId && secSipId && String(secSipId) === String(acceptedSipId))
-      ) {
-        callService.groupCallService.clearParticipantInviteTimeout(secExt)
-        break
-      }
+    // Người nhận đã bấm nghe trên Web; phía gọi đi phải đợi đúng người đối thoại từ Calld.
+    if (callState.activeCall.direction === 'inbound') {
+      callState.activeCall.peerConfirmed = true
+      callService.groupCallService._requestGroupStateSync('accepted').catch(() => {})
+    } else {
+      void callService.confirmDirectCallPeer()
     }
 
-    // Tự động đồng bộ các nhánh vào Ad-hoc Conference nếu đang gọi nhóm
-    if (
-      callService.groupCallService.state.isGroupCall &&
-      callService.groupCallService.state.isGroupHost
-    ) {
-      setTimeout(() => {
-        // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-        // đến muộn sau hủy/đổi phiên.
-        if (
-          acceptedEpoch !== callService.callGeneration ||
-          !isSessionContextCurrent(acceptedContext)
-        )
-          return
-        callService.groupCallService.syncActiveCallsToAdhocConference()
-      }, 500)
-    }
-
-    // Tự động kích hoạt ghi âm máy chủ nếu bật cấu hình autoRecordCalls
-    if (localStorage.getItem('smartcall_auto_record_calls') === 'true') {
-      const recordingCallId = callState.activeCall?.callId
-      setTimeout(async () => {
-        // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-        // đến muộn sau hủy/đổi phiên.
-        if (
-          acceptedEpoch !== callService.callGeneration ||
-          !isSessionContextCurrent(acceptedContext) ||
-          callState.activeCall?.callId !== recordingCallId
-        )
-          return
-        if (callState.activeCall && !callService.recordingService.isRecording()) {
-          try {
-            const started = await callService.recordingService.startRecording(null, {
-              name: callState.activeCall.name,
-              number: callState.activeCall.number,
-              extension: callState.activeCall.number,
-              dept: callState.activeCall.dept,
-              direction: callState.activeCall.direction,
-            })
-            // Đối chiếu ID nhánh/hội nghị hiện tại; không dùng sự kiện hoặc kết quả của cuộc gọi
-            // khác để đổi state.
-            if (started && callState.activeCall?.callId === recordingCallId)
-              callState.activeCall.isRecorded = true
-          } catch (err) {
-            logger.warn('RECORD', 'Không thể tự động kích hoạt ghi âm máy chủ:', err.message)
-          }
-        }
-      }, 1200)
-    }
+    callService.scheduleAutomaticRecording()
 
     // Gắn luồng âm thanh đàm thoại WebRTC
     try {

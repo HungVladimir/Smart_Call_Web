@@ -1221,3 +1221,15 @@ Cách test:
 Kiểm chứng: 43/43 test backend, 185/185 test frontend (18 file), lint/architecture/build/format:check/pip check đạt. Có test description tạo mới, cập nhật tài khoản cũ, bỏ qua trùng/rỗng, token sai không ghi, lỗi PUT thu hồi token, mapper/search/filter và fallback Confd có guard phiên. Chưa gọi ghi tài khoản thật trên Wazo công ty trong lượt này. Build còn cảnh báo chunk lớn đã có. Đoạn uvicorn người dùng thêm trong backend/main.py được giữ ngoài commit.
 
 Nguồn API: https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/wazo_confd/plugins/user/schema.py (description) và https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/wazo_confd/helpers/restful.py (PUT partial).
+
+## Lời từ chối, nút Thêm người và đường nghe nhóm — 23/11/2026
+
+| Tình huống | Âm thanh trên Web | Nút Thêm người |
+| --- | --- | --- |
+| A gọi B, B từ chối và Wazo phát thông báo trên nhánh A–B | A nghe lời tổng đài | Khóa |
+| A gọi B, B bắt máy | A và B đàm thoại | A mở nút sau khi Calld xác nhận đúng người. B mở nút sau ACK nhận máy |
+| A gọi B và C, B bắt máy, C từ chối | Đường thoại A–B tiếp tục. Web tắt tiếng audio riêng của C và không đưa nhánh C vào hội nghị | Mở khi A đã có người đối thoại |
+
+- `phoneEvents.js` xử lý ACK của SDK. Với cuộc gọi 1-1, `CallService` đọc `GET /api/calld/1.0/users/me/calls` và nhận `call_answered`/`call_updated` để xác nhận nhánh theo `sip_call_id`, `bridges` và đối tác trong `talking_to`. `CallsView` lấy quyền mời từ `GroupCallService` để cập nhật nút và kiểm tra lại khi người dùng thao tác.
+- `wazoPhone.js` tắt tiếng thẻ audio của nhánh nhóm trước khi SDK gắn stream. `GroupCallService` kiểm tra Calld để chọn đường nghe, rồi đợi API hội nghị xác nhận ghép mới cập nhật số người đã kết nối. SIP có thể trả lời để phát thông báo dù chưa xác nhận được người đối thoại.
+- Khi nghiệm thu với ba thiết bị, nghe ở cả A và B trong lúc C từ chối. Nếu Wazo trộn lời thông báo vào chính luồng thoại A–B tại máy chủ, cần kiểm tra đường phát trong dialplan vì Web chỉ điều khiển được từng luồng SIP mà nó nhận.

@@ -122,6 +122,10 @@ export class CallService {
         // đến muộn sau hủy/đổi phiên.
         if (generation !== this.connectionGeneration) throw new Error('Kết nối thoại đã bị hủy.')
         this.phoneAdapter.disableSdkAutomaticHold()
+        /** Đọc chính sách phát âm thanh hiện tại mỗi khi SDK chuẩn bị gắn media của một nhánh SIP. */
+        const shouldMuteInviteAudio = (sipId, startedMuted) =>
+          this.groupCallService.shouldMuteSipAudio(sipId, startedMuted)
+        this.phoneAdapter.guardGroupInviteAudio(shouldMuteInviteAudio)
         logger.info(
           'SIP',
           'Đã gửi lệnh kết nối thoại; trạng thái sẵn sàng do ON_REGISTERED quyết định.',
@@ -319,6 +323,7 @@ export class CallService {
             `Nhánh phụ [${endedSecExt}] kết thúc (${reason}). Gỡ khỏi nhóm và duy trì các nhánh còn lại.`,
           )
           const childCallId = this.groupCallService.state.extensionToWazoCallIdMap.get(endedSecExt)
+          this.groupCallService.releaseGroupAudio(session)
           if (childCallId) {
             this.callControlApi.hangupServerCall(childCallId).catch(() => {})
             this.groupCallService.state.extensionToWazoCallIdMap.delete(endedSecExt)
@@ -326,6 +331,7 @@ export class CallService {
           }
           this.groupCallService.state.groupParticipantExtensions =
             this.groupCallService.state.groupParticipantExtensions.filter((e) => e !== endedSecExt)
+          this.groupCallService._syncGroupDisplayState()
           if (callState.activeCall) {
             callState.activeCall.groupParticipantExtensions = [
               ...this.groupCallService.state.groupParticipantExtensions,
@@ -397,6 +403,8 @@ export class CallService {
         (endedSipId && primarySipId && String(primarySipId) === String(endedSipId))
       ) {
         this.groupCallService.clearPrimaryInviteTimeout()
+        if (!this.groupCallService.state.activeAdhocConferenceId)
+          this.groupCallService.releaseGroupAudio(session)
         if (this.groupCallService.state.secondaryCallSessions.size > 0) {
           const [nextExt, nextSession] = this.groupCallService.state.secondaryCallSessions
             .entries()
@@ -441,12 +449,16 @@ export class CallService {
               },
             }),
           )
+          this.groupCallService._syncGroupDisplayState()
           this.groupCallService.broadcastGroupStateViaPresence()
           this.groupCallService.broadcastNoticeToGroup(
             `Nhánh máy lẻ ${oldPrimaryExt} không thể kết nối hoặc đã kết thúc`,
           )
           return // Không cúp cuộc gọi chính!
-        } else if (this.groupCallService.isAnyParticipantConnected()) {
+        } else if (
+          this.groupCallService.state.activeAdhocConferenceId &&
+          this.groupCallService.isAnyParticipantConnected()
+        ) {
           logger.info(
             'CALL',
             'Nhánh chính WebRTC chuyển trạng thái nhưng cuộc gọi nhóm vẫn đang kết nối thành viên. Duy trì cuộc gọi.',
@@ -692,6 +704,105 @@ export class CallService {
     } catch {
       return ''
     }
+  }
+
+  /** Đối chiếu nhánh Calld và đối tác đã nối; kênh phát thông báo có thể trả lời SIP nhưng thiếu đối tác. */
+  findConnectedPeer(call, session, extension) {
+    const sipId = this.getSipSessionId(session)
+    const target = normalizeExtension(extension)
+    if (!sipId || !target || String(call?.sip_call_id || '') !== sipId) return ''
+    if (!Array.isArray(call.bridges) || !call.bridges.length || !call.talking_to) return ''
+
+    const expectedUuid = this.contactService.findContactByExtension(target)?.uuid
+    const peers = Object.entries(call.talking_to)
+    for (const [peerId, peerUuid] of peers) {
+      if (peerId && expectedUuid && peerUuid === expectedUuid) return peerId
+    }
+    // Nếu chưa có UUID trong danh bạ, chỉ dùng máy lẻ khi đúng một đối tác có UUID người dùng.
+    // Kênh phát tự động không có UUID người dùng nên số máy lẻ hiển thị chưa đủ để xác nhận.
+    const [peerId, peerUuid] = peers[0] || []
+    if (
+      peers.length === 1 &&
+      !expectedUuid &&
+      typeof peerUuid === 'string' &&
+      peerUuid &&
+      normalizeExtension(call.peer_caller_id_number) === target
+    )
+      return peerId
+    return ''
+  }
+
+  /** Ghi xác nhận người đối thoại của cuộc gọi 1-1 khi event Calld khớp đúng kênh và đích gọi. */
+  observeDirectCallPeer(serverCall) {
+    const active = callState.activeCall
+    if (
+      !active ||
+      active.direction !== 'outbound' ||
+      active.peerConfirmed ||
+      this.groupCallService.state.isGroupCall ||
+      !this.findConnectedPeer(serverCall, this.currentCallSession, active.number)
+    )
+      return
+    active.peerConfirmed = true
+  }
+
+  /** Tra Calld sau ACK SIP để bổ sung trường hợp event bridge đến sớm hoặc bị bỏ lỡ. */
+  async confirmDirectCallPeer() {
+    const context = captureSessionContext()
+    const epoch = this.callGeneration
+    const callId = callState.activeCall?.callId
+    try {
+      const calls = await this.callControlApi.listActiveCalls()
+      // Kết quả cũ không được mở nút mời cho cuộc gọi đã thay thế.
+      if (
+        !isSessionContextCurrent(context) ||
+        epoch !== this.callGeneration ||
+        callState.activeCall?.callId !== callId
+      )
+        return
+      for (const call of calls) this.observeDirectCallPeer(call)
+    } catch (error) {
+      logger.warn('CALL', 'Chưa xác nhận được người đối thoại từ Calld.', error)
+    }
+  }
+
+  /** Hẹn ghi âm tự động cho cuộc gọi hiện tại khi người dùng đã bật tùy chọn và phiên còn hiệu lực. */
+  scheduleAutomaticRecording() {
+    if (localStorage.getItem('smartcall_auto_record_calls') !== 'true') return
+    const context = captureSessionContext()
+    const epoch = this.callGeneration
+    const recordingCallId = callState.activeCall?.callId
+    /** Bắt đầu ghi âm phía máy chủ sau khi kênh thoại ổn định. */
+    const startAutomaticRecording = async () => {
+      const active = callState.activeCall
+      // Lệnh ghi âm đến muộn không được tác động lên cuộc gọi hoặc tài khoản mới.
+      if (
+        !active ||
+        epoch !== this.callGeneration ||
+        !isSessionContextCurrent(context) ||
+        active.callId !== recordingCallId ||
+        this.recordingService.isRecording()
+      )
+        return
+      try {
+        const started = await this.recordingService.startRecording(null, {
+          name: active.name,
+          number: active.number,
+          extension: active.number,
+          dept: active.dept,
+          direction: active.direction,
+        })
+        if (
+          started &&
+          callState.activeCall?.callId === recordingCallId &&
+          epoch === this.callGeneration
+        )
+          callState.activeCall.isRecorded = true
+      } catch (error) {
+        logger.warn('RECORD', 'Không thể tự động kích hoạt ghi âm máy chủ:', error.message)
+      }
+    }
+    setTimeout(startAutomaticRecording, 1200)
   }
 
   /** Chỉ nhận session trùng SIP ID/object của nhánh chính, incoming hoặc nhánh phụ đang quản lý. */

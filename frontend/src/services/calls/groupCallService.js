@@ -40,11 +40,51 @@ export class GroupCallService {
     this._processedAddReqIds = new Set()
     this._processedNoticeIds = new Set()
     this._pendingConferenceTerminations = new Map()
+    this.audibleGroupSipId = ''
     this._groupSnapshotId = ''
     this._groupSnapshotRevision = 0
     this._groupSyncRequestIds = new Set()
     this._groupSyncRequestKeys = new Set()
     this._processedGroupSyncIds = new Set()
+  }
+
+  /** Chỉ cho người dùng mời thêm khi đã có người đối thoại trong cuộc gọi hiện tại. */
+  canInviteParticipants() {
+    const active = callState.activeCall
+    if (!active || active.status !== 'connected') return false
+    if (!this.state.isGroupCall || !this.state.isGroupHost) return active.peerConfirmed === true
+    const myExtension = this.authService.getCurrentExtension()
+    return this.state.groupConnectedExtensions.some((extension) => extension !== myExtension)
+  }
+
+  /** Bịt riêng thẻ audio của nhánh mời cho tới khi chọn được nhánh đàm thoại; không đổi âm thanh 1-1. */
+  shouldMuteSipAudio(sipId, startedMuted = false) {
+    return (
+      (startedMuted || (this.state.isGroupCall && this.state.isGroupHost)) &&
+      (!sipId || String(sipId) !== this.audibleGroupSipId)
+    )
+  }
+
+  /** Giữ đúng một nhánh phát âm thanh ở host, kể cả khi có nhiều nhánh SIP đã trả lời. */
+  selectGroupAudio(session) {
+    const sipId = this.callService.getSipSessionId(session)
+    if (!sipId || this.audibleGroupSipId === sipId) return
+    this.phoneAdapter.muteGroupInviteAudio(this.audibleGroupSipId)
+    this.phoneAdapter.stopCallAudio()
+    this.audibleGroupSipId = sipId
+    if (this.phoneAdapter.allowGroupInviteAudio(sipId)) return
+    const stream = this.sdk.Phone.getRemoteStream(session)
+    if (stream) this.phoneAdapter.playCallAudio(stream)
+  }
+
+  /** Nhả đường nghe sau khi nhánh thực sự kết thúc để có thể chọn nhánh còn lại. */
+  releaseGroupAudio(session) {
+    const sipId = this.callService.getSipSessionId(session)
+    if (!sipId || sipId !== this.audibleGroupSipId) return
+    this.phoneAdapter.muteGroupInviteAudio(sipId)
+    this.phoneAdapter.stopCallAudio()
+    this.audibleGroupSipId = ''
+    this.syncActiveCallsToAdhocConference()
   }
 
   /** Hẹn đồng bộ lại hội nghị khi các server call ID chưa sẵn sàng. */
@@ -199,7 +239,7 @@ export class GroupCallService {
         this.state.isGroupCall &&
         remainingTargets.length > 0
       ) {
-        this.addParticipantsToGroupCall(remainingTargets).catch((err) =>
+        this.dialGroupParticipants(remainingTargets).catch((err) =>
           logger.warn('CALL', 'Không thể mời thành viên:', err.message),
         )
       }
@@ -215,6 +255,14 @@ export class GroupCallService {
    * Thêm các máy lẻ vào cuộc gọi nhóm đang diễn ra
    */
   async addParticipantsToGroupCall(extensions = []) {
+    // Modal có thể còn mở sau khi nhánh thoại kết thúc hoặc tổng đài chỉ phát thông báo.
+    if (!this.canInviteParticipants())
+      throw new Error('Chỉ thêm người sau khi đã xác nhận người đối thoại.')
+    return this.dialGroupParticipants(extensions)
+  }
+
+  /** Điều phối các nhánh đã yêu cầu, gồm lời mời ban đầu khi cả nhóm còn đang đổ chuông. */
+  async dialGroupParticipants(extensions) {
     const sessionContext = captureSessionContext()
     const callEpoch = this.callService.callGeneration
     const callId = callState.activeCall?.callId
@@ -242,16 +290,14 @@ export class GroupCallService {
       logger.info('CALL', '👥 Nâng cấp cuộc gọi 1-1 lên cuộc gọi nhóm Ad-hoc Conference...')
       this.state.isGroupCall = true
       this.state.isGroupHost = true
+      this.audibleGroupSipId = this.callService.getSipSessionId(this.callService.currentCallSession)
       this.state.groupHostExtension = myExt
       const peerExt = String(callState.activeCall?.number || '').trim()
       this.state.groupParticipantExtensions = [myExt]
       if (peerExt && !this.state.groupParticipantExtensions.includes(peerExt)) {
         this.state.groupParticipantExtensions.push(peerExt)
       }
-      this.state.groupConnectedExtensions =
-        callState.activeCall.status === 'connected'
-          ? [...this.state.groupParticipantExtensions]
-          : [myExt]
+      this.state.groupConnectedExtensions = [...this.state.groupParticipantExtensions]
       if (callState.activeCall) {
         callState.activeCall.isGroupCall = true
         callState.activeCall.isGroupHost = true
@@ -390,7 +436,6 @@ export class GroupCallService {
     // Một nhánh khác nghe máy không có nghĩa nhánh chính đã nghe; kiểm tra riêng từng lời mời.
     const answered =
       this.state.groupConnectedExtensions.includes(targetExt) ||
-      primary?.answered ||
       this.callService.answeredSipIds.has(this.callService.getSipSessionId(primary))
     if (this.state.isGroupCall && this.state.isGroupHost && callState.activeCall && !answered) {
       logger.warn(
@@ -457,30 +502,7 @@ export class GroupCallService {
 
   /** Kiểm tra nhóm đã có ít nhất một người tham gia kết nối. */
   isAnyParticipantConnected() {
-    if (!this.callService.hasActiveCall()) return false
-    const myExt = this.authService.getCurrentExtension()
-    const remainingOthers = this.state.groupParticipantExtensions.filter((e) => e !== myExt)
-
-    if (callState.activeCall?.status === 'connected') {
-      if (this.state.isGroupCall) {
-        if (
-          remainingOthers.length > 0 &&
-          (this.state.extensionToWazoCallIdMap.size > 0 ||
-            this.state.activeAdhocConferenceId ||
-            this.callService.currentCallSession)
-        ) {
-          return true
-        }
-      } else {
-        return true
-      }
-    }
-
-    if (this.state.extensionToWazoCallIdMap && this.state.extensionToWazoCallIdMap.size > 0) {
-      return true
-    }
-
-    return false
+    return this.callService.hasActiveCall() && this.canInviteParticipants()
   }
 
   /** Đặt thời hạn chờ trả lời cho một máy lẻ được mời. */
@@ -516,7 +538,6 @@ export class GroupCallService {
     const session = this.state.secondaryCallSessions.get(targetExt)
     if (
       this.state.groupConnectedExtensions.includes(targetExt) ||
-      session?.answered ||
       this.callService.answeredSipIds.has(this.callService.getSipSessionId(session))
     )
       return
@@ -691,6 +712,7 @@ export class GroupCallService {
       return
 
     const callEpoch = this.callService.callGeneration
+    /** Bỏ kết quả Calld đến muộn sau khi cuộc gọi hoặc phiên đã thay đổi. */
     const current = () =>
       callEpoch === this.callService.callGeneration &&
       isSessionContextCurrent(sessionContext) &&
@@ -699,132 +721,58 @@ export class GroupCallService {
     if (!current()) return
     if (!activeCalls || activeCalls.length === 0) return
 
-    // 1. Xác định hostCallId từ primary session của Host
-    let hostCallId = ''
-    const myPrimarySipId = this.callService.getSipSessionId(this.callService.currentCallSession)
+    const active = callState.activeCall
+    if (!active) return
+    const primarySession = this.callService.currentCallSession
+    const primarySipId = this.callService.getSipSessionId(primarySession)
+    const hostCall = activeCalls.find(
+      (call) => primarySipId && String(call.sip_call_id) === primarySipId,
+    )
+    const hostCallId = hostCall?.id || hostCall?.call_id
+    const legs = new Map()
+    if (primarySession && active.number) legs.set(active.number, primarySession)
+    for (const [extension, session] of this.state.secondaryCallSessions)
+      legs.set(extension, session)
 
-    for (const callObj of activeCalls) {
-      const cid = callObj.id || callObj.call_id
-      const sipId = callObj.sip_call_id
-      if (myPrimarySipId && String(sipId) === myPrimarySipId) {
-        hostCallId = cid
-        break
-      }
-    }
-    if (!hostCallId && activeCalls.length > 0) {
-      hostCallId = activeCalls[0].id || activeCalls[0].call_id
-    }
-    if (!hostCallId) return
+    // Chỉ ghi ID phía đối tác sau khi đúng nhánh SIP có bridge với đúng người được gọi.
+    for (const [extension, session] of legs) {
+      const sipId = this.callService.getSipSessionId(session)
+      if (!sipId || !this.state.groupParticipantExtensions.includes(extension)) continue
+      const serverCall = activeCalls.find((call) => String(call.sip_call_id) === sipId)
+      const peerId = this.callService.findConnectedPeer(serverCall, session, extension)
+      if (!peerId || peerId === hostCallId) continue
+      const knownId = this.state.extensionToWazoCallIdMap.get(extension)
+      if (knownId && this.state.mergedCallIds.has(knownId)) continue
+      this.state.extensionToWazoCallIdMap.set(extension, peerId)
+      this.callService.answeredSipIds.add(sipId)
+      if (session === primarySession) this.clearPrimaryInviteTimeout()
+      else this.clearParticipantInviteTimeout(extension)
 
-    // 2. Thu thập TẤT CẢ các peerCallId từ talking_to của các cuộc gọi
-    // BÁM SÁT 100% Android WazoSipCallManager.py lines 748-755:
-    // TUYỆT ĐỐI KHÔNG đưa cid (kênh WebRTC cục bộ của Host) vào participant_call_ids!
-    let hasUnbridgedLeg = false
-    let connectedChanged = false
-    for (const callObj of activeCalls) {
-      const cid = callObj.id || callObj.call_id
-      const sipId = callObj.sip_call_id
-      const isTalking =
-        callObj.status === 'talking' ||
-        (callObj.talking_to &&
-          typeof callObj.talking_to === 'object' &&
-          Object.keys(callObj.talking_to).length > 0)
-
-      if (callObj.talking_to && typeof callObj.talking_to === 'object') {
-        const peerIds = Object.keys(callObj.talking_to)
-        for (const peerId of peerIds) {
-          if (peerId && peerId !== hostCallId) {
-            // Sau khi ghép, một kênh có thể talking_to nhiều người. Giữ ánh xạ đã biết,
-            // không gán mọi peer vào activeCall.number làm B/C đè ID của nhau.
-            let matchedExt = [...this.state.extensionToWazoCallIdMap].find(
-              ([, id]) => String(id) === String(peerId),
-            )?.[0]
-            if (!matchedExt && peerIds.length === 1) {
-              for (const [ext, secSession] of this.state.secondaryCallSessions.entries()) {
-                const secSip = this.callService.getSipSessionId(secSession)
-                if (secSip && sipId && secSip === String(sipId)) {
-                  matchedExt = ext
-                  break
-                }
-              }
-              if (!matchedExt && myPrimarySipId === String(sipId))
-                matchedExt = normalizeExtension(callState.activeCall?.number)
-            }
-            if (matchedExt && this.state.groupParticipantExtensions.includes(matchedExt)) {
-              const previousId = this.state.extensionToWazoCallIdMap.get(matchedExt)
-              if (
-                this.state.activeAdhocConferenceId &&
-                previousId &&
-                String(previousId) !== String(peerId)
-              )
-                continue
-              this.state.extensionToWazoCallIdMap.set(matchedExt, peerId)
-              // Calld talking/holding là bằng chứng phụ khi SDK accepted đã bị bỏ lỡ.
-              if (callObj.status === 'talking' || callObj.status === 'holding') {
-                connectedChanged =
-                  this._markGroupParticipantConnected(matchedExt, false) || connectedChanged
-              }
-            }
-          }
+      // Trước khi tạo phòng, chỉ phát một nhánh đã nối thật. Các nhánh còn lại đợi kết quả ghép.
+      if (!this.audibleGroupSipId && !this.state.activeAdhocConferenceId) {
+        this.selectGroupAudio(session)
+        active.status = 'connected'
+        if (!active.startTime) {
+          active.startTime = Date.now()
+          this.callService.startCallDurationTimer()
+          this.callService.scheduleAutomaticRecording()
         }
-      } else if (isTalking && cid !== hostCallId) {
-        hasUnbridgedLeg = true
-      }
-    }
-    if (connectedChanged) this.broadcastGroupStateViaPresence()
-
-    // Nếu có nhánh phụ đã talking nhưng Asterisk chưa kịp link talking_to -> Hẹn giờ thử lại sau 300ms
-    if (hasUnbridgedLeg && this.state.extensionToWazoCallIdMap.size < 2) {
-      logger.info(
-        'CALL',
-        'Đang đợi máy chủ Asterisk điền talking_to cho nhánh phụ, sẽ thử lại sau 300ms...',
-      )
-      setTimeout(() => {
-        if (this.callService.hasActiveCall() && this.state.isGroupCall && this.state.isGroupHost) {
-          this.syncActiveCallsToAdhocConference()
-        }
-      }, 300)
-    }
-
-    // Hủy bộ đếm timeout 30s cho các nhánh đã kết nối thành công vào extensionToWazoCallIdMap
-    for (const [secExt] of this.state.secondaryCallSessions.entries()) {
-      if (this.state.extensionToWazoCallIdMap.has(secExt)) {
-        this.clearParticipantInviteTimeout(secExt)
-      }
-    }
-
-    const participantCallIds = Array.from(
-      new Set(this.state.extensionToWazoCallIdMap.values()),
-    ).filter((id) => id && id !== hostCallId)
-
-    // Nếu chưa đủ 2 nhánh thành viên (chỉ có Host + 1 người nghe máy) và chưa có phòng họp nhóm:
-    if (participantCallIds.length < 2 && !this.state.activeAdhocConferenceId) {
-      logger.info(
-        'CALL',
-        `Chưa đủ 2 thành viên đàm thoại (hiện có ${participantCallIds.length} người nghe máy). Duy trì thoại trực tiếp và chờ người tiếp theo...`,
-      )
-      // Nếu nhánh chính vẫn đang ringing mà đã có 1 nhánh phụ talking -> Đưa âm thanh nhánh nghe máy lên đàm thoại ngay (Đối chiếu WazoSipCallManager.py line 1780)
-      if (
-        callState.activeCall &&
-        callState.activeCall.status === 'ringing' &&
-        participantCallIds.length === 1
-      ) {
-        callState.activeCall.status = 'connected'
-        callState.activeCall.startTime = Date.now()
         this.callToneService.stopRingbackTone()
-        for (const [secExt, secSession] of this.state.secondaryCallSessions.entries()) {
-          try {
-            const stream = this.sdk.Phone.getRemoteStream(secSession)
-            if (stream) {
-              this.phoneAdapter.playCallAudio(stream)
-              logger.info('AUDIO', `Đã kết nối âm thanh với nhánh phụ nghe trước: ${secExt}`)
-              break
-            }
-          } catch (e) {}
-        }
+        this._markGroupParticipantConnected(extension)
       }
-      return
     }
+
+    const participantCallIds = [...new Set(this.state.extensionToWazoCallIdMap.values())].filter(
+      (id) => id && id !== hostCallId,
+    )
+    // Không dùng phần tử đầu danh sách làm host khi Calld chưa trả đúng nhánh chính đã xác minh.
+    if (
+      !this.state.activeAdhocConferenceId &&
+      (participantCallIds.length < 2 ||
+        !hostCallId ||
+        !this.state.extensionToWazoCallIdMap.has(active.number))
+    )
+      return
 
     logger.info(
       'CALL',
@@ -840,8 +788,10 @@ export class GroupCallService {
             pId,
           )
           if (!current()) return
-          if (added) this.state.mergedCallIds.add(pId)
-          else this.scheduleConferenceRetry(callEpoch)
+          if (added) {
+            this.state.mergedCallIds.add(pId)
+            this.markMergedParticipantConnected(pId)
+          } else this.scheduleConferenceRetry(callEpoch)
         }
       }
       this.broadcastGroupStateViaPresence()
@@ -851,7 +801,6 @@ export class GroupCallService {
     // Chưa có conference_id: Tạo mới Ad-hoc Conference khi có ít nhất 2 thành viên
     const toMerge = participantCallIds.filter((id) => id !== hostCallId)
     if (toMerge.length >= 2 && hostCallId) {
-      toMerge.forEach((id) => this.state.mergedCallIds.add(id))
       const confId = await this.callControlApi.createConference(hostCallId, toMerge)
       if (!current()) {
         if (confId && isSessionContextCurrent(sessionContext))
@@ -860,12 +809,16 @@ export class GroupCallService {
       }
       if (confId) {
         this.state.activeAdhocConferenceId = confId
+        this.selectGroupAudio(primarySession)
+        for (const id of toMerge) {
+          this.state.mergedCallIds.add(id)
+          this.markMergedParticipantConnected(id)
+        }
         if (callState.activeCall) {
           callState.activeCall.activeAdhocConferenceId = confId
         }
         this.broadcastGroupStateViaPresence()
       } else {
-        this.state.mergedCallIds.clear()
         this.scheduleConferenceRetry(callEpoch)
       }
     }
@@ -1003,6 +956,13 @@ export class GroupCallService {
     }
   }
 
+  /** Sau ACK ghép, công bố đúng thành viên đã được Calld nối vào hội nghị. */
+  markMergedParticipantConnected(callId) {
+    for (const [extension, peerId] of this.state.extensionToWazoCallIdMap) {
+      if (peerId === callId) this._markGroupParticipantConnected(extension, false)
+    }
+  }
+
   /** Chỉ host xác nhận kết nối sau ACK nhánh; mời/đổ chuông không làm tăng số người đã vào nhóm. */
   _markGroupParticipantConnected(extension, publish = true) {
     const ext = normalizeExtension(extension)
@@ -1122,6 +1082,7 @@ export class GroupCallService {
     this._processedGroupSyncIds.clear()
     this._pendingConferenceTerminations.clear()
     this.callService.pendingCallEvents.clear()
+    this.audibleGroupSipId = ''
     this.callService.answeredSipIds.clear()
     clearTimeout(this._syncAdhocRetryTimer)
     this._syncAdhocRetryTimer = null

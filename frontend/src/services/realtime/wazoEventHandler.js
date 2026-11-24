@@ -69,6 +69,8 @@ export function handleWazoEvent(context, envelope) {
       context.groupCallService.state.isGroupHost
     ) {
       context.groupCallService.syncActiveCallsToAdhocConference()
+    } else if (name === 'call_answered' || name === 'call_updated') {
+      context.callService.observeDirectCallPeer(data)
     }
 
     handleConferenceEvent(context, name, data)
@@ -218,6 +220,7 @@ export function handleGroupPresenceSignal(context, data) {
     !state.isGroupCall &&
     currentCall.direction === 'outbound' &&
     currentCall.status === 'connected' &&
+    currentCall.peerConfirmed === true &&
     peer === sender.extension
   if (!member && !(kind === 'ADD_REQ' && initialPeerRequest)) return
   if (kind === 'LEFT') {
@@ -227,10 +230,9 @@ export function handleGroupPresenceSignal(context, data) {
   }
   if (kind === 'ADD_REQ') {
     if (!initialPeerRequest && (!state.isGroupHost || host !== me)) return
+    // ACK SIP có thể thuộc nhánh phát thông báo, nên chỉ nhận yêu cầu từ người đã xác nhận.
     const connectedMember =
-      (peer === sender.extension && currentCall.status === 'connected') ||
-      state.extensionToWazoCallIdMap.has(sender.extension) ||
-      state.secondaryCallSessions.get(sender.extension)?.answered === true
+      initialPeerRequest || state.groupConnectedExtensions.includes(sender.extension)
     if (!connectedMember) return
     const parts = payload.split(':')
     if (parts.length !== 2 && parts.length !== 3) return

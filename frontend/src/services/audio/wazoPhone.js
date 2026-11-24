@@ -24,6 +24,36 @@ export class PhoneAdapter {
     if (audio?.setSinkId) await audio.setSinkId(speaker)
   }
 
+  /** Bịt tiếng nhánh mời ngay khi SDK tạo thẻ audio, trước khi SDK gắn early media hoặc stream đã trả lời. */
+  guardGroupInviteAudio(shouldMuteSipAudio) {
+    const client = this.sdk.Phone?.phone?.client
+    if (!client?.createAudioElementFor || this.guardedAudioClient === client) return
+    this.guardedAudioClient = client
+    const createAudioElement = client.createAudioElementFor.bind(client)
+    /** Giữ nhánh chờ ở trạng thái muted kể cả khi tạo audio phải đợi chọn thiết bị đầu ra. */
+    async function createGuardedAudioElement(sipId) {
+      const startedMuted = shouldMuteSipAudio(sipId)
+      const audio = await createAudioElement(sipId)
+      if (shouldMuteSipAudio(sipId, startedMuted)) audio.muted = true
+      return audio
+    }
+    client.createAudioElementFor = createGuardedAudioElement
+  }
+
+  /** Chỉ mở tiếng thẻ SDK của nhánh đã xác minh, để SDK tiếp tục sở hữu phần tử và cleanup. */
+  allowGroupInviteAudio(sipId) {
+    const audio = this.sdk.Phone?.phone?.client?.audioElements?.[sipId]
+    if (!audio) return false
+    audio.muted = false
+    return true
+  }
+
+  /** Tắt thẻ SDK của nhánh cũ khi chuyển đường nghe sang nhánh chính hoặc hội nghị khác. */
+  muteGroupInviteAudio(sipId) {
+    const audio = this.sdk.Phone?.phone?.client?.audioElements?.[sipId]
+    if (audio) audio.muted = true
+  }
+
   /** Giới hạn can thiệp auto-hold trong adapter để có thể kiểm tra lại khi nâng SDK. */
   disableSdkAutomaticHold() {
     try {

@@ -87,7 +87,7 @@
           <!-- Nút Thêm người vào cuộc gọi (Add Member) -->
           <button
             class="control-btn btn-add-member"
-            :disabled="!isCalling || callStatus === 'ringing'"
+            :disabled="!canAddParticipant"
             title="Mời thêm thành viên vào cuộc gọi"
             @click="$emit('add-participant')"
           >
@@ -170,6 +170,7 @@ const props = defineProps({
   myExtension: { type: String, default: '' },
   durationText: { type: String, default: '00:00' },
   dtmfLog: { type: String, default: '' },
+  canAddParticipant: { type: Boolean, default: false },
 })
 defineEmits(['mute', 'record', 'hangup', 'add-participant'])
 /**
