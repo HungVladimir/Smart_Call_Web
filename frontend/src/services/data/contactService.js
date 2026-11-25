@@ -16,6 +16,35 @@ export const DIRECTORY_PAGE_SIZE = 30
 const LOOKUP_MAX_RESULTS = 100
 const IDENTITY_CACHE_LIMIT = 600
 const PRESENCE_FRESH_MS = 15000
+const LINE_PRESENCE_STATES = new Set([
+  'available',
+  'unavailable',
+  'talking',
+  'holding',
+  'ringing',
+  'progressing',
+])
+const USER_PRESENCE_STATES = new Set([
+  'available',
+  'unavailable',
+  'online',
+  'offline',
+  'away',
+  'invisible',
+])
+
+/** Xác nhận payload có dữ liệu trạng thái, vì UUID hoặc thông điệp riêng lẻ chưa đủ. */
+function hasPresenceState(record) {
+  return Boolean(
+    record &&
+    (USER_PRESENCE_STATES.has(record.state) ||
+      LINE_PRESENCE_STATES.has(record.line_state) ||
+      typeof record.connected === 'boolean' ||
+      record.do_not_disturb === true ||
+      (Array.isArray(record.lines) &&
+        record.lines.some((line) => LINE_PRESENCE_STATES.has(line?.state)))),
+  )
+}
 
 /** Sở hữu danh bạ, trạng thái presence và danh sách yêu thích của phiên hiện tại. */
 export class ContactService {
@@ -433,9 +462,15 @@ export class ContactService {
     return match ? this.rememberDirectoryContacts([match])[0] : null
   }
 
-  /** Trạng thái chưa có dữ liệu hoặc hết hạn hiển thị Chưa rõ, kể cả khi danh bạ đã tải xong. */
+  /** Giữ trạng thái nội bộ chưa xác minh khi dữ liệu kết nối còn thiếu hoặc hết hạn. */
   directoryContactStatus(uuid, observedAt = this.state.presenceCheckedAt[uuid]) {
-    if (observedAt === undefined || Date.now() - observedAt >= PRESENCE_FRESH_MS)
+    const presence = this.presences[uuid]
+    if (
+      observedAt === undefined ||
+      Date.now() - observedAt >= PRESENCE_FRESH_MS ||
+      !hasPresenceState(presence) ||
+      presence.state === 'invisible'
+    )
       return { status: 'unknown', statusLabel: 'Chưa rõ' }
     const status = this.statusOf(uuid)
     return { status: status.key, statusLabel: status.label }
@@ -730,7 +765,10 @@ export class ContactService {
   statusOf(uuid) {
     const p = uuid && this.presences[uuid]
     if (!p) return { key: 'offline', label: 'Ngoại tuyến' }
-    const lines = (p.lines || []).map((l) => l.state)
+    const lines = (Array.isArray(p.lines) ? p.lines : [])
+      .map((line) => line?.state)
+      .filter((state) => LINE_PRESENCE_STATES.has(state))
+    if (!lines.length && LINE_PRESENCE_STATES.has(p.line_state)) lines.push(p.line_state)
     if (lines.some((s) => s === 'talking' || s === 'holding'))
       return { key: 'busy', label: 'Đang gọi' }
     if (lines.some((s) => s === 'ringing' || s === 'progressing'))
@@ -741,7 +779,7 @@ export class ContactService {
       : p.connected === true ||
         p.state === 'available' ||
         p.state === 'online' ||
-        p.line_state === 'available'
+        p.state === 'away'
     if (!online || p.state === 'unavailable' || p.state === 'offline')
       return { key: 'offline', label: 'Ngoại tuyến' }
     if (p.state === 'away') return { key: 'away', label: 'Vắng mặt' }
@@ -1034,7 +1072,11 @@ export class ContactService {
   }
 
   /** Tải trạng thái cho các UUID trong danh bạ theo lô và cập nhật nhãn trạng thái từng liên hệ. */
-  async loadPresencesForContacts(contacts, invalidateOnFailure = false) {
+  async loadPresencesForContacts(
+    contacts,
+    invalidateOnFailure = false,
+    { supersede = false } = {},
+  ) {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (!Array.isArray(contacts) || contacts.length === 0) return contacts
@@ -1047,6 +1089,8 @@ export class ContactService {
       ? this.authService.host
       : `https://${this.authService.host}`
     const uuids = [...new Set(contacts.map((contact) => contact.uuid).filter(Boolean))]
+    // Lượt kiểm tra trước khi gọi phải thay thế cả request nền đã bắt đầu trước đó.
+    if (supersede) for (const uuid of uuids) this.presenceRevisions.set(uuid, Symbol())
     const pendingRevisions = new Map(uuids.map((uuid) => [uuid, this.presenceRevisions.get(uuid)]))
     /** Khi snapshot không xác nhận được người nhận, bỏ giá trị cũ nếu chưa có event mới. */
     const markUnknown = (uuid) => {
@@ -1067,6 +1111,7 @@ export class ContactService {
           `${host}/api/chatd/1.0/users/presences?user_uuid=${batch.map(encodeURIComponent).join(',')}`,
           {
             headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+            cache: 'no-store',
             signal: AbortSignal.timeout(3000),
           },
         )
@@ -1080,11 +1125,12 @@ export class ContactService {
           : data.items && typeof data.items === 'object'
             ? Object.entries(data.items).map(([uuid, presence]) => ({ uuid, ...presence }))
             : []
-        const byUuid = new Map(items.map((item) => [item.uuid || item.user_uuid, item]))
+        const byUuid = new Map(items.map((item) => [item?.uuid || item?.user_uuid, item]))
         for (const uuid of batch) {
           // Một event hoặc request mới hơn đã cập nhật thì response này không được ghi đè.
           if (pendingRevisions.get(uuid) !== this.presenceRevisions.get(uuid)) continue
-          if (byUuid.has(uuid)) this.storeDirectoryPresence(uuid, byUuid.get(uuid))
+          if (hasPresenceState(byUuid.get(uuid)))
+            this.storeDirectoryPresence(uuid, byUuid.get(uuid))
           else markUnknown(uuid)
         }
       }
@@ -1112,16 +1158,19 @@ export class ContactService {
         status.status !== 'unknown' &&
         (presence.mobile ||
           label.includes('android') ||
-          presence.lines?.some((line) => line.mobile)),
+          (Array.isArray(presence.lines) && presence.lines.some((line) => line?.mobile))),
       ),
     })
   }
 
   /** Ghi snapshot theo thứ tự nhận và giữ trạng thái cho những UUID thực sự cần hiển thị. */
-  storeDirectoryPresence(uuid, record) {
-    this.presenceRevisions.set(uuid, Symbol())
+  storeDirectoryPresence(uuid, record, confirmsState = true) {
+    // Event chỉ mang nội dung status có thể cập nhật nhãn, nhưng không chứng minh kết nối mới.
+    if (confirmsState) {
+      this.presenceRevisions.set(uuid, Symbol())
+      this.state.presenceCheckedAt[uuid] = Date.now()
+    }
     this.presences[uuid] = record
-    this.state.presenceCheckedAt[uuid] = Date.now()
     const contact = this.state.identities.get(uuid)
     if (contact) this.applyDirectoryPresence(contact)
   }
@@ -1153,7 +1202,11 @@ export class ContactService {
       this.state.presenceCheckedAt[uuid] !== undefined ||
       this.currentContacts.some((contact) => contact.uuid === uuid)
     ) {
-      this.storeDirectoryPresence(uuid, { ...this.presences[uuid], ...presenceRecord })
+      this.storeDirectoryPresence(
+        uuid,
+        { ...this.presences[uuid], ...presenceRecord },
+        hasPresenceState(presenceRecord),
+      )
       if (this.currentContacts && this.currentContacts.length > 0) {
         let changed = false
         this.currentContacts.forEach((c) => {
@@ -1312,6 +1365,16 @@ export class ContactService {
     return contacts
   }
 
+  /** Đọc trạng thái mới của riêng người sắp gọi và trả nhãn để CallService quyết định. */
+  async confirmCallTargetPresence(contact) {
+    const context = captureSessionContext()
+    // Thiếu UUID hoặc token thì không thể đối chiếu trạng thái thật với máy lẻ.
+    if (!contact.uuid || !this.authService.getToken()) return 'unknown'
+    await this.loadPresencesForContacts([contact], true, { supersede: true })
+    assertSessionContext(context)
+    return this.directoryContactStatus(contact.uuid).status
+  }
+
   /** Đọc cache tên cho cuộc gọi đang hiện và giữ độc lập với trang danh bạ đã chọn. */
   getKnownContacts() {
     return [...this.currentContacts, ...this.state.identities.values()]
@@ -1357,7 +1420,10 @@ export class ContactService {
     for (const contact of resolved) {
       if (this.isContactAvailableForCall(contact))
         extensions.push(normalizeExtension(contact.number))
-      else rejected.push(contact.name + ' (' + (contact.statusLabel || 'không khả dụng') + ')')
+      else {
+        const reason = contact.status === 'unknown' ? '' : contact.statusLabel
+        rejected.push(contact.name + ' (' + (reason || 'không khả dụng') + ')')
+      }
     }
     return { extensions, rejected }
   }

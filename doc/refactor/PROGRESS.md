@@ -1,5 +1,9 @@
 # Nhật ký refactor SmartCall Web
 
+25/11/2026. Danh bạ, bàn phím gọi và modal mời người dùng chung chấm xanh/xám thay cho nhãn trạng thái trên từng liên hệ. Lớp nghiệp vụ vẫn phân biệt thiếu dữ liệu với ngoại tuyến khi xác minh cuộc gọi.
+
+25/11/2026. Bàn phím gọi tra trực tiếp máy lẻ sau khi dừng gõ 300 ms và hiển thị trạng thái cho riêng UUID tìm được. Kết quả của số nhập trước không thay thế số hiện tại. Khi bấm gọi một người, CallService xác minh presence bằng lượt đọc mới trước khi gửi lệnh SIP. Nếu chưa xác minh được trạng thái thì báo người dùng thử lại.
+
 25/11/2026. Màn Web chuyển từ chat sang Gọi nhóm cá nhân. Danh bạ dùng API lọc phía backend, 30 liên hệ mỗi trang, presence theo trang và kiểm tra lại đích khi gọi. [Hướng dẫn dùng và nghiệm thu](KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
 
 > Đây là nhật ký theo thời gian. Tên file, cấu trúc thư mục và số liệu kiểm thử trong mỗi mục thuộc mốc đó. Xem [mục lục tài liệu](../README.md) để tìm luồng hiện hành.

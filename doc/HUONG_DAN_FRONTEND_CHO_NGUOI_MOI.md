@@ -371,11 +371,13 @@ Người dùng nhập số trên DialerPanel rồi bấm Gọi; bấm nút gọi
 
 DialerPanel nhận modelValue/contact/isCalling/isDialing qua props. Khi bấm phím, nó emit digit; khi bấm Gọi, nó emit dial. CallsView nhận sự kiện và handleDial gọi callService.startCall(targetExtension). Controller là nơi kiểm tra nghiệp vụ cuối cùng.
 
+Khi người dùng ngừng gõ khoảng 300 ms, CallsView tra đúng máy lẻ qua ContactService, kể cả khi người nhận nằm ngoài trang danh bạ đang mở. Bàn phím, danh bạ và modal mời người dùng chung chấm xanh khi đã xác nhận liên hệ đang kết nối. Chấm xám dùng khi ngoại tuyến hoặc khi chưa xác nhận được kết nối.
+
 ### Các bước của startCall
 
 1. Chuẩn hóa máy lẻ; chặn số rỗng, gọi chính mình, cuộc gọi đang hoạt động hoặc thao tác trùng.
 2. Tìm contact trong cache hoặc qua getOrLookupContact. Giữ khóa dialing trong lúc lookup còn chờ.
-3. callPolicy kiểm tra busy/talking/holding, ringing/progressing, dnd và offline/unavailable.
+3. Với gọi một người, CallService đọc presence mới của người nhận trước khi gửi lệnh SIP. Nếu thiếu dữ liệu hoặc đọc thất bại thì báo chưa xác minh được trạng thái. callPolicy chặn người đang bận, đang đổ chuông, bật Không làm phiền hoặc ngoại tuyến.
 4. Kiểm tra thiết bị phù hợp nếu API trình duyệt có hỗ trợ, rồi kiểm tra lại context/thế hệ.
 5. Tạo activeCall cục bộ với callId của Web, thông tin người nhận, direction outbound và status ringing.
 6. Bật âm ringback, gọi placeSdkCall. Hàm này dùng sdk.Phone.call(extension, false), tức không bật camera.

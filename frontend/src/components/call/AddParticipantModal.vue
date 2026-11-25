@@ -90,7 +90,7 @@
               <span v-if="c.dept" class="add-item-dept">• {{ c.dept }}</span>
             </div>
           </div>
-          <span class="badge-status-pill" :class="c.status">{{ c.statusLabel || 'Chưa rõ' }}</span>
+          <ContactPresenceDot :status="c.status" />
         </div>
         <button
           v-if="paging.nextOffset.value !== null && !paging.error.value"
@@ -120,6 +120,7 @@
 import { ref, computed, watch } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 import { useDirectoryPages } from '@/composables/useDirectoryPages.js'
+import ContactPresenceDot from '@/components/contacts/ContactPresenceDot.vue'
 
 /** Chỉ giữ lựa chọn tạm khi modal mở; gửi danh sách máy lẻ đã chọn cho view xử lý. */
 const props = defineProps({
@@ -233,14 +234,6 @@ const confirmAddParticipants = () => {
 
 <style>
 /* CSS chỉ áp dụng trong .calls-view để giữ nguyên layout khi tách component. */
-.calls-view .status-dot-inline.online {
-  background: #10b981;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
-}
-.calls-view .pill-dot.online {
-  background: #22c55e;
-}
-
 .calls-view .custom-check-box.checked {
   background: #2563eb;
   border-color: #2563eb;
@@ -251,54 +244,6 @@ const confirmAddParticipants = () => {
   opacity: 0.4;
   cursor: not-allowed;
   background: #f1f5f9;
-}
-
-.calls-view .badge-status-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border-radius: 12px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  background: #f1f5f9;
-  color: #64748b;
-  border: 1px solid #e2e8f0;
-}
-
-.calls-view .badge-status-pill.online {
-  background: #ecfdf5;
-  color: #059669;
-  border-color: #a7f3d0;
-}
-
-.calls-view .badge-status-pill.busy {
-  background: #fef2f2;
-  color: #dc2626;
-  border-color: #fecaca;
-}
-
-.calls-view .badge-status-pill.dnd {
-  background: #fff7ed;
-  color: #c2410c;
-  border-color: #fed7aa;
-}
-
-.calls-view .badge-status-pill.away {
-  background: #fefce8;
-  color: #a16207;
-  border-color: #fef08a;
-}
-
-.calls-view .badge-status-pill.ringing {
-  background: #eff6ff;
-  color: #1d4ed8;
-  border-color: #bfdbfe;
-}
-
-.calls-view .badge-status-pill.offline {
-  background: #f8fafc;
-  color: #94a3b8;
-  border-color: #e2e8f0;
 }
 
 .calls-view .tab-config-item.selected {

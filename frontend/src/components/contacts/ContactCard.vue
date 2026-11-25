@@ -58,11 +58,7 @@
     <div class="contact-meta">
       <div class="meta-row-top">
         <div class="name-status-group">
-          <span
-            class="status-dot-inline"
-            :class="`dot-${contact.status || 'offline'}`"
-            :title="`${contact.name}: ${contact.statusLabel || 'Ngoại tuyến'}`"
-          ></span>
+          <ContactPresenceDot :status="contact.status" />
           <strong class="contact-name" :title="contact.name">
             {{ contact.name }}
             <span v-if="isSelf" class="self-badge">(Bạn)</span>
@@ -102,15 +98,12 @@
     </div>
 
     <!-- Khi chọn thành viên, ưu tiên hiển thị trạng thái lựa chọn. -->
-    <div v-if="groupSelectionMode" class="group-select-indicator">
-      <span v-if="selected" class="badge-group-selected"> ✓ Đã chọn </span>
-      <span v-else class="badge-status-pill" :class="contact.status || 'offline'">
-        {{ contact.statusLabel || 'Ngoại tuyến' }}
-      </span>
+    <div v-if="groupSelectionMode && selected" class="group-select-indicator">
+      <span class="badge-group-selected"> ✓ Đã chọn </span>
     </div>
 
     <!-- Gọi trực tiếp từ thẻ liên hệ. -->
-    <div v-else class="contact-actions">
+    <div v-if="!groupSelectionMode" class="contact-actions">
       <button
         class="btn-action-icon call"
         :title="
@@ -146,6 +139,7 @@
 
 <script setup>
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
+import ContactPresenceDot from './ContactPresenceDot.vue'
 /** Một liên hệ: chỉ hiển thị và phát hành động, không sở hữu danh sách hoặc gọi API. */
 defineProps({
   contact: { type: Object, required: true },
@@ -159,44 +153,6 @@ const emit = defineEmits(['select', 'call', 'favorite', 'remember'])
 </script>
 
 <style>
-.calls-view .status-dot-inline {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.calls-view .status-dot-inline.online {
-  background: #10b981;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
-}
-
-.calls-view .status-dot-inline.busy,
-.calls-view .status-dot-inline.talking,
-.calls-view .status-dot-inline.holding {
-  background: #ef4444;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
-}
-
-.calls-view .status-dot-inline.away {
-  background: #f59e0b;
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
-}
-
-.calls-view .status-dot-inline.dnd {
-  background: #8b5cf6;
-  box-shadow: 0 0 6px rgba(139, 92, 246, 0.7);
-}
-
-.calls-view .status-dot-inline.ringing {
-  background: #3b82f6;
-  box-shadow: 0 0 6px rgba(59, 130, 246, 0.7);
-}
-
-.calls-view .status-dot-inline.offline {
-  background: #94a3b8;
-}
-
 .calls-view .contact-item-card {
   display: flex;
   min-width: 0;
@@ -281,34 +237,6 @@ const emit = defineEmits(['select', 'call', 'favorite', 'remember'])
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.calls-view .status-dot-inline {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
-}
-
-.calls-view .status-dot-inline.dot-online {
-  background: #22c55e;
-}
-.calls-view .status-dot-inline.dot-busy {
-  background: #ef4444;
-}
-.calls-view .status-dot-inline.dot-ringing {
-  background: #3b82f6;
-  animation: calls-view-pulse-ring 1s infinite;
-}
-.calls-view .status-dot-inline.dot-dnd {
-  background: #f97316;
-}
-.calls-view .status-dot-inline.dot-away {
-  background: #eab308;
-}
-.calls-view .status-dot-inline.dot-offline {
-  background: #94a3b8;
 }
 
 .calls-view .contact-name {
@@ -496,51 +424,4 @@ const emit = defineEmits(['select', 'call', 'favorite', 'remember'])
   border: 1px solid #bfdbfe;
 }
 
-.calls-view .badge-status-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border-radius: 12px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  background: #f1f5f9;
-  color: #64748b;
-  border: 1px solid #e2e8f0;
-}
-
-.calls-view .badge-status-pill.online {
-  background: #ecfdf5;
-  color: #059669;
-  border-color: #a7f3d0;
-}
-
-.calls-view .badge-status-pill.busy {
-  background: #fef2f2;
-  color: #dc2626;
-  border-color: #fecaca;
-}
-
-.calls-view .badge-status-pill.dnd {
-  background: #fff7ed;
-  color: #c2410c;
-  border-color: #fed7aa;
-}
-
-.calls-view .badge-status-pill.away {
-  background: #fefce8;
-  color: #a16207;
-  border-color: #fef08a;
-}
-
-.calls-view .badge-status-pill.ringing {
-  background: #eff6ff;
-  color: #1d4ed8;
-  border-color: #bfdbfe;
-}
-
-.calls-view .badge-status-pill.offline {
-  background: #f8fafc;
-  color: #94a3b8;
-  border-color: #e2e8f0;
-}
 </style>

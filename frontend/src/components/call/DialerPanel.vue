@@ -31,9 +31,7 @@
               <span v-if="contact.dept" class="preview-dept-badge">{{ contact.dept }}</span>
             </div>
             <div class="preview-meta-line">
-              <span class="preview-status-dot" :class="contact.status || 'offline'"></span>
-              <span class="preview-status-label">{{ contact.statusLabel || 'Ngoại tuyến' }}</span>
-              <span class="preview-sep">•</span>
+              <ContactPresenceDot :status="contact.status" />
               <span class="preview-ext-number">Máy lẻ: {{ modelValue }}</span>
             </div>
           </div>
@@ -47,7 +45,7 @@
               <span class="preview-name">Máy lẻ {{ modelValue }}</span>
             </div>
             <div class="preview-meta-line">
-              <span class="preview-unknown-note">Số nội bộ chưa lưu trong danh bạ</span>
+              <span v-if="previewMessage" class="preview-unknown-note">{{ previewMessage }}</span>
             </div>
           </div>
         </template>
@@ -104,11 +102,13 @@
 <script setup>
 import { computed } from 'vue'
 import { getAvatarInitials, getAvatarColor } from '../../utils/avatar.js'
+import ContactPresenceDot from '@/components/contacts/ContactPresenceDot.vue'
 
 /** Panel nhập số: chỉ phát ý định người dùng, không tự gọi SDK hay giữ state cuộc gọi. */
 const props = defineProps({
   modelValue: { type: String, default: '' },
   contact: { type: Object, default: null },
+  previewMessage: { type: String, default: '' },
   isCalling: Boolean,
   isDialing: Boolean,
 })
@@ -267,41 +267,6 @@ const keys = [
   gap: 5px;
   font-size: 0.75rem;
   color: #64748b;
-}
-
-.preview-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  display: inline-block;
-  flex-shrink: 0;
-}
-
-.preview-status-dot.online {
-  background: #22c55e;
-  box-shadow: 0 0 4px #22c55e;
-}
-
-.preview-status-dot.busy {
-  background: #ef4444;
-  box-shadow: 0 0 4px #ef4444;
-}
-
-.preview-status-dot.ringing {
-  background: #f59e0b;
-  box-shadow: 0 0 4px #f59e0b;
-}
-
-.preview-status-dot.offline {
-  background: #94a3b8;
-}
-
-.preview-status-label {
-  font-weight: 500;
-}
-
-.preview-sep {
-  color: #cbd5e1;
 }
 
 .preview-ext-number {

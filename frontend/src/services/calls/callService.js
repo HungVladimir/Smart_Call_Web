@@ -1137,7 +1137,6 @@ export class CallService {
         !meta.allowUnknown &&
         (!target || this.contactService.isPagedIdentity(target) || meta.expectedUuid)
       if (verifyTarget) target = await this.contactService.getOrLookupContact(targetExtension)
-      if (verifyTarget && target) await this.contactService.refreshDirectoryPresence([target])
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
@@ -1147,7 +1146,25 @@ export class CallService {
         return reject('TARGET_NOT_FOUND', 'Không tìm thấy máy lẻ trong danh bạ hệ thống.')
       if (meta.expectedUuid && target?.uuid !== meta.expectedUuid)
         return reject('TARGET_CHANGED', 'Máy lẻ đã đổi người sử dụng. Vui lòng tìm và chọn lại.')
-      const restriction = getContactCallRestriction(target)
+      let targetForPolicy = target
+      if (target && !meta.isGroupCall) {
+        const status = await this.contactService.confirmCallTargetPresence(target)
+        // Trong lúc chờ presence, phiên có thể đổi hoặc người dùng đã hủy yêu cầu gọi.
+        if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
+          return reject('CANCELED')
+        if (status === 'unknown')
+          return reject(
+            'TARGET_STATUS_UNKNOWN',
+            'Chưa xác minh được trạng thái người nhận. Vui lòng thử lại.',
+          )
+        targetForPolicy = { ...target, status }
+      } else if (verifyTarget && target) {
+        // Nhánh đầu của nhóm vẫn dùng quy trình xác minh do luồng gọi nhóm quản lý.
+        await this.contactService.refreshDirectoryPresence([target])
+        if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
+          return reject('CANCELED')
+      }
+      const restriction = getContactCallRestriction(targetForPolicy)
       if (restriction) return reject(restriction.reason, restriction.message)
       if (navigator.mediaDevices?.enumerateDevices) {
         const devices = await navigator.mediaDevices.enumerateDevices()

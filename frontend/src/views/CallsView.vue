@@ -57,6 +57,7 @@
       <DialerPanel
         v-model="extension"
         :contact="matchedDialContact"
+        :preview-message="dialPreviewMessage"
         :is-calling="isCalling"
         :is-dialing="isDialing"
         @digit="pressKey"
@@ -249,40 +250,44 @@ const isDialing = computed(() => Boolean(callService.isDialing))
 /** Cho biết ghi âm trên tổng đài đang hoạt động; không đồng nghĩa đang phát lại một file audio. */
 const isRecording = computed(() => recordingState.isRecording)
 
-/** Tìm liên hệ khớp số đang nhập để bàn phím hiển thị tên/avatar mà không tạo cuộc gọi. */
-const matchedDialContact = computed(() => {
-  const ext = extension.value.trim()
-  if (!ext) return null
-  return (
-    contacts.value.find((c) => String(c.number || '').trim() === ext) ||
-    contactService.findContactByExtension(ext) ||
-    null
-  )
-})
+const matchedDialContact = ref(null)
+const dialPreviewMessage = ref('')
 
-/** Gợi ý tên cho số đang nhập, bỏ tra cứu nếu người dùng đổi số trước khi hết debounce. */
-function previewDialTarget(value, previous, onCleanup) {
-  if (!directoryActive.value || !/^\d{3,}$/.test(value) || callState.activeCall) return
+/** Tra đúng số đã nhập qua service, độc lập với kết quả và trang danh bạ đang mở. */
+function previewDialTarget([value, active], previous, onCleanup) {
+  matchedDialContact.value = null
+  dialPreviewMessage.value = ''
+  const number = value.trim()
+  if (!active || !/^\d{3,}$/.test(number) || callState.activeCall) return
   const context = captureSessionContext()
-  /** Chỉ gắn trạng thái của người vẫn còn trong ô nhập hiện tại. */
+  let canceled = false
+  dialPreviewMessage.value = 'Đang tra cứu máy lẻ…'
+  /** Bỏ phản hồi của số cũ, màn đã đóng hoặc phiên đã hết trước khi hiển thị. */
+  function isPreviewCurrent() {
+    return !canceled && extension.value === value && isSessionContextCurrent(context)
+  }
+
+  /** Hiển thị liên hệ đã xác minh rồi lấy trạng thái cho riêng UUID đó. */
   async function lookupPreview() {
     try {
-      const contact = await contactService.getOrLookupContact(value)
-      if (
-        contact &&
-        directoryActive.value &&
-        extension.value === value &&
-        isSessionContextCurrent(context)
-      )
-        await contactService.refreshDirectoryPresence([contact])
+      const contact = await contactService.getOrLookupContact(number)
+      if (!isPreviewCurrent()) return
+      matchedDialContact.value = contact
+      dialPreviewMessage.value = contact ? '' : 'Không tìm thấy máy lẻ trong danh bạ'
+      if (contact) await contactService.refreshDirectoryPresence([contact])
     } catch {
-      // Service gọi sẽ trình bày lỗi khi người dùng thực sự bấm Gọi.
+      if (isPreviewCurrent()) dialPreviewMessage.value = 'Chưa tra cứu được máy lẻ'
     }
   }
   const timer = setTimeout(lookupPreview, 300)
-  onCleanup(() => clearTimeout(timer))
+  /** Hủy debounce và chặn phản hồi đã bắt đầu trước khi đổi số hoặc rời màn. */
+  function cancelPreview() {
+    canceled = true
+    clearTimeout(timer)
+  }
+  onCleanup(cancelPreview)
 }
-watch(extension, previewDialTarget)
+watch([extension, directoryActive], previewDialTarget)
 
 /** Định dạng số giây đàm thoại thành phút:giây để hiển thị trên khung gọi và thanh gọi nhỏ. */
 const formattedDuration = computed(() => {
