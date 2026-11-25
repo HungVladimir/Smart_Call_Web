@@ -13,11 +13,11 @@ export function useMicrophoneMeter({ isActive, getMicrophoneId }) {
   const VAD_HANGOVER_MS = 1000
 
   /** Đổi trạng thái microphone/VAD thành nhãn dễ hiểu cho phần thử mic. */
-  const micStatusText = computed(() => {
+  const micStatusText = computed(function getMicStatusText() {
     if (isVoiceActive.value) {
-      return '🟢 Đang nhận tín hiệu giọng nói'
+      return 'Đang nhận tín hiệu giọng nói'
     }
-    return '⚪ Sẵn sàng (Hãy nói vào mic để thử)'
+    return 'Sẵn sàng (Hãy nói vào mic để thử)'
   })
 
   let audioContext = null

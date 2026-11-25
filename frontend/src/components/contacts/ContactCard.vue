@@ -21,18 +21,7 @@
           disabled: isSelf || !canInvite,
         }"
       >
-        <svg
-          v-if="selected"
-          class="check-svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="3.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
+        <UiIcon name="selection-check" v-if="selected" class="check-svg" />
       </div>
     </div>
     <!-- Đánh dấu liên hệ yêu thích khi đang duyệt danh bạ. -->
@@ -44,7 +33,7 @@
       :aria-label="contact.isFavorite ? 'Bỏ khỏi yêu thích' : 'Thêm vào yêu thích'"
       @click.stop="emit('favorite', contact)"
     >
-      {{ contact.isFavorite ? '⭐' : '☆' }}
+      <UiIcon :name="contact.isFavorite ? 'favorite' : 'favorite-outline'" />
     </button>
 
     <!-- Ảnh đại diện dạng chữ cái. -->
@@ -71,20 +60,7 @@
               class="mobile-phone-badge"
               title="Đang trực tuyến bằng ứng dụng di động"
             >
-              <svg
-                class="phone-svg-icon"
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
-                <line x1="12" y1="18" x2="12.01" y2="18"></line>
-              </svg>
+              <UiIcon name="mobile" class="phone-svg-icon" width="13" height="13" />
             </span>
           </strong>
         </div>
@@ -99,7 +75,7 @@
 
     <!-- Khi chọn thành viên, ưu tiên hiển thị trạng thái lựa chọn. -->
     <div v-if="groupSelectionMode && selected" class="group-select-indicator">
-      <span class="badge-group-selected"> ✓ Đã chọn </span>
+      <span class="badge-group-selected"> <UiIcon name="check-text" /> Đã chọn </span>
     </div>
 
     <!-- Gọi trực tiếp từ thẻ liên hệ. -->
@@ -117,27 +93,14 @@
         :disabled="busy || !contact.number || !contact.number.trim()"
         @click.stop="emit('call', contact)"
       >
-        <svg
-          class="action-svg"
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path
-            d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
-          />
-        </svg>
+        <UiIcon name="phone-outline" class="action-svg" width="15" height="15" stroke-width="2" />
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
+import UiIcon from '@/components/common/UiIcon.vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 import ContactPresenceDot from './ContactPresenceDot.vue'
 /** Một liên hệ: chỉ hiển thị và phát hành động, không sở hữu danh sách hoặc gọi API. */

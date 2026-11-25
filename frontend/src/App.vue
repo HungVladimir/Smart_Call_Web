@@ -56,7 +56,7 @@
     <!-- 7. Modal Cảnh báo Đăng nhập 1 Thiết bị (Single Device Login - Mục 9) -->
     <div v-if="showKickedModal" class="kicked-modal-overlay">
       <div class="kicked-modal-card">
-        <div class="kicked-modal-icon">⚠️</div>
+        <div class="kicked-modal-icon"><UiIcon name="warning" /></div>
         <h3 class="kicked-modal-title">Tài Khoản Đã Đăng Nhập Nơi Khác</h3>
         <p class="kicked-modal-desc">
           Phiên làm việc của bạn đã kết thúc vì tài khoản vừa được đăng nhập trên một thiết bị khác
@@ -69,6 +69,7 @@
 </template>
 
 <script setup>
+import UiIcon from '@/components/common/UiIcon.vue'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { authService, callService } from '@/services/index.js'

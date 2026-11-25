@@ -12,11 +12,14 @@
           }"
           :style="{ backgroundColor: activeCallAvatarBg }"
         >
-          <span>{{ activeCallAvatarText }}</span>
+          <span v-if="activeCallAvatarText">{{ activeCallAvatarText }}</span>
+          <UiIcon v-else :name="isGroupCall ? 'users-text' : 'phone-text'" />
         </div>
 
         <div class="caller-details">
-          <div v-if="isGroupCall" class="group-call-badge-tag">👥 Cuộc gọi nhóm Ad-hoc</div>
+          <div v-if="isGroupCall" class="group-call-badge-tag">
+            <UiIcon name="users-text" /> Cuộc gọi nhóm Ad-hoc
+          </div>
           <h2 class="caller-title">{{ activeCallTitle }}</h2>
           <div v-if="activeCallDept" class="caller-dept-badge">{{ activeCallDept }}</div>
           <p class="duration-text" :class="{ ringingText: callStatus === 'ringing' }">
@@ -29,12 +32,13 @@
             v-if="isGroupCall && pendingRingingMembers.length > 0"
             class="group-pending-summary-text"
           >
-            <span class="connecting-pulse-dot">⏳</span> Đang kết nối
+            <UiIcon name="hourglass" class="connecting-pulse-dot" /> Đang kết nối
             {{ pendingRingingMembers.join(', ') }}...
           </div>
           <p v-if="dtmfLog" class="dtmf-display">Phím số: {{ dtmfLog }}</p>
           <div v-if="isRecording" class="recording-indicator-tag">
-            <span class="rec-pulse-dot">●</span> {{ formattedRecordingDuration }} Đang ghi âm
+            <UiIcon name="record-dot" class="rec-pulse-dot" /> {{ formattedRecordingDuration }} Đang
+            ghi âm
           </div>
         </div>
 
@@ -48,40 +52,8 @@
             :title="isMuted ? 'Bật lại Micro' : 'Tắt Micro (Mute)'"
             @click="$emit('mute')"
           >
-            <svg
-              v-if="!isMuted"
-              class="ctrl-svg-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z M5 10v2a7 7 0 0 0 14 0v-2 M12 19v3 M8 22h8"
-              />
-            </svg>
-            <svg
-              v-else
-              class="ctrl-svg-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="1" y1="1" x2="23" y2="23" stroke-linecap="round" />
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"
-              />
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M17 16.95A7 7 0 015 11m12 0a6.97 6.97 0 01-.64 2.92M12 19v4m-4 0h8"
-              />
-            </svg>
+            <UiIcon name="microphone" v-if="!isMuted" class="ctrl-svg-icon" />
+            <UiIcon name="microphone-off" v-else class="ctrl-svg-icon" />
           </button>
 
           <!-- Nút Thêm người vào cuộc gọi (Add Member) -->
@@ -91,20 +63,7 @@
             title="Mời thêm thành viên vào cuộc gọi"
             @click="$emit('add-participant')"
           >
-            <svg
-              class="ctrl-svg-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="8.5" cy="7" r="4" />
-              <line x1="20" y1="8" x2="20" y2="14" />
-              <line x1="23" y1="11" x2="17" y2="11" />
-            </svg>
+            <UiIcon name="user-plus" class="ctrl-svg-icon" />
           </button>
 
           <!-- Nút Ghi âm (Record trên tổng đài) -->
@@ -121,21 +80,11 @@
             "
             @click="$emit('record')"
           >
-            <span v-if="isRecording" class="rec-dot-pulse">●</span>
+            <UiIcon name="record-dot" v-if="isRecording" class="rec-dot-pulse" />
             <span v-if="isRecording" class="rec-label"
               >{{ formattedRecordingDuration }} Đang ghi âm</span
             >
-            <svg
-              v-else
-              class="ctrl-svg-icon rec-svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <circle cx="12" cy="12" r="5" fill="#ef4444" stroke="#ef4444" />
-              <circle cx="12" cy="12" r="9" stroke="#ef4444" stroke-width="2" />
-            </svg>
+            <UiIcon name="record" v-else class="ctrl-svg-icon rec-svg" />
           </button>
 
           <!-- Nút Cúp máy (Hangup) -->
@@ -145,11 +94,7 @@
             title="Ngắt kết nối / Cúp máy"
             @click="$emit('hangup')"
           >
-            <svg class="ctrl-svg-icon hangup-svg" viewBox="0 0 24 24" fill="currentColor">
-              <path
-                d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 010-1.41C3.28 8.82 7.42 7 12 7s8.72 1.82 11.71 4.67c.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"
-              />
-            </svg>
+            <UiIcon name="hangup" class="ctrl-svg-icon hangup-svg" />
           </button>
         </div>
       </div>
@@ -158,6 +103,7 @@
 </template>
 
 <script setup>
+import UiIcon from '@/components/common/UiIcon.vue'
 import { computed } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 
@@ -265,11 +211,11 @@ const activeCallDept = computed(() => {
 
 /** Chọn ký hiệu nhóm hoặc chữ viết tắt của người đang gọi cho avatar. */
 const activeCallAvatarText = computed(() => {
-  if (isGroupCall.value) return '👥'
+  if (isGroupCall.value) return ''
   const name = props.call?.name || activeCallContact.value?.name
   if (name) return getInitials(name)
   if (props.call?.number) return props.call.number.slice(-2)
-  return '📞'
+  return ''
 })
 
 /** Chọn màu avatar theo nhóm/tên để nhận diện người đang gọi một cách ổn định. */

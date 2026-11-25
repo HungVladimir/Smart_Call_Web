@@ -1,6 +1,6 @@
 # Nhật ký refactor SmartCall Web
 
-26/11/2026. Màn Gọi nhóm dùng thẻ nhóm với nút Gọi dễ nhận biết và mở bố cục riêng khi tạo hoặc sửa. Danh sách người đã chọn hiển thị avatar chữ, tên và máy lẻ bên cạnh bộ chọn danh bạ. Tab Gọi nhóm trong Danh bạ dùng chung icon cho Gọi nhanh và lối vào Nhóm đã lưu.
+26/11/2026. Màn Gọi nhóm dùng thẻ nhóm với nút Gọi dễ nhận biết và mở bố cục riêng khi tạo hoặc sửa. Danh sách người đã chọn hiển thị avatar chữ, tên và máy lẻ bên cạnh bộ chọn danh bạ. Các biểu tượng giao diện Web dùng chung [UiIcon.vue](../../frontend/src/components/common/UiIcon.vue). Màn gọi, danh bạ, nhóm gọi, lịch sử, đăng nhập, điều hướng, cài đặt và nhật ký chọn icon bằng tên. Danh sách chọn trạng thái của trình duyệt dùng cùng bảng ký tự để giữ tùy chọn HTML chuẩn.
 
 ### Xác minh đích gọi và danh bạ theo quyền phiên
 

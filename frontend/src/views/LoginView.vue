@@ -30,19 +30,7 @@
           <div class="form-group">
             <label class="input-label" for="login-username">Tài khoản / Số máy lẻ</label>
             <div class="input-box">
-              <svg
-                class="input-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                />
-              </svg>
+              <UiIcon name="user" class="input-icon" />
               <input
                 id="login-username"
                 type="text"
@@ -61,16 +49,7 @@
               <label class="input-label" for="login-password">Mật khẩu</label>
             </div>
             <div class="input-box">
-              <svg
-                class="input-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M7 11V7a5 5 0 0110 0v4" />
-              </svg>
+              <UiIcon name="lock" class="input-icon" />
               <input
                 id="login-password"
                 :type="showPassword ? 'text' : 'password'"
@@ -88,32 +67,9 @@
                 :title="showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'"
               >
                 <!-- SVG Mắt mở -->
-                <svg
-                  v-if="showPassword"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                  />
-                </svg>
+                <UiIcon name="eye" v-if="showPassword" />
                 <!-- SVG Mắt gạch chéo -->
-                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"
-                  />
-                </svg>
+                <UiIcon name="eye-off" v-else />
               </button>
             </div>
           </div>
@@ -121,19 +77,7 @@
           <!-- Thông báo lỗi khi đăng nhập không thành công -->
           <transition name="alert-slide">
             <div v-if="errorMessage" class="error-banner">
-              <svg
-                class="error-banner-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
+              <UiIcon name="warning-outline" class="error-banner-icon" />
               <div class="error-banner-text">{{ errorMessage }}</div>
             </div>
           </transition>
@@ -154,16 +98,7 @@
           <button type="submit" class="btn-primary-login" :disabled="loading">
             <span v-if="loading" class="btn-spinner"></span>
             <span>{{ loading ? 'Đang xác thực thông tin...' : 'ĐĂNG NHẬP VÀO HỆ THỐNG' }}</span>
-            <svg
-              v-if="!loading"
-              class="btn-arrow"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-            </svg>
+            <UiIcon name="forward" v-if="!loading" class="btn-arrow" />
           </button>
 
           <!-- Điều hướng toàn trang tới backend để bắt đầu giao dịch OIDC. -->
@@ -178,17 +113,7 @@
 
           <!-- Gợi ý xác nhận chứng chỉ SSL -->
           <div v-if="showCertificateHint" class="ssl-cert-hint">
-            <svg
-              class="hint-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="16" x2="12" y2="12" />
-              <line x1="12" y1="8" x2="12.01" y2="8" />
-            </svg>
+            <UiIcon name="info-outline" class="hint-icon" />
             <span
               >Nếu chưa tin cậy chứng chỉ máy chủ, mở
               <a
@@ -212,9 +137,9 @@
       >
         <div class="forgot-modal-card">
           <div class="forgot-modal-header">
-            <h3>🔑 Lấy Lại Mật Khẩu</h3>
+            <h3><UiIcon name="key" /> Lấy Lại Mật Khẩu</h3>
             <button type="button" class="btn-close-modal" @click="showForgotModal = false">
-              ✕
+              <UiIcon name="close-text" />
             </button>
           </div>
           <div class="forgot-modal-body">
@@ -263,6 +188,7 @@
 </template>
 
 <script setup>
+import UiIcon, { iconGlyphs } from '@/components/common/UiIcon.vue'
 import { getAuthenticationErrorMessage } from '../utils/userProfile.js'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -294,22 +220,20 @@ const handleResetPassword = async () => {
     const res = await authService.resetPassword(val)
     if (res.ok || res.status === 204 || res.status === 200) {
       resetSuccess.value = true
-      resetMessage.value =
-        '📧 Đã gửi liên kết đặt lại mật khẩu! Vui lòng kiểm tra hộp thư email của bạn.'
+      resetMessage.value = `${iconGlyphs['email']} Đã gửi liên kết đặt lại mật khẩu! Vui lòng kiểm tra hộp thư email của bạn.`
     } else if (res.status === 404) {
       resetSuccess.value = false
-      resetMessage.value = '❌ Không tìm thấy tài khoản với tên đăng nhập hoặc email này.'
+      resetMessage.value = `${iconGlyphs['error-text']} Không tìm thấy tài khoản với tên đăng nhập hoặc email này.`
     } else if (res.status === 503) {
       resetSuccess.value = false
-      resetMessage.value =
-        '⚠️ Dịch vụ thư điện tử (Mail Server) của tổng đài chưa được cấu hình. Vui lòng liên hệ Quản trị viên.'
+      resetMessage.value = `${iconGlyphs['warning']} Dịch vụ thư điện tử (Mail Server) của tổng đài chưa được cấu hình. Vui lòng liên hệ Quản trị viên.`
     } else {
       resetSuccess.value = false
-      resetMessage.value = `❌ Yêu cầu thất bại (Mã lỗi: ${res.status}). Vui lòng thử lại sau!`
+      resetMessage.value = `${iconGlyphs['error-text']} Yêu cầu thất bại (Mã lỗi: ${res.status}). Vui lòng thử lại sau!`
     }
   } catch (err) {
     resetSuccess.value = false
-    resetMessage.value = `❌ Không thể kết nối tới máy chủ tổng đài: ${err.message}`
+    resetMessage.value = `${iconGlyphs['error-text']} Không thể kết nối tới máy chủ tổng đài: ${err.message}`
   } finally {
     resetLoading.value = false
   }

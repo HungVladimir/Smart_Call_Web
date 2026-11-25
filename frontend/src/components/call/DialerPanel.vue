@@ -65,11 +65,7 @@
           :disabled="isCalling || isDialing"
           @click="emit('dial')"
         >
-          <svg class="dial-svg-icon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-            <path
-              d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-2.2 2.2a15.053 15.053 0 01-6.59-6.59l2.2-2.21a.96.96 0 00.25-1A11.74 11.74 0 018.57 3.9a1 1 0 00-1-1H4.07a1 1 0 00-1 1A17.93 17.93 0 0021 20.93a1 1 0 001-1v-3.55a1 1 0 00-1-1h-.99z"
-            />
-          </svg>
+          <UiIcon name="phone-filled" class="dial-svg-icon" width="22" height="22" />
         </button>
         <button
           class="btn-clear"
@@ -79,27 +75,14 @@
           :disabled="!modelValue"
           @click="emit('erase')"
         >
-          <svg
-            class="clear-svg-icon"
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.5-7.5H21a1 1 0 011 1v13a1 1 0 01-1 1H9.5L3 12z"
-            />
-          </svg>
+          <UiIcon name="backspace" class="clear-svg-icon" width="22" height="22" />
         </button>
       </div>
     </div>
   </section>
 </template>
 <script setup>
+import UiIcon from '@/components/common/UiIcon.vue'
 import { computed } from 'vue'
 import { getAvatarInitials, getAvatarColor } from '../../utils/avatar.js'
 import ContactPresenceDot from '@/components/contacts/ContactPresenceDot.vue'

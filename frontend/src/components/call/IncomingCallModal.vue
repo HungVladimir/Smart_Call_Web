@@ -5,19 +5,7 @@
         <!-- 1. Header tinh tế dạng badge nổi -->
         <div class="card-header">
           <div class="incoming-badge">
-            <svg
-              class="incoming-badge-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
-              />
-            </svg>
+            <UiIcon name="phone-outline" class="incoming-badge-icon" />
             <span>CUỘC GỌI ĐẾN</span>
           </div>
         </div>
@@ -47,11 +35,7 @@
           <!-- Nút Từ chối -->
           <div class="action-btn-item">
             <button class="btn-circle btn-reject" title="Từ chối cuộc gọi" @click="handleReject">
-              <svg viewBox="0 0 24 24" class="action-svg" fill="currentColor">
-                <path
-                  d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.996.996 0 0 1 0-1.41C2.56 9.42 6.98 8 12 8s9.44 1.42 11.71 3.67c.39.39.39 1.02 0 1.41l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"
-                />
-              </svg>
+              <UiIcon name="reject" class="action-svg" />
             </button>
             <span class="action-text text-reject">Từ chối</span>
           </div>
@@ -60,19 +44,7 @@
           <div class="action-btn-item">
             <button class="btn-circle btn-accept" title="Nghe máy" @click="handleAccept">
               <div class="btn-pulse-wave"></div>
-              <svg
-                viewBox="0 0 24 24"
-                class="action-svg"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path
-                  d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
-                />
-              </svg>
+              <UiIcon name="phone-outline" class="action-svg" />
             </button>
             <span class="action-text text-accept">Nghe máy</span>
           </div>
@@ -83,6 +55,7 @@
 </template>
 
 <script setup>
+import UiIcon from '@/components/common/UiIcon.vue'
 import { computed, watch } from 'vue'
 import { callToneService } from '@/services/audio/audioService.js'
 import { authService } from '@/services/index.js'

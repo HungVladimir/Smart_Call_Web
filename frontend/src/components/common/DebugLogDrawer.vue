@@ -7,7 +7,7 @@
       @click="isOpen = true"
       title="Mở bảng Nhật ký Thao tác & Sự kiện WebRTC thời gian thực"
     >
-      <span class="log-icon">📋</span>
+      <UiIcon name="clipboard" class="log-icon" />
       <span class="log-text">Logs</span>
       <span v-if="logs.length > 0" class="log-badge">{{ logs.length }}</span>
     </button>
@@ -18,7 +18,7 @@
         <!-- Header của Drawer -->
         <div class="drawer-header">
           <div class="drawer-title">
-            <span class="title-icon">📋</span>
+            <UiIcon name="clipboard" class="title-icon" />
             <span class="title-text">NHẬT KÝ THAO TÁC & SỰ KIỆN WEBRTC (LIVE DEBUG)</span>
             <span class="log-count">({{ filteredLogs.length }} dòng)</span>
           </div>
@@ -29,13 +29,13 @@
               @click="handleCopy"
               title="Sao chép toàn bộ nhật ký ra clipboard"
             >
-              📋 Sao chép
+              <UiIcon name="clipboard" /> Sao chép
             </button>
             <button class="btn-action" @click="handleClear" title="Xóa sạch nhật ký hiện tại">
-              🗑️ Xóa
+              <UiIcon name="trash-text" /> Xóa
             </button>
             <button class="btn-close-drawer" @click="isOpen = false" title="Đóng bảng nhật ký">
-              ✖
+              <UiIcon name="close-heavy" />
             </button>
           </div>
         </div>
@@ -49,7 +49,7 @@
             :class="{ active: selectedCategory === cat.key }"
             @click="selectedCategory = cat.key"
           >
-            {{ cat.label }}
+            <UiIcon v-if="cat.icon" :name="cat.icon" /> {{ cat.label }}
           </button>
         </div>
 
@@ -81,6 +81,7 @@
 </template>
 
 <script setup>
+import UiIcon, { iconGlyphs } from '@/components/common/UiIcon.vue'
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { logger } from '@/services/common/loggerService.js'
 
@@ -92,12 +93,12 @@ const logs = ref(logger.getLogs())
 
 const categories = [
   { key: 'ALL', label: 'TẤT CẢ' },
-  { key: 'CALL', label: '📞 CUỘC GỌI' },
-  { key: 'SIP', label: '🌐 SIP WEBRTC' },
-  { key: 'AUTH', label: '🔒 XÁC THỰC' },
-  { key: 'API', label: '📡 REST API' },
-  { key: 'UI', label: '🖱️ THAO TÁC' },
-  { key: 'AUDIO', label: '🔊 ÂM THANH' },
+  { key: 'CALL', icon: 'phone-text', label: 'CUỘC GỌI' },
+  { key: 'SIP', icon: 'globe', label: 'SIP WEBRTC' },
+  { key: 'AUTH', icon: 'lock-text', label: 'XÁC THỰC' },
+  { key: 'API', icon: 'antenna', label: 'REST API' },
+  { key: 'UI', icon: 'mouse', label: 'THAO TÁC' },
+  { key: 'AUDIO', icon: 'speaker', label: 'ÂM THANH' },
 ]
 
 /** Lọc log theo cấp độ/danh mục đang chọn để drawer chỉ hiển thị những entry cần theo dõi. */
@@ -151,7 +152,10 @@ const handleCopy = async () => {
     await navigator.clipboard.writeText(text)
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: '📋 Đã sao chép toàn bộ nhật ký vào Clipboard!', type: 'success' },
+        detail: {
+          message: `${iconGlyphs['clipboard']} Đã sao chép toàn bộ nhật ký vào Clipboard!`,
+          type: 'success',
+        },
       }),
     )
   } catch (e) {

@@ -30,9 +30,9 @@
         aria-label="Trạng thái hiện diện trực tuyến"
         @change="updatePresence"
       >
-        <option value="available">🟢 Online (Sẵn sàng)</option>
-        <option value="away">🟡 Vắng mặt (Away)</option>
-        <option value="dnd">🔴 Đang bận (DND)</option>
+        <option value="available">{{ iconGlyphs['status-available'] }} Online (Sẵn sàng)</option>
+        <option value="away">{{ iconGlyphs['status-away'] }} Vắng mặt (Away)</option>
+        <option value="dnd">{{ iconGlyphs['status-busy'] }} Đang bận (DND)</option>
       </select>
 
       <div class="user-profile">
@@ -44,11 +44,11 @@
 
       <!-- Nút Cài đặt hệ thống -->
       <button class="btn-settings-header" title="Cài đặt hệ thống" @click="$emit('open-settings')">
-        ⚙️ <span class="header-btn-text">SETTINGS</span>
+        <UiIcon name="settings" /> <span class="header-btn-text">SETTINGS</span>
       </button>
 
       <button class="btn-logout-header" title="Đăng xuất khỏi hệ thống" @click="$emit('logout')">
-        🚪 <span class="header-btn-text">Thoát</span>
+        <UiIcon name="logout" /> <span class="header-btn-text">Thoát</span>
       </button>
     </div>
 
@@ -60,12 +60,16 @@
             <span class="sip-modal-dot" :class="{ online: isSipOnline }"></span>
             <h3>Thông Tin Kết Nối Tổng Đài</h3>
           </div>
-          <button class="btn-close-modal" @click="showSipInfoModal = false">✕</button>
+          <button class="btn-close-modal" aria-label="Đóng" @click="showSipInfoModal = false">
+            <UiIcon name="close-text" />
+          </button>
         </div>
 
         <div class="sip-modal-body">
           <div class="status-summary-box" :class="{ online: isSipOnline }">
-            <div class="summary-icon">{{ isSipOnline ? '🟢' : '⚪' }}</div>
+            <div class="summary-icon">
+              <UiIcon :name="isSipOnline ? 'status-available' : 'status-idle'" />
+            </div>
             <div class="summary-text">
               <div class="summary-title">
                 {{
@@ -85,7 +89,9 @@
           </div>
 
           <div class="sip-guide-section">
-            <div class="guide-title">💡 Kích hoạt luồng gọi thoại WebRTC thật qua máy chủ:</div>
+            <div class="guide-title">
+              <UiIcon name="tip" /> Kích hoạt luồng gọi thoại WebRTC thật qua máy chủ:
+            </div>
             <ol class="guide-steps">
               <li>
                 Mở tab mới trên trình duyệt và truy cập:
@@ -94,7 +100,7 @@
                 }}</a>
               </li>
               <li>
-                Chọn <strong>Nâng cao (Advanced)</strong> &rarr; Bấm
+                Chọn <strong>Nâng cao (Advanced)</strong> <UiIcon name="arrow-right" /> Bấm
                 <strong>Tiếp tục truy cập máy chủ tổng đài</strong> để xác nhận tin cậy cổng WSS.
               </li>
               <li>
@@ -114,6 +120,7 @@
 </template>
 
 <script setup>
+import UiIcon, { iconGlyphs } from '@/components/common/UiIcon.vue'
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { authService } from '@/services/index.js'

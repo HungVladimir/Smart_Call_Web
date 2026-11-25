@@ -3,21 +3,21 @@
     <ul class="sidebar-menu">
       <li v-if="features.calls">
         <router-link to="/calls" class="nav-btn" active-class="active" @click="onCallsNavClick">
-          <span class="icon">📞</span>
+          <UiIcon name="phone-text" class="icon" />
           <span>Gọi điện & Danh bạ</span>
         </router-link>
       </li>
 
       <li v-if="features.callGroups">
         <router-link to="/call-groups" class="nav-btn" active-class="active">
-          <span class="icon">👥</span>
+          <UiIcon name="users-text" class="icon" />
           <span>Gọi nhóm</span>
         </router-link>
       </li>
 
       <li v-if="features.history">
         <router-link to="/history" class="nav-btn" active-class="active">
-          <span class="icon">🕒</span>
+          <UiIcon name="history" class="icon" />
           <span>Lịch sử cuộc gọi</span>
         </router-link>
       </li>
@@ -32,6 +32,7 @@
 </template>
 
 <script setup>
+import UiIcon from '@/components/common/UiIcon.vue'
 import { ref, onMounted, onUnmounted } from 'vue'
 import { getFeatures } from '@/config/features.js'
 

@@ -3,10 +3,12 @@
     <div class="modal-card modal-card-lg">
       <div class="modal-head">
         <div class="head-title">
-          <span>⚙️ CÀI ĐẶT HỆ THỐNG (SETTINGS)</span>
+          <span><UiIcon name="settings" /> CÀI ĐẶT HỆ THỐNG (SETTINGS)</span>
           <small>• SmartCall Web v2.0</small>
         </div>
-        <button class="btn-close" @click="$emit('close')">✖</button>
+        <button class="btn-close" aria-label="Đóng cài đặt" @click="$emit('close')">
+          <UiIcon name="close-heavy" />
+        </button>
       </div>
 
       <!-- Settings Navigation Tabs -->
@@ -16,35 +18,35 @@
           :class="{ active: activeTab === 'audio' }"
           @click="activeTab = 'audio'"
         >
-          🎙️ Âm thanh & WebRTC
+          <UiIcon name="microphone-text" /> Âm thanh & WebRTC
         </button>
         <button
           class="st-tab-btn"
           :class="{ active: activeTab === 'calls' }"
           @click="activeTab = 'calls'"
         >
-          📞 Dịch vụ cuộc gọi (PBX)
+          <UiIcon name="phone-text" /> Dịch vụ cuộc gọi (PBX)
         </button>
         <button
           class="st-tab-btn"
           :class="{ active: activeTab === 'account' }"
           @click="activeTab = 'account'"
         >
-          🔒 Tài khoản & Mật khẩu
+          <UiIcon name="lock-text" /> Tài khoản & Mật khẩu
         </button>
         <button
           class="st-tab-btn"
           :class="{ active: activeTab === 'pref' }"
           @click="activeTab = 'pref'"
         >
-          🌐 Ngôn ngữ & Tùy chọn
+          <UiIcon name="globe" /> Ngôn ngữ & Tùy chọn
         </button>
         <button
           class="st-tab-btn"
           :class="{ active: activeTab === 'features' }"
           @click="activeTab = 'features'"
         >
-          🚩 Phân hệ tính năng
+          <UiIcon name="flag" /> Phân hệ tính năng
         </button>
       </div>
 
@@ -66,7 +68,10 @@
             <div class="mic-meter-bar">
               <div class="mic-meter-fill" :style="{ width: `${micLevel}%` }"></div>
             </div>
-            <span class="meter-status" :class="{ active: isVoiceActive }">{{ micStatusText }}</span>
+            <span class="meter-status" :class="{ active: isVoiceActive }"
+              ><UiIcon :name="isVoiceActive ? 'status-available' : 'status-idle'" />
+              {{ micStatusText }}</span
+            >
           </div>
         </div>
 
@@ -81,7 +86,9 @@
                 Loa / Tai nghe Mặc định của hệ thống
               </option>
             </select>
-            <button class="btn-test-sound" @click="testSound">🔊 Thử loa</button>
+            <button class="btn-test-sound" @click="testSound">
+              <UiIcon name="speaker" /> Thử loa
+            </button>
           </div>
         </div>
 
@@ -207,7 +214,8 @@
             :disabled="resetEmailLoading"
             @click="sendPasswordResetEmail"
           >
-            {{ resetEmailLoading ? 'Đang gửi...' : '📧 Gửi liên kết đặt lại qua Email' }}
+            <template v-if="resetEmailLoading">Đang gửi...</template>
+            <template v-else><UiIcon name="email" /> Gửi liên kết đặt lại qua Email</template>
           </button>
         </div>
       </div>
@@ -248,7 +256,9 @@
         <div class="features-grid">
           <label class="feature-item">
             <input type="checkbox" v-model="featureConfig.calls" />
-            <span class="feature-name">📞 Gọi điện & Danh bạ (/calls)</span>
+            <span class="feature-name"
+              ><UiIcon name="phone-text" /> Gọi điện & Danh bạ (/calls)</span
+            >
           </label>
           <label class="feature-item">
             <input type="checkbox" v-model="featureConfig.callGroups" />
@@ -256,13 +266,13 @@
           </label>
           <label class="feature-item">
             <input type="checkbox" v-model="featureConfig.history" />
-            <span class="feature-name">🕒 Lịch sử cuộc gọi (/history)</span>
+            <span class="feature-name"><UiIcon name="history" /> Lịch sử cuộc gọi (/history)</span>
           </label>
         </div>
 
         <div class="reset-row">
           <button class="btn-reset-features" @click="handleResetFeatures">
-            🔄 Khôi phục mặc định toàn bộ cờ
+            <UiIcon name="refresh" /> Khôi phục mặc định toàn bộ cờ
           </button>
         </div>
       </div>
@@ -278,6 +288,7 @@
 </template>
 
 <script setup>
+import UiIcon, { iconGlyphs } from '@/components/common/UiIcon.vue'
 import { useMicrophoneMeter } from '../../composables/useMicrophoneMeter.js'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getFeatures, saveFeatures, resetFeatures } from '@/config/features.js'
@@ -430,7 +441,7 @@ const handleResetFeatures = () => {
   featureConfig.value = resetFeatures()
   window.dispatchEvent(
     new CustomEvent('app-toast', {
-      detail: { message: '🔄 Đã khôi phục tất cả cờ tính năng về mặc định!' },
+      detail: { message: `${iconGlyphs['refresh']} Đã khôi phục tất cả cờ tính năng về mặc định!` },
     }),
   )
 }
@@ -467,8 +478,8 @@ const saveAutoRecord = () => {
     new CustomEvent('app-toast', {
       detail: {
         message: autoRecordCalls.value
-          ? '🔴 Đã bật tính năng Tự động ghi âm cuộc gọi'
-          : '⚪ Đã tắt tính năng Tự động ghi âm cuộc gọi',
+          ? `${iconGlyphs['status-busy']} Đã bật tính năng Tự động ghi âm cuộc gọi`
+          : `${iconGlyphs['status-idle']} Đã tắt tính năng Tự động ghi âm cuộc gọi`,
         type: 'info',
       },
     }),
@@ -546,7 +557,10 @@ const testSound = () => {
 
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: '🔊 Đang phát âm thanh kiểm tra loa (3 nốt nhạc)!', type: 'info' },
+        detail: {
+          message: `${iconGlyphs['speaker']} Đang phát âm thanh kiểm tra loa (3 nốt nhạc)!`,
+          type: 'info',
+        },
       }),
     )
   } catch (e) {
@@ -567,7 +581,7 @@ const savePassword = async () => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: '⚠️ Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới!',
+          message: `${iconGlyphs['warning']} Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới!`,
           type: 'warning',
         },
       }),
@@ -578,7 +592,10 @@ const savePassword = async () => {
   if (newP.length < 8) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: '⚠️ Mật khẩu mới phải có tối thiểu 8 ký tự!', type: 'warning' },
+        detail: {
+          message: `${iconGlyphs['warning']} Mật khẩu mới phải có tối thiểu 8 ký tự!`,
+          type: 'warning',
+        },
       }),
     )
     return
@@ -587,7 +604,10 @@ const savePassword = async () => {
   if (newP !== confP) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: '⚠️ Mật khẩu mới và xác nhận mật khẩu không khớp!', type: 'warning' },
+        detail: {
+          message: `${iconGlyphs['warning']} Mật khẩu mới và xác nhận mật khẩu không khớp!`,
+          type: 'warning',
+        },
       }),
     )
     return
@@ -604,7 +624,7 @@ const savePassword = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: '✅ Đổi mật khẩu thành công! Vui lòng ghi nhớ mật khẩu mới.',
+            message: `${iconGlyphs['success-text']} Đổi mật khẩu thành công! Vui lòng ghi nhớ mật khẩu mới.`,
             type: 'success',
           },
         }),
@@ -613,8 +633,7 @@ const savePassword = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message:
-              '❌ Đổi mật khẩu thất bại: Mật khẩu hiện tại không chính xác hoặc không hợp lệ.',
+            message: `${iconGlyphs['error-text']} Đổi mật khẩu thất bại: Mật khẩu hiện tại không chính xác hoặc không hợp lệ.`,
             type: 'error',
           },
         }),
@@ -623,7 +642,10 @@ const savePassword = async () => {
   } catch (err) {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
-        detail: { message: `❌ Lỗi khi gửi yêu cầu đổi mật khẩu: ${err.message}`, type: 'error' },
+        detail: {
+          message: `${iconGlyphs['error-text']} Lỗi khi gửi yêu cầu đổi mật khẩu: ${err.message}`,
+          type: 'error',
+        },
       }),
     )
   } finally {
@@ -639,7 +661,7 @@ const sendPasswordResetEmail = async () => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: '⚠️ Không xác định được tên đăng nhập để gửi email đặt lại.',
+          message: `${iconGlyphs['warning']} Không xác định được tên đăng nhập để gửi email đặt lại.`,
           type: 'warning',
         },
       }),
@@ -653,8 +675,7 @@ const sendPasswordResetEmail = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message:
-              '📧 Đã gửi liên kết đặt lại mật khẩu tới hòm thư email của bạn. Vui lòng kiểm tra hộp thư đến!',
+            message: `${iconGlyphs['email']} Đã gửi liên kết đặt lại mật khẩu tới hòm thư email của bạn. Vui lòng kiểm tra hộp thư đến!`,
             type: 'success',
           },
         }),
@@ -663,7 +684,7 @@ const sendPasswordResetEmail = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: '⚠️ Dịch vụ thư điện tử (Mail Server) của tổng đài chưa được cấu hình.',
+            message: `${iconGlyphs['warning']} Dịch vụ thư điện tử (Mail Server) của tổng đài chưa được cấu hình.`,
             type: 'warning',
           },
         }),
@@ -672,7 +693,7 @@ const sendPasswordResetEmail = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: `❌ Không thể gửi yêu cầu đặt lại mật khẩu (Mã lỗi: ${res.status}).`,
+            message: `${iconGlyphs['error-text']} Không thể gửi yêu cầu đặt lại mật khẩu (Mã lỗi: ${res.status}).`,
             type: 'error',
           },
         }),
@@ -682,7 +703,7 @@ const sendPasswordResetEmail = async () => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `❌ Lỗi khi kết nối tới máy chủ tổng đài: ${e.message}`,
+          message: `${iconGlyphs['error-text']} Lỗi khi kết nối tới máy chủ tổng đài: ${e.message}`,
           type: 'error',
         },
       }),

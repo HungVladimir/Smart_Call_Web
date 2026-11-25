@@ -190,6 +190,7 @@ frontend/src/
 | components/contacts | Panel lọc danh bạ và một thẻ liên hệ | Panel giữ lựa chọn; ContactCard chỉ hiển thị/phát sự kiện |
 | components/messages | Danh sách và ô soạn tin | Không đưa việc dựng tin nhắn vào service |
 | components/common, layout | Modal dùng chung và khung ứng dụng | Không lẫn với nghiệp vụ API |
+| [UiIcon.vue](../frontend/src/components/common/UiIcon.vue) | Định nghĩa biểu tượng dùng chung | Import và gọi `<UiIcon name="phone" />`. Nếu cần chỉnh kích thước hoặc màu theo màn, truyền class hoặc thuộc tính SVG. |
 | services | Nghiệp vụ, SDK, HTTP, socket, session | Đường gọi phía Web dễ lần theo; không chia thêm folder cho từng file |
 | state | Trạng thái cuộc gọi và người đăng nhập | Chia theo chủ sở hữu dữ liệu, không nhân bản state tại mỗi component |
 | composables | Vòng đời/tương tác Vue | Tách mic, player, bộ lọc khỏi các trang |

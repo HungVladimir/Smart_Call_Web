@@ -10,14 +10,21 @@
       <div class="header-filters">
         <!-- Ô tìm kiếm -->
         <div class="search-box">
-          <span class="search-icon">🔍</span>
+          <UiIcon name="search" class="search-icon" />
           <input
             v-model="searchQuery"
             type="text"
             placeholder="Tìm theo tên, máy lẻ hoặc phòng ban..."
             class="search-input"
           />
-          <button v-if="searchQuery" class="btn-clear-search" @click="searchQuery = ''">✖</button>
+          <button
+            v-if="searchQuery"
+            class="btn-clear-search"
+            aria-label="Xóa nội dung tìm kiếm"
+            @click="searchQuery = ''"
+          >
+            <UiIcon name="close-heavy" />
+          </button>
         </div>
 
         <!-- Lọc từ ngày -->
@@ -30,13 +37,13 @@
             title="Bỏ lọc ngày"
             @click="filterDate = ''"
           >
-            ✖
+            <UiIcon name="close-heavy" />
           </button>
         </div>
 
         <!-- Nút làm mới -->
         <button class="btn-refresh" title="Làm mới danh sách" @click="fetchHistory(true)">
-          🔄 Làm mới
+          <UiIcon name="refresh" /> Làm mới
         </button>
       </div>
     </div>
@@ -79,7 +86,7 @@
 
     <!-- Trạng thái Không có dữ liệu -->
     <div v-else-if="filteredCalls.length === 0" class="state-message empty">
-      <div class="empty-icon">🕒</div>
+      <div class="empty-icon"><UiIcon name="history" /></div>
       <p>Không có bản ghi cuộc gọi nào phù hợp với bộ lọc.</p>
     </div>
 
@@ -97,8 +104,12 @@
         <div class="history-card-body">
           <!-- Khối Avatar người gọi -->
           <div class="avatar-box" :class="call.direction">
-            <span v-if="call.direction === 'inbound'" class="direction-arrow inbound">↙</span>
-            <span v-else class="direction-arrow outbound">↗</span>
+            <UiIcon
+              name="call-inbound"
+              v-if="call.direction === 'inbound'"
+              class="direction-arrow inbound"
+            />
+            <UiIcon name="call-outbound" v-else class="direction-arrow outbound" />
             <div class="avatar-initials">{{ getInitials(call.name) }}</div>
           </div>
 
@@ -141,13 +152,13 @@
 
           <!-- Các nút thao tác nhanh -->
           <div class="history-actions">
-            <!-- 📞 Nút Gọi lại nhanh -->
+            <!-- Nút gọi lại nhanh -->
             <button
               class="btn-action btn-callback"
               title="Gọi lại ngay"
               @click="handleCallback(call)"
             >
-              <span class="action-icon">📞</span>
+              <UiIcon name="phone-text" class="action-icon" />
               <span class="action-text">Gọi lại</span>
             </button>
           </div>
@@ -156,7 +167,7 @@
         <!-- Thanh Audio Player mini nếu cuộc gọi có ghi âm -->
         <div v-if="call.hasRecording || recordingsMap[call.id]" class="history-player-wrapper">
           <div class="rec-badge-title">
-            <span class="rec-icon">🎙️</span>
+            <UiIcon name="microphone-text" class="rec-icon" />
             <span class="rec-label-text">Bản ghi âm</span>
           </div>
 
@@ -166,8 +177,8 @@
               :title="currentPlayingId === call.id && isPlaying ? 'Tạm dừng' : 'Nghe ghi âm'"
               @click="togglePlayCall(call)"
             >
-              <span v-if="currentPlayingId === call.id && isPlaying">⏸️</span>
-              <span v-else>▶️</span>
+              <UiIcon name="pause" v-if="currentPlayingId === call.id && isPlaying" />
+              <UiIcon name="play" v-else />
             </button>
 
             <div class="player-progress-track" @click="seekCallAudio(call, $event)">
@@ -197,7 +208,7 @@
               title="Tải file ghi âm (.webm) về máy"
               @click="downloadCall(call)"
             >
-              <span class="dl-icon">⬇️</span>
+              <UiIcon name="download" class="dl-icon" />
               <span class="dl-text">Tải file</span>
             </button>
           </div>
@@ -208,6 +219,7 @@
 </template>
 
 <script setup>
+import UiIcon, { iconGlyphs } from '@/components/common/UiIcon.vue'
 import { useRecordingPlayer } from '../composables/useRecordingPlayer.js'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -273,7 +285,7 @@ const downloadCall = async (call) => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: '📥 Đang tải file ghi âm về máy tính...',
+          message: `${iconGlyphs['download-inbox']} Đang tải file ghi âm về máy tính...`,
           type: 'success',
         },
       }),
@@ -282,7 +294,7 @@ const downloadCall = async (call) => {
     window.dispatchEvent(
       new CustomEvent('app-toast', {
         detail: {
-          message: `❌ ${err.message || 'Không thể tải file ghi âm'}`,
+          message: `${iconGlyphs['error-text']} ${err.message || 'Không thể tải file ghi âm'}`,
           type: 'error',
         },
       }),

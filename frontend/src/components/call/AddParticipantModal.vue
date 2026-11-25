@@ -3,24 +3,12 @@
     <div class="add-participant-card">
       <div class="add-participant-header">
         <div class="add-participant-title">
-          <svg
-            viewBox="0 0 24 24"
-            width="20"
-            height="20"
-            fill="none"
-            stroke="#2563eb"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-            <circle cx="8.5" cy="7" r="4"></circle>
-            <line x1="20" y1="8" x2="20" y2="14"></line>
-            <line x1="23" y1="11" x2="17" y2="11"></line>
-          </svg>
+          <UiIcon name="user-plus" stroke="#2563eb" width="20" height="20" />
           <span>Thêm người vào cuộc gọi</span>
         </div>
-        <button class="btn-close-modal" @click="closeAddParticipantModal" title="Đóng">✕</button>
+        <button class="btn-close-modal" @click="closeAddParticipantModal" title="Đóng">
+          <UiIcon name="close-text" />
+        </button>
       </div>
 
       <div class="add-participant-search">
@@ -43,7 +31,7 @@
           type="button"
           @click="toggleContact(contact)"
         >
-          {{ contact.name }} ×
+          {{ contact.name }} <UiIcon name="remove" />
         </button>
       </div>
       <div class="add-participant-list">
@@ -118,6 +106,7 @@
 </template>
 
 <script setup>
+import UiIcon from '@/components/common/UiIcon.vue'
 import { ref, computed, watch } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 import { useDirectoryPages } from '@/composables/useDirectoryPages.js'

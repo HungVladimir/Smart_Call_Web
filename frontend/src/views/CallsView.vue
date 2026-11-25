@@ -15,14 +15,14 @@
         :class="{ active: mobileTab === 'dialer' }"
         @click="mobileTab = 'dialer'"
       >
-        📞 Bàn phím & Đàm thoại
+        <UiIcon name="phone-text" /> Bàn phím & Đàm thoại
       </button>
       <button
         class="seg-btn"
         :class="{ active: mobileTab === 'contacts' }"
         @click="mobileTab = 'contacts'"
       >
-        👥 Danh bạ
+        <UiIcon name="users-text" /> Danh bạ
       </button>
     </div>
 
@@ -42,7 +42,7 @@
           @click="toggleMute"
           title="Mute"
         >
-          {{ isMuted ? '🔇' : '🎙️' }}
+          <UiIcon :name="isMuted ? 'muted-text' : 'microphone-text'" />
         </button>
         <button class="btn-mini-hangup" @click="hangupCall" title="Cúp máy">Cúp máy</button>
       </div>
@@ -121,6 +121,7 @@
 </template>
 
 <script setup>
+import UiIcon, { iconGlyphs } from '@/components/common/UiIcon.vue'
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -302,7 +303,8 @@ const formattedDuration = computed(() => {
 const durationText = computed(() => {
   if (!callState.activeCall) return '00:00'
   if (callState.activeCall.status === 'answering') return 'Đang kết nối...'
-  if (callState.activeCall.status === 'ringing') return '📞 Đang đổ chuông...'
+  if (callState.activeCall.status === 'ringing')
+    return `${iconGlyphs['phone-text']} Đang đổ chuông...`
   return formattedDuration.value
 })
 
@@ -496,7 +498,7 @@ const toggleRecord = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: '⏹️ Đã dừng ghi âm cuộc gọi trên máy chủ tổng đài.',
+            message: `${iconGlyphs['stop-text']} Đã dừng ghi âm cuộc gọi trên máy chủ tổng đài.`,
             type: 'info',
           },
         }),
@@ -517,7 +519,7 @@ const toggleRecord = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: '⏳ Xin vui lòng chờ đối phương nhấc máy để bắt đầu ghi âm!',
+            message: `${iconGlyphs['hourglass']} Xin vui lòng chờ đối phương nhấc máy để bắt đầu ghi âm!`,
             type: 'warning',
           },
         }),
@@ -541,7 +543,7 @@ const toggleRecord = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: '🔴 Đang ghi âm cuộc gọi trực tiếp trên máy chủ tổng đài...',
+            message: `${iconGlyphs['status-busy']} Đang ghi âm cuộc gọi trực tiếp trên máy chủ tổng đài...`,
             type: 'success',
           },
         }),
@@ -550,7 +552,7 @@ const toggleRecord = async () => {
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
-            message: `⚠️ Không thể ghi âm trên tổng đài: ${err.message || 'Lỗi phân quyền'}`,
+            message: `${iconGlyphs['warning']} Không thể ghi âm trên tổng đài: ${err.message || 'Lỗi phân quyền'}`,
             type: 'error',
           },
         }),
