@@ -1,64 +1,180 @@
 <template>
   <section class="groups-view calls-view">
+    <button
+      v-if="editor"
+      class="group-button group-back"
+      type="button"
+      :disabled="busy"
+      @click="closeEditor"
+    >
+      <UiIcon name="back" /> Nhóm đã lưu
+    </button>
     <header class="groups-header">
-      <h1>Gọi nhóm</h1>
-      <button type="button" :disabled="busy" @click="createGroup">Tạo nhóm</button>
+      <div>
+        <h1>{{ editor ? (editor.id ? 'Sửa nhóm' : 'Tạo nhóm') : 'Gọi nhóm' }}</h1>
+        <p>
+          {{
+            editor
+              ? 'Đặt tên và chọn đồng nghiệp cho nhóm.'
+              : 'Lưu nhóm đồng nghiệp để gọi lại nhanh.'
+          }}
+        </p>
+      </div>
+      <button
+        v-if="!editor && (groups.length || loading)"
+        class="group-button group-primary"
+        type="button"
+        :disabled="busy"
+        @click="createGroup"
+      >
+        <UiIcon name="plus" /> Tạo nhóm
+      </button>
     </header>
-    <p v-if="notice" role="status">{{ notice }}</p>
-    <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="loading">Đang tải nhóm…</p>
-    <p v-else-if="!groups.length && !editor">Chưa có nhóm đã lưu.</p>
-    <div class="group-grid">
-      <article v-for="group in groups" :key="group.id" class="group-card">
-        <h2>{{ group.name }}</h2>
-        <p>{{ group.members.length }} đồng nghiệp</p>
-        <div class="group-actions">
-          <button type="button" :disabled="busy || callState.activeCall" @click="callGroup(group)">
-            Gọi
-          </button>
-          <button type="button" :disabled="busy" @click="editGroup(group)">Sửa</button>
-          <button type="button" :disabled="busy" @click="removeGroup(group)">Xóa</button>
+    <p v-if="notice" class="group-message" role="status"><UiIcon name="info" /> {{ notice }}</p>
+    <p v-if="error" class="group-message group-message-error" role="alert">
+      <UiIcon name="info" /> {{ error }}
+    </p>
+
+    <template v-if="!editor">
+      <p v-if="loading && !groups.length" class="group-message" role="status">Đang tải nhóm…</p>
+      <div v-else-if="!groups.length" class="group-empty">
+        <div class="group-emblem"><UiIcon name="users" /></div>
+        <h2>Chưa có nhóm đã lưu</h2>
+        <p>Tạo nhóm từ danh bạ để gọi lại chỉ với một nút.</p>
+        <button
+          class="group-button group-primary"
+          type="button"
+          :disabled="busy"
+          @click="createGroup"
+        >
+          <UiIcon name="plus" /> Tạo nhóm
+        </button>
+      </div>
+      <div v-else class="group-grid" :aria-busy="loading">
+        <article v-for="group in groups" :key="group.id" class="group-card">
+          <div class="group-card-main">
+            <div class="group-emblem"><UiIcon name="users" /></div>
+            <div class="group-card-copy">
+              <h2>{{ group.name }}</h2>
+              <p>{{ group.members.length }} đồng nghiệp</p>
+            </div>
+          </div>
+          <div class="group-actions">
+            <button
+              class="group-button group-call"
+              type="button"
+              :disabled="busy || callState.activeCall"
+              @click="callGroup(group)"
+            >
+              <UiIcon name="phone" /> Gọi
+            </button>
+            <button
+              class="group-button group-quiet"
+              type="button"
+              :disabled="busy"
+              @click="editGroup(group)"
+            >
+              <UiIcon name="edit" /> Sửa
+            </button>
+            <button
+              class="group-button group-quiet group-delete"
+              type="button"
+              :disabled="busy"
+              @click="removeGroup(group)"
+            >
+              <UiIcon name="trash" /> Xóa
+            </button>
+          </div>
+        </article>
+      </div>
+    </template>
+
+    <section v-else class="group-editor">
+      <form class="group-form" @submit.prevent="submitGroup">
+        <div class="group-form-body">
+          <label class="group-name-field">
+            Tên nhóm
+            <input
+              ref="groupNameInput"
+              v-model="editor.name"
+              required
+              maxlength="100"
+              :disabled="busy"
+              placeholder="Ví dụ: Điều phối ca sáng"
+            />
+          </label>
+          <div class="group-roster-heading">
+            <h2>
+              Đã chọn <span>{{ editor.members.length }}</span>
+            </h2>
+            <span v-if="editor.members.length < 2">Tối thiểu 2 người</span>
+          </div>
+          <p v-if="!editor.members.length" class="group-roster-empty">
+            Chọn đồng nghiệp từ danh bạ.
+          </p>
+          <ul v-else class="group-roster">
+            <li v-for="member in editor.members" :key="member.uuid">
+              <span
+                class="group-member-avatar"
+                :style="{ backgroundColor: getAvatarColor(member.name) }"
+                >{{ getAvatarInitials(member.name) }}</span
+              >
+              <span class="group-member-details">
+                <strong>{{ member.name }}</strong>
+                <small v-if="member.number">Máy lẻ {{ member.number }}</small>
+              </span>
+              <button
+                class="group-button group-remove"
+                type="button"
+                :disabled="busy"
+                :aria-label="'Bỏ ' + member.name"
+                title="Bỏ khỏi nhóm"
+                @click="toggleMember(member)"
+              >
+                <UiIcon name="close" />
+              </button>
+            </li>
+          </ul>
         </div>
-      </article>
-    </div>
-    <section v-if="editor" class="group-editor">
-      <form class="group-card" @submit.prevent="submitGroup">
-        <h2>{{ editor.id ? 'Sửa nhóm' : 'Tạo nhóm' }}</h2>
-        <label
-          >Tên nhóm <input v-model="editor.name" required maxlength="100" :disabled="busy"
-        /></label>
-        <p>Đã chọn {{ editor.members.length }} đồng nghiệp</p>
-        <ul>
-          <li v-for="member in editor.members" :key="member.uuid">
-            {{ member.name }}
-            <button type="button" :disabled="busy" @click="toggleMember(member)">Bỏ</button>
-          </li>
-        </ul>
-        <div class="group-actions">
-          <button :disabled="busy || !editor.name.trim() || editor.members.length < 2">
-            Lưu nhóm
+        <div class="group-actions group-form-actions">
+          <button
+            class="group-button group-quiet"
+            type="button"
+            :disabled="busy"
+            @click="closeEditor"
+          >
+            Hủy
           </button>
-          <button type="button" :disabled="busy" @click="editor = null">Hủy</button>
+          <button
+            class="group-button group-primary"
+            :disabled="busy || !editor.name.trim() || editor.members.length < 2"
+          >
+            <UiIcon name="check" /> Lưu nhóm
+          </button>
         </div>
       </form>
-      <PagedContactsPanel
-        :active="active"
-        picker
-        :busy="busy"
-        :my-extension="myExtension"
-        :selected-ids="selectedIds"
-        :load-page="loadPage"
-        :refresh-presence="refreshPresence"
-        @toggle-member="toggleMember"
-      />
+      <div class="group-directory">
+        <h2>Chọn đồng nghiệp</h2>
+        <PagedContactsPanel
+          :active="active"
+          picker
+          :busy="busy"
+          :my-extension="myExtension"
+          :selected-ids="selectedIds"
+          :load-page="loadPage"
+          :refresh-presence="refreshPresence"
+          @toggle-member="toggleMember"
+        />
+      </div>
     </section>
   </section>
 </template>
-
 <script setup>
-import { computed, onActivated, onDeactivated, ref } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import UiIcon from '@/components/common/UiIcon.vue'
 import PagedContactsPanel from '@/components/contacts/PagedContactsPanel.vue'
+import { getAvatarColor, getAvatarInitials } from '@/utils/avatar.js'
 import { authService, callService, contactService, groupCallService } from '@/services/index.js'
 import {
   deleteCallGroup,
@@ -71,6 +187,7 @@ import { callState } from '@/state/callState.js'
 const router = useRouter()
 const groups = ref([])
 const editor = ref(null)
+const groupNameInput = ref(null)
 const active = ref(false)
 const busy = ref(false)
 const loading = ref(false)
@@ -123,7 +240,21 @@ onDeactivated(hideGroups)
 /** Khởi tạo biểu mẫu mới để chọn đồng nghiệp bằng danh bạ phân trang. */
 function createGroup() {
   error.value = ''
+  notice.value = ''
   editor.value = { id: '', name: '', members: [] }
+  void focusGroupName()
+}
+
+/** Đưa con trỏ đến trường đầu tiên sau khi mở trình sửa. */
+async function focusGroupName() {
+  await nextTick()
+  if (active.value && editor.value) groupNameInput.value?.focus()
+}
+
+/** Quay về danh sách đã lưu, bỏ các thay đổi chưa gửi lên backend. */
+function closeEditor() {
+  editor.value = null
+  error.value = ''
 }
 
 /** Tra lại thành viên qua UUID và giữ mục đã rời danh bạ để người dùng có thể bỏ. */
@@ -140,6 +271,7 @@ async function editGroup(group) {
       ),
     }
   })
+  if (editor.value?.id === group.id) void focusGroupName()
 }
 
 /** Chọn hoặc bỏ một UUID mà không phụ thuộc máy lẻ hay trang đang xem. */
@@ -258,63 +390,319 @@ function refreshPresence(contacts, force) {
 
 <style scoped>
 .groups-view {
+  --group-ink: #122943;
+  --group-muted: #526981;
+  --group-line: #dce6f0;
+  --group-blue: #1765c5;
+  --group-blue-soft: #eaf3fe;
+  --group-danger: #ac343d;
+  max-width: 1096px;
   margin: 0 auto;
-  max-width: 1200px;
-  padding: 16px;
+  padding: clamp(12px, 2.4vw, 32px) clamp(4px, 2vw, 24px);
+  color: var(--group-ink);
+  font-family: Inter, 'Segoe UI', system-ui, sans-serif;
 }
-.groups-header,
+.groups-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+  padding-bottom: 21px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--group-line);
+}
+.groups-header h1 {
+  margin: 0 0 6px;
+  font-size: clamp(1.75rem, 3vw, 2.15rem);
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+}
+.groups-header p,
+.group-card-copy p {
+  margin: 0;
+  color: var(--group-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+.group-card,
+.group-form,
+.group-directory,
+.group-empty {
+  border: 1px solid var(--group-line);
+  border-radius: 14px;
+  background: #fff;
+}
+.group-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 2px 6px #12294308;
+}
+.group-card-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 19px 17px;
+}
+.group-emblem {
+  width: 47px;
+  height: 47px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  background: var(--group-blue-soft);
+  color: var(--group-blue);
+  font-size: 1.35rem;
+}
+.group-card-copy {
+  min-width: 0;
+}
+.group-card h2,
+.group-form h2,
+.group-directory h2,
+.group-empty h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.group-card-copy p {
+  margin-top: 3px;
+}
 .group-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 7px;
+  padding: 12px;
+  border-top: 1px solid var(--group-line);
 }
-.groups-header {
-  justify-content: space-between;
+.group-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--group-ink);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  font-size: 0.84rem;
+  white-space: nowrap;
 }
-.group-grid {
+.group-button:not(:disabled):focus-visible,
+.group-name-field input:focus-visible {
+  outline: 2px solid var(--group-blue);
+  outline-offset: 3px;
+}
+.group-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.group-primary {
+  background: var(--group-blue);
+  color: #fff;
+  padding-inline: 16px;
+}
+.group-primary:hover:not(:disabled) {
+  background: #1256a8;
+}
+.group-call {
+  margin-right: auto;
+  min-width: 84px;
+  background: var(--group-blue-soft);
+  color: #135aaf;
+}
+.group-quiet {
+  color: var(--group-muted);
+}
+.group-call:hover:not(:disabled),
+.group-quiet:hover:not(:disabled),
+.group-remove:hover:not(:disabled),
+.group-back:hover:not(:disabled) {
+  background: #eaf2fb;
+  color: #1256a8;
+}
+.group-delete:hover:not(:disabled) {
+  background: #fcecef;
+  color: var(--group-danger);
+}
+.group-back {
+  margin: -4px 0 10px -8px;
+  padding-inline: 8px;
+  color: var(--group-blue);
+}
+.group-empty {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-  gap: 12px;
+  justify-items: center;
+  gap: 10px;
+  padding: clamp(25px, 5vw, 56px) 16px;
+  text-align: center;
 }
-.group-card {
-  background: var(--card-bg, #fff);
-  border: 1px solid #dbe4ef;
-  border-radius: 12px;
-  padding: 16px;
+.group-empty p {
+  margin: 0 0 6px;
+  color: var(--group-muted);
 }
-.group-card h2 {
-  margin-top: 0;
-  font-size: 1.1rem;
+.group-message {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 13px;
+  border: 1px solid #d2e4fb;
+  border-radius: 8px;
+  background: #eef6ff;
+  color: #214c77;
+  margin: 0 0 16px;
+  font-size: 0.86rem;
+}
+.group-message-error {
+  border-color: #efcdd1;
+  background: #fdf1f2;
+  color: #8c2631;
 }
 .group-editor {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
-  gap: 12px;
-  margin-top: 16px;
+  align-items: start;
+  grid-template-columns: minmax(245px, 1fr) minmax(0, 1.62fr);
+  gap: 16px;
 }
-.group-editor input {
-  display: block;
+.group-form,
+.group-directory {
+  min-width: 0;
+}
+.group-form-body {
+  padding: 17px;
+}
+.group-name-field {
+  display: grid;
+  gap: 8px;
+  font-weight: 650;
+  font-size: 0.88rem;
+}
+.group-name-field input {
+  box-sizing: border-box;
   width: 100%;
-  margin-top: 6px;
-  padding: 8px;
+  min-width: 0;
+  min-height: 43px;
+  border: 1px solid #c6d6e7;
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: var(--group-ink);
+  background: #f9fbfe;
+  font: inherit;
+  font-weight: 400;
 }
-.group-editor li {
-  margin: 6px 0;
+.group-roster-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 23px;
 }
-.groups-view button {
-  padding: 6px 10px;
-  border: 1px solid #bac9e0;
-  border-radius: 6px;
-  cursor: pointer;
+.group-roster-heading h2 span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  padding-inline: 3px;
+  border-radius: 8px;
+  background: var(--group-blue-soft);
+  color: var(--group-blue);
+  font-size: 0.75rem;
 }
-.groups-view button:disabled {
-  cursor: default;
-  opacity: 0.6;
+.group-roster-heading > span,
+.group-roster-empty {
+  color: var(--group-muted);
+  font-size: 0.78rem;
 }
-@media (max-width: 680px) {
+.group-roster {
+  max-height: 292px;
+  overflow: auto;
+  list-style: none;
+  padding: 0 2px 0 0;
+  margin: 9px 0 0;
+}
+.group-roster li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 6px 0;
+}
+.group-roster li + li {
+  border-top: 1px solid #edf2f7;
+}
+.group-member-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.69rem;
+  font-weight: 700;
+}
+.group-member-details {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+.group-member-details small {
+  color: var(--group-muted);
+}
+.group-remove {
+  min-width: 36px;
+  padding-inline: 6px;
+  color: var(--group-muted);
+}
+.group-form-actions {
+  justify-content: flex-end;
+}
+.group-directory {
+  padding: 15px 13px 13px;
+}
+.group-directory > h2 {
+  padding: 0 4px 12px;
+}
+.group-directory :deep(.contacts-col) {
+  max-width: none;
+}
+.group-directory :deep(.directory-panel) {
+  height: clamp(275px, 53dvh, 470px);
+  box-shadow: none;
+}
+@media (max-width: 940px) {
   .group-editor {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 520px) {
+  .groups-header {
+    margin-bottom: 16px;
+    padding-bottom: 15px;
+  }
+  .group-grid {
+    gap: 11px;
+  }
+  .group-directory {
+    padding-inline: 8px;
   }
 }
 </style>

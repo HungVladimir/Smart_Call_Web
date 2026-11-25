@@ -419,6 +419,8 @@ Hiện accepted handler còn thiếu đối chiếu danh tính cuộc gọi tron
 
 ## 8 Gọi nhóm và vì sao có service riêng
 
+Màn Gọi nhóm hiển thị danh sách nhóm đã lưu cùng các thao tác Gọi, Sửa và Xóa. Khi tạo hoặc sửa, giao diện chuyển sang phần đặt tên và chọn thành viên. Danh sách người đã chọn vẫn được giữ khi đổi từ khóa. Từ tab Gọi nhóm trong Danh bạ, nút Nhóm đã lưu mở màn này.
+
 Tên lớp hiện tại là GroupCallService, nằm trong services/calls/groupCallService.js. Gọi nhóm không tạo thêm một ứng dụng hoặc một SDK thứ hai. Service này phối hợp với CallService và CallControlApi để quản lý các nhánh thoại/hội nghị. Event conference_deleted chỉ ngắt khi khớp ID hội nghị đang quản lý; participant_joined chỉ gắn ID khi call_id khớp nhánh server hiện tại.
 
 ### Cách người dùng khởi tạo

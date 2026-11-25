@@ -27,9 +27,11 @@
           v-for="tab in tabs"
           :key="tab.id"
           type="button"
+          :class="{ 'directory-group-tab': tab.id === 'group' }"
           :aria-pressed="activeTab === tab.id"
           @click="activeTab = tab.id"
         >
+          <UiIcon v-if="tab.id === 'group'" name="users" />
           {{ tab.label }}
         </button>
       </div>
@@ -70,17 +72,21 @@
       </div>
       <div v-if="isGroupTab && !picker" class="directory-controls directory-filters">
         <button
-          class="directory-primary"
+          class="directory-primary directory-quick-call"
           type="button"
           :disabled="selected.size < 2 || busy"
           @click="startGroup"
         >
-          Gọi nhanh ({{ selected.size }})
+          <UiIcon name="phone" /> Gọi nhanh ({{ selected.size }})
         </button>
         <button v-if="selected.size" type="button" @click="clearStartedSelection">Bỏ chọn</button>
-        <RouterLink v-if="groupsEnabled" class="directory-link" to="/call-groups"
-          >Nhóm đã lưu</RouterLink
+        <RouterLink
+          v-if="groupsEnabled"
+          class="directory-link directory-saved-groups"
+          to="/call-groups"
         >
+          <UiIcon name="users" /> Nhóm đã lưu
+        </RouterLink>
       </div>
       <div class="directory-results" :aria-busy="paging.loading.value">
         <p v-if="refreshNotice" role="status">{{ refreshNotice }}</p>
@@ -155,6 +161,7 @@
 <script setup>
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import ContactCard from './ContactCard.vue'
+import UiIcon from '@/components/common/UiIcon.vue'
 import { useDirectoryPages } from '@/composables/useDirectoryPages.js'
 import { getFeatures } from '@/config/features.js'
 
@@ -600,6 +607,35 @@ onUnmounted(stopPresenceRefresh)
 .directory-panel .directory-primary:hover:not(:disabled) {
   border-color: #184e8c;
   background: #184e8c;
+}
+
+.directory-group-tab,
+.directory-quick-call,
+.directory-saved-groups {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.directory-saved-groups {
+  min-height: 34px;
+  box-sizing: border-box;
+  border: 1px solid #c9def6;
+  border-radius: 7px;
+  padding: 5px 9px;
+  background: #f0f6ff;
+  text-decoration: none;
+}
+
+.directory-saved-groups:hover {
+  background: #e2efff;
+}
+
+@media (max-width: 460px) {
+  .directory-group-tab .ui-icon {
+    display: none;
+  }
 }
 .directory-results {
   flex: 1;

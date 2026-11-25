@@ -1,5 +1,7 @@
 # Nhật ký refactor SmartCall Web
 
+26/11/2026. Màn Gọi nhóm dùng thẻ nhóm với nút Gọi dễ nhận biết và mở bố cục riêng khi tạo hoặc sửa. Danh sách người đã chọn hiển thị avatar chữ, tên và máy lẻ bên cạnh bộ chọn danh bạ. Tab Gọi nhóm trong Danh bạ dùng chung icon cho Gọi nhanh và lối vào Nhóm đã lưu.
+
 ### Xác minh đích gọi và danh bạ theo quyền phiên
 
 - Khi bấm gọi, tra máy lẻ từ Dird rồi kiểm tra Chatd bằng UUID hiện tại. Nếu UUID khác người đã chọn hoặc người trong lịch sử thì dừng trước SIP. Bản xem trước vẫn có thể dùng cache ngắn.
