@@ -4,8 +4,9 @@ import sqlite3
 import secrets
 import ssl
 import time
+from uuid import UUID
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
@@ -13,6 +14,8 @@ from config import Settings
 from store import Store
 from oidc import OidcClient, fail
 from wazo import WazoClient
+from directory import Directory, department_name, normalize, search_page
+from call_groups import CallGroupInput, call_groups
 
 
 # Lắp ghép cấu hình/adapter; cho phép test thay HTTP/Redis mà không gọi hạ tầng thật.
@@ -27,6 +30,7 @@ def create_app(settings=None):
             app.state.store = Store(settings)
             app.state.oidc = OidcClient(settings, client)
             app.state.wazo = WazoClient(settings, client, app.state.store)
+            app.state.directory = Directory(app.state.wazo)
             try:
                 yield
             finally:
@@ -124,6 +128,65 @@ def create_app(settings=None):
                 "wazo_user_uuid": mapping["user_uuid"] if mapping else None,
                 "expires_at": session["expires_at"]}
 
+    # Lọc nguồn mà user được đọc trước khi cắt trang cố định.
+    @app.get("/api/directory/contacts")
+    async def directory_contacts(source: UUID, request: Request, term: str = Query("", max_length=160),
+                                 department: str = Query("", max_length=160),
+                                 presence: str = Query("", pattern="^(online|offline)?$"),
+                                 offset: int = Query(0, ge=0, le=10000), x_auth_token: str = Header("")):
+        directory = request.app.state.directory
+        owner, token, key = await directory.actor(x_auth_token)
+        rows = await directory.contacts(str(source), token, key)
+        states = await directory.status(str(source), owner, token, rows) if presence else {}
+        return search_page(rows, term, department, presence, states, offset, 30, owner)
+
+    # Phân giải đúng UUID của nhóm đã lưu, kể cả khi các thành viên ở trang khác.
+    @app.get("/api/directory/members")
+    async def directory_members(source: UUID, request: Request, ids: list[UUID] = Query(max_length=100),
+                                x_auth_token: str = Header("")):
+        directory = request.app.state.directory
+        _, token, key = await directory.actor(x_auth_token)
+        rows = await directory.contacts(str(source), token, key)
+        requested = {str(user) for user in ids}
+        return {"items": [row for row in rows if row["uuid"] in requested]}
+
+    # Lấy danh mục bộ phận từ toàn bộ nguồn đã xác minh quyền.
+    @app.get("/api/directory/departments")
+    async def directory_departments(source: UUID, request: Request, x_auth_token: str = Header("")):
+        directory = request.app.state.directory
+        _, token, key = await directory.actor(x_auth_token)
+        rows = await directory.contacts(str(source), token, key)
+        labels = {}
+        for row in rows:
+            label = department_name(row)
+            if label:
+                labels.setdefault(normalize(label), label)
+        return {"items": sorted(labels.values(), key=normalize)}
+
+    # Đọc nhóm gọi của tài khoản đã xác thực.
+    @app.get("/api/call-groups")
+    async def list_call_groups(request: Request, x_auth_token: str = Header("")):
+        owner, _, _ = await request.app.state.directory.actor(x_auth_token)
+        return await call_groups(settings.database_path, owner, settings.wazo_tenant_uuid, "list")
+
+    # Tạo nhóm mới và trả snapshot sau commit.
+    @app.post("/api/call-groups")
+    async def create_call_group(body: CallGroupInput, request: Request, x_auth_token: str = Header("")):
+        owner, _, _ = await request.app.state.directory.actor(x_auth_token)
+        return await call_groups(settings.database_path, owner, settings.wazo_tenant_uuid, "save", value=body)
+
+    # Chỉ chỉnh sửa nhóm thuộc chủ và tenant hiện tại.
+    @app.put("/api/call-groups/{group}")
+    async def update_call_group(group: UUID, body: CallGroupInput, request: Request, x_auth_token: str = Header("")):
+        owner, _, _ = await request.app.state.directory.actor(x_auth_token)
+        return await call_groups(settings.database_path, owner, settings.wazo_tenant_uuid, "save", str(group), body)
+
+    # Xóa cấu hình nhóm lưu của chủ, không gửi lệnh kết thúc cuộc gọi.
+    @app.delete("/api/call-groups/{group}")
+    async def delete_call_group(group: UUID, request: Request, x_auth_token: str = Header("")):
+        owner, _, _ = await request.app.state.directory.actor(x_auth_token)
+        return await call_groups(settings.database_path, owner, settings.wazo_tenant_uuid, "delete", str(group))
+
     # Tìm/tạo tài khoản và trả token người dùng Wazo sau xác thực cookie + CSRF.
     @app.post("/api/auth/wazo-session")
     async def wazo_session(body: WazoSessionRequest, request: Request):
@@ -134,6 +197,9 @@ def create_app(settings=None):
             current_session = await require_session(request, csrf=True)
             if current_session["identity"] != session["identity"]:
                 fail("SESSION_CHANGED", "Phiên đã thay đổi trong lúc cấp tài khoản.", 401)
+            employee_id = str(session["profile"].get("employee_id") or "").strip()
+            if employee_id:
+                await app.state.store.remember_employee_id(settings.wazo_tenant_uuid, result["user_uuid"], employee_id)
         except Exception:
             try:
                 await app.state.wazo.revoke_session(result, body.client_id)

@@ -6,7 +6,7 @@
       'group-selectable': groupSelectionMode,
       'group-selected': groupSelectionMode && selected,
     }"
-    @click="groupSelectionMode ? emit('select', contact) : null"
+    @click="groupSelectionMode ? emit('select', contact) : emit('remember', contact)"
   >
     <!-- Checkbox khi ở tab Gọi nhóm -->
     <div
@@ -140,26 +140,6 @@
           />
         </svg>
       </button>
-      <button
-        class="btn-action-icon chat"
-        :title="`Nhắn tin với ${contact.name}`"
-        :aria-label="`Nhắn tin cho ${contact.name}`"
-        @click.stop="emit('message', contact)"
-      >
-        <svg
-          class="action-svg"
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-      </button>
     </div>
   </div>
 </template>
@@ -175,7 +155,7 @@ defineProps({
   canInvite: Boolean,
   busy: Boolean,
 })
-const emit = defineEmits(['select', 'call', 'message', 'favorite'])
+const emit = defineEmits(['select', 'call', 'favorite', 'remember'])
 </script>
 
 <style>
@@ -436,16 +416,6 @@ const emit = defineEmits(['select', 'call', 'message', 'favorite'])
   background: #ecfdf5;
   border-color: #10b981;
   color: #059669;
-}
-
-.calls-view .btn-action-icon.chat {
-  color: #3b82f6;
-}
-
-.calls-view .btn-action-icon.chat:hover:not(:disabled) {
-  background: #eff6ff;
-  border-color: #3b82f6;
-  color: #2563eb;
 }
 
 .calls-view .btn-action-icon:disabled {

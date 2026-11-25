@@ -6,7 +6,7 @@ import re
 import secrets
 import ssl
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import HTTPException
@@ -237,10 +237,41 @@ async def run(args, accounts):
                     await store.redis.aclose()
 
 
-# Chạy với cửa sổ chọn file hoặc truyền --csv khi dùng máy không có giao diện.
+# Đọc các dòng đã có UUID Wazo, bỏ pending và nhập toàn bộ chỉ mục ID vào SQLite backend.
+async def index_report(path):
+    settings = Settings()
+    tenant = str(UUID(settings.wazo_tenant_uuid))
+    employees = {}
+    with path.open(encoding=CSV_ENCODING, newline="") as stream:
+        reader = csv.DictReader(stream)
+        if not {"employee_id", "status", "uuid"} <= set(reader.fieldnames or []):
+            raise ValueError("Cần CSV kết quả có employee_id, status và uuid.")
+        for row in reader:
+            if row["status"] not in ("existing", "created"):
+                continue
+            uuid = str(UUID(row["uuid"]))
+            employee_id = row["employee_id"].strip()
+            if not employee_id or (uuid in employees and employees[uuid] != employee_id):
+                raise ValueError(f"ID không hợp lệ hoặc bị trùng ở dòng {reader.line_num}.")
+            employees[uuid] = employee_id
+    if not employees:
+        raise ValueError("Báo cáo chưa có UUID nhân viên đã xác nhận.")
+    if input(f"Nhập TAO để ghi {len(employees)} ID vào SQLite của tenant {tenant}: ").strip() != "TAO":
+        return
+    store = Store(settings)
+    try:
+        await store.remember_employee_ids(tenant, list(employees.items()))
+        print(f"Đã nạp {len(employees)} ID nhân viên vào SQLite backend.")
+    finally:
+        await store.redis.aclose()
+
+
+# Chạy qua cửa sổ chọn file, đường dẫn CSV hoặc báo cáo đã có kết quả Wazo.
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--csv", type=Path, help="Đường dẫn CSV thay cho cửa sổ chọn file")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--csv", type=Path, help="Đường dẫn CSV thay cho cửa sổ chọn file")
+    source.add_argument("--index-report", type=Path, help="Nạp UUID và ID từ CSV kết quả vào SQLite backend")
     parser.add_argument("--dry-run", action="store_true", help="Xem trước mà không tạo tài khoản")
     parser.add_argument("--min-extension", type=int)
     parser.add_argument("--max-extension", type=int)
@@ -250,6 +281,11 @@ def main():
     if not 1 <= lower <= upper <= 999999:
         parser.error("Dải máy lẻ phải tăng dần và nằm trong 1–999999.")
     try:
+        if args.index_report:
+            if args.dry_run:
+                parser.error('--dry-run chỉ dùng khi chuẩn bị tạo tài khoản.')
+            asyncio.run(index_report(args.index_report))
+            return
         path = args.csv or choose_csv()
         if path is None:
             print("Đã hủy chọn CSV.")

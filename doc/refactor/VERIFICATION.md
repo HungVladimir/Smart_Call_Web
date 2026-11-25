@@ -1,5 +1,7 @@
 # Kiểm chứng bản refactor dễ đọc
 
+25/11/2026. Kiểm tra luồng danh bạ và nhóm gọi trên nhánh refactor với 3.000 liên hệ Wazo mô phỏng. Các ca mới ở backend/tests/test_directory_calls.py và frontend/tests/components/directory-page-contract.test.js, call-groups-flow.test.js. Bộ test chat lưu cục bộ từ các nhánh trước vẫn tham chiếu các module đã gỡ nên cần chọn test phù hợp với nhánh khi chạy Vitest hoặc unittest. [Các bước nghiệm thu trên Wazo công ty](KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
+
 > Các kết quả bên dưới được ghi theo từng mốc. Bộ kiểm thử frontend và backend cùng cấu hình Vitest hiện được giữ cục bộ theo quy tắc Git ignore. Để chạy `npm test`, `npm run check` hoặc `unittest` trên một bản clone mới, cần có bộ test cục bộ tương ứng. Có thể chạy lint, kiểm tra kiến trúc và build riêng bằng các lệnh của dự án.
 
 Cập nhật: 20/11/2026. Windows, Node 22.19.0. Đợt đồng bộ mới chỉ sửa D:/Project/Smart_Call_Web_Refactor; đối chiếu các bản sửa main đến 7485481. Bản gốc không thay đổi trong lượt này.

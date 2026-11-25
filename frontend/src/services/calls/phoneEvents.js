@@ -137,6 +137,33 @@ function createCallIncomingHandler(callService) {
 
     window.dispatchEvent(new CustomEvent('wazo-incoming', { detail: callSession }))
     callService.groupCallService._requestGroupStateSync('incoming').catch(() => {})
+    if (!contact && ext) {
+      const context = captureSessionContext()
+      const generation = callService.callGeneration
+      const sipId = callService.getSipSessionId(callSession)
+      /** Bổ sung tên nếu vẫn đúng nhánh đang đổ chuông hoặc đã được nhận. */
+      async function resolveCallerName() {
+        try {
+          const found = await callService.contactService.getOrLookupContact(ext)
+          const current = callState.incomingCall || callState.activeCall
+          if (
+            !found ||
+            !current ||
+            !sipId ||
+            !isSessionContextCurrent(context) ||
+            generation !== callService.callGeneration ||
+            sipId !== callService.getSipSessionId(current.session || current.rawSession)
+          )
+            return
+          current.name = found.name
+          current.dept = found.dept || current.dept
+          current.peerUuid = found.uuid || ''
+        } catch {
+          // Caller ID SIP vẫn cho phép nghe hoặc từ chối khi Dird không phản hồi.
+        }
+      }
+      void resolveCallerName()
+    }
   }
 }
 

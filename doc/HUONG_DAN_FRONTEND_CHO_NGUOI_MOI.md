@@ -1,5 +1,7 @@
 # Hướng dẫn frontend từ đầu đến cuối cho người mới
 
+Cập nhật 25/11/2026. Luồng hiện hành dùng PagedContactsPanel ở màn gọi, và CallGroupsView cho nhóm cá nhân. Màn Messages, ChatService cùng những mục liên quan bên dưới mô tả phiên bản trước ngày này. [Luồng mới và cách kiểm thử](refactor/KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
+
 Cập nhật: 20/11/2026. Áp dụng cho D:/Project/Smart_Call_Web_Refactor, nhánh codex/refactor-architecture.
 
 Bản này đã chuyển sang cấu trúc phẳng, bỏ các tầng app/core/features/shared và tách UI gọi điện theo cụm. Hãy bắt đầu bằng chương 3 để nhìn cây thư mục, chương 4 để biết luồng chạy và chương 20 để có lộ trình đọc ngắn. Các chương nghiệp vụ còn lại giải thích từ View tới SDK/API và dữ liệu trả về.

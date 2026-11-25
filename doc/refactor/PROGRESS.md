@@ -1,5 +1,7 @@
 # Nhật ký refactor SmartCall Web
 
+25/11/2026. Màn Web chuyển từ chat sang Gọi nhóm cá nhân. Danh bạ dùng API lọc phía backend, 30 liên hệ mỗi trang, presence theo trang và kiểm tra lại đích khi gọi. [Hướng dẫn dùng và nghiệm thu](KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
+
 > Đây là nhật ký theo thời gian. Tên file, cấu trúc thư mục và số liệu kiểm thử trong mỗi mục thuộc mốc đó. Xem [mục lục tài liệu](../README.md) để tìm luồng hiện hành.
 
 Ngày thực hiện: 19/11/2026. Phạm vi ghi: D:/Project/Smart_Call_Web_Refactor. Nhánh: codex/refactor-architecture. Điểm bắt đầu: fac529b; mã nghiệp vụ kế thừa affdb80. Bản gốc cùng cấp được giữ nguyên.

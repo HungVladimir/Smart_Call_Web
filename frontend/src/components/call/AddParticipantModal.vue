@@ -32,8 +32,38 @@
         />
       </div>
 
+      <div
+        v-if="loadPage && selectedContacts.size"
+        class="add-participant-search"
+        aria-label="Người đã chọn"
+      >
+        <button
+          v-for="[number, contact] in selectedContacts"
+          :key="number"
+          type="button"
+          @click="toggleContact(contact)"
+        >
+          {{ contact.name }} ×
+        </button>
+      </div>
       <div class="add-participant-list">
-        <div v-if="availableAddParticipants.length === 0" class="add-participant-empty">
+        <div
+          v-if="paging.loading.value && !availableAddParticipants.length"
+          class="add-participant-empty"
+        >
+          <p>Đang tìm đồng nghiệp…</p>
+        </div>
+        <div v-else-if="paging.error.value" class="add-participant-empty" role="alert">
+          <p>{{ paging.error.value }}</p>
+          <button type="button" @click="paging.retry">Thử lại</button>
+        </div>
+        <div
+          v-else-if="loadPage && addParticipantSearch.trim().length === 1"
+          class="add-participant-empty"
+        >
+          <p>Nhập ít nhất 2 ký tự để tìm.</p>
+        </div>
+        <div v-else-if="availableAddParticipants.length === 0" class="add-participant-empty">
           <p>Không có đồng nghiệp trực tuyến nào khả dụng để mời.</p>
         </div>
         <div
@@ -41,13 +71,13 @@
           :key="c.uuid || c.number"
           class="add-participant-item"
           :class="{ selected: selectedAddExtensions.includes(String(c.number).trim()) }"
-          @click="toggleAddExtension(c.number)"
+          @click="toggleContact(c)"
         >
           <div class="add-item-checkbox">
             <input
               type="checkbox"
               :checked="selectedAddExtensions.includes(String(c.number).trim())"
-              @click.stop="toggleAddExtension(c.number)"
+              @click.stop="toggleContact(c)"
             />
           </div>
           <div class="add-item-avatar" :style="{ backgroundColor: getAvatarColor(c.name) }">
@@ -60,15 +90,23 @@
               <span v-if="c.dept" class="add-item-dept">• {{ c.dept }}</span>
             </div>
           </div>
-          <span class="badge-status-pill online">Trực tuyến</span>
+          <span class="badge-status-pill" :class="c.status">{{ c.statusLabel || 'Chưa rõ' }}</span>
         </div>
+        <button
+          v-if="paging.nextOffset.value !== null && !paging.error.value"
+          type="button"
+          :disabled="paging.loading.value"
+          @click="paging.loadMore"
+        >
+          Xem thêm
+        </button>
       </div>
 
       <div class="add-participant-footer">
         <button class="btn-add-cancel" @click="closeAddParticipantModal">Hủy</button>
         <button
           class="btn-add-confirm"
-          :disabled="selectedAddExtensions.length === 0"
+          :disabled="selectedAddExtensions.length === 0 || submitting"
           @click="confirmAddParticipants"
         >
           Mời vào cuộc gọi ({{ selectedAddExtensions.length }})
@@ -81,15 +119,18 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
+import { useDirectoryPages } from '@/composables/useDirectoryPages.js'
 
 /** Chỉ giữ lựa chọn tạm khi modal mở; gửi danh sách máy lẻ đã chọn cho view xử lý. */
 const props = defineProps({
   isOpen: Boolean,
+  submitting: Boolean,
   contacts: { type: Array, required: true },
   call: { type: Object, default: null },
   group: { type: Object, required: true },
   myExtension: { type: String, default: '' },
   canInviteContact: { type: Function, required: true },
+  loadPage: { type: Function, default: null },
 })
 const emit = defineEmits(['close', 'confirm'])
 /**
@@ -100,6 +141,20 @@ const contacts = computed(() => props.contacts)
 const addParticipantSearch = ref('')
 
 const selectedAddExtensions = ref([])
+const selectedContacts = ref(new Map())
+
+/** Chỉ tải trang trong vòng đời của modal và cuộc gọi đang mời. */
+function getQuery() {
+  if (!props.isOpen || !props.loadPage) return null
+  const term = addParticipantSearch.value.trim()
+  return { term, waitForInput: term.length === 1, callId: props.call?.callId }
+}
+
+/** Nhờ View tải trang qua ContactService. */
+function requestPage(query) {
+  return props.loadPage(query)
+}
+const paging = useDirectoryPages(getQuery, requestPage)
 
 /**
  * Lọc người có thể mời: bỏ chính mình, peer/thành viên đã có và người không sẵn sàng; áp dụng từ
@@ -117,14 +172,14 @@ const availableAddParticipants = computed(() => {
   if (!isGroup && activeExt) inCallExts.add(activeExt)
   if (myExt) inCallExts.add(myExt)
 
-  let list = contacts.value.filter((c) => {
+  const source = props.loadPage ? paging.contacts.value : contacts.value
+  let list = source.filter((c) => {
     const ext = String(c.number || '').trim()
-    const isAvail = props.canInviteContact(c)
-    return isAvail && !inCallExts.has(ext)
+    return ext && (props.loadPage || props.canInviteContact(c)) && !inCallExts.has(ext)
   })
 
   const q = addParticipantSearch.value.trim().toLowerCase()
-  if (q) {
+  if (q && !props.loadPage) {
     list = list.filter(
       (c) =>
         (c.name || '').toLowerCase().includes(q) ||
@@ -145,18 +200,30 @@ const toggleAddExtension = (ext) => {
     selectedAddExtensions.value.push(s)
   }
 }
+
+/** Giữ ảnh chụp UUID và số của người đã chọn độc lập với trang đang xem. */
+function toggleContact(contact) {
+  const number = String(contact.number || '').trim()
+  toggleAddExtension(number)
+  if (selectedAddExtensions.value.includes(number)) selectedContacts.value.set(number, contact)
+  else selectedContacts.value.delete(number)
+}
 // Đồng bộ vòng đời mở/đóng modal: reset lựa chọn tạm hoặc dọn tài nguyên không còn dùng.
-watch(
-  () => props.isOpen,
-  () => {
-    addParticipantSearch.value = ''
-    selectedAddExtensions.value = []
-  },
-)
+/** Xóa bộ chọn khi modal đóng/mở hoặc cuộc gọi đổi. */
+function resetSelection() {
+  addParticipantSearch.value = ''
+  selectedAddExtensions.value = []
+  selectedContacts.value.clear()
+}
+watch([() => props.isOpen, () => props.call?.callId], resetSelection)
 /** Đóng modal mời người; lựa chọn tạm thuộc component và được reset theo vòng đời mở/đóng. */
 const closeAddParticipantModal = () => emit('close')
 /** Loại lựa chọn vừa mất khả dụng rồi phát danh sách máy lẻ hợp lệ cho View; chưa tự gọi SDK/API. */
 const confirmAddParticipants = () => {
+  if (props.loadPage) {
+    if (selectedContacts.value.size) emit('confirm', [...selectedContacts.value.values()])
+    return
+  }
   const selected = selectedAddExtensions.value.filter((ext) =>
     availableAddParticipants.value.some((contact) => String(contact.number) === ext),
   )

@@ -233,14 +233,6 @@
           </div>
           <input v-model="notifyDesktop" disabled type="checkbox" class="toggle-cb" />
         </div>
-
-        <div class="st-toggle-row">
-          <div class="st-toggle-info">
-            <strong>Âm thanh thông báo tin nhắn (Chat Sound)</strong>
-            <small>Chưa hỗ trợ âm báo cho tin nhắn.</small>
-          </div>
-          <input v-model="notifySound" disabled type="checkbox" class="toggle-cb" />
-        </div>
       </div>
 
       <!-- Tab 5: Cấu hình Phân hệ tính năng -->
@@ -259,8 +251,8 @@
             <span class="feature-name">📞 Gọi điện & Danh bạ (/calls)</span>
           </label>
           <label class="feature-item">
-            <input type="checkbox" v-model="featureConfig.messages" />
-            <span class="feature-name">💬 Tin nhắn phòng chat (/messages)</span>
+            <input type="checkbox" v-model="featureConfig.callGroups" />
+            <span class="feature-name">Gọi nhóm (/call-groups)</span>
           </label>
           <label class="feature-item">
             <input type="checkbox" v-model="featureConfig.history" />
@@ -528,7 +520,6 @@ const loadCallServices = async () => {
 
 const selectedLang = ref('vi')
 const notifyDesktop = ref(false)
-const notifySound = ref(false)
 
 /** Phát âm thanh kiểm tra trên loa được chọn để người dùng xác nhận thiết bị đầu ra. */
 const testSound = () => {

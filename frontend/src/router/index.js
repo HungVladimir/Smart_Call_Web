@@ -8,7 +8,7 @@ import { isFeatureEnabled, getFeatures } from '../config/features.js'
 const getFirstAvailableRoute = () => {
   const f = getFeatures()
   if (f.calls) return '/calls'
-  if (f.messages) return '/messages'
+  if (f.callGroups) return '/call-groups'
   if (f.history) return '/history'
   return '/login'
 }
@@ -39,11 +39,12 @@ const router = createRouter({
       component: () => import('../views/CallsView.vue'),
       meta: { requiresAuth: true, title: 'Gọi điện & Danh bạ', featureKey: 'calls' },
     },
+    { path: '/messages', redirect: '/calls' },
     {
-      path: '/messages',
-      name: 'Messages',
-      component: () => import('../views/MessagesView.vue'),
-      meta: { requiresAuth: true, title: 'Tin nhắn phòng chat', featureKey: 'messages' },
+      path: '/call-groups',
+      name: 'CallGroups',
+      component: () => import('../views/CallGroupsView.vue'),
+      meta: { requiresAuth: true, title: 'Gọi nhóm', featureKey: 'callGroups' },
     },
     {
       path: '/history',

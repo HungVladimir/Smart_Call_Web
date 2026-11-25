@@ -1,5 +1,7 @@
 # Kiến trúc Web và cấu trúc dễ đọc
 
+Cập nhật 25/11/2026. ContactService dùng FastAPI để tìm kiếm toàn nguồn và giữ một trang 30 kết quả. CallGroupsView dùng nhóm cá nhân lưu SQLite. Các đoạn ChatService/ContactsPanel cũ trong tài liệu phản ánh phiên bản trước khi đổi luồng. [Danh bạ và nhóm gọi hiện hành](KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
+
 Cập nhật: 20/11/2026. Tài liệu hiện hành sau lượt đơn giản hóa. Bản gốc đã được push riêng lên main tại 5d5fe3e; những thay đổi mô tả ở đây chỉ thuộc clone.
 
 ## Mô hình chính

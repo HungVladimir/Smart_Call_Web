@@ -1,6 +1,7 @@
 import { logger } from '../common/loggerService.js'
 import { callState } from '../../state/callState.js'
 import { normalizeExtension } from '../../utils/callPolicy.js'
+import { captureSessionContext, isSessionContextCurrent } from '../auth/sessionScope.js'
 
 /** Xử lý envelope theo protocol Wazo; transport không chứa quy tắc cuộc gọi hoặc nhóm. */
 export function handleWazoEvent(context, envelope) {
@@ -77,7 +78,7 @@ export function handleWazoEvent(context, envelope) {
 
     // call_ended có thể chỉ là chuyển kênh vào ConfBridge; việc rời nhóm do event hội nghị xác nhận.
 
-    // Chuyển tiếp tới các subscriber của websocketService (chat, call)
+    // Chuyển tiếp cho các subscriber của luồng thoại.
     context.eventHub.emit(name, data)
   } catch (e) {
     /* ignore */
@@ -95,6 +96,8 @@ function resolveSender(context, data) {
   if (!contact || contact.uuid !== uuid) return null
   const extension = normalizeExtension(contact.number)
   if (!extension) return null
+  if (context.contactService.isPagedIdentity(contact))
+    return context.contactService.isVerifiedExtensionOwner(contact) ? { uuid, extension } : null
   const owners = new Set(
     context.contactService.currentContacts
       .filter((item) => normalizeExtension(item.number) === extension)
@@ -104,6 +107,39 @@ function resolveSender(context, data) {
   // quyền điều khiển.
   if (owners.size !== 1 || !owners.has(uuid)) return null
   return { uuid, extension }
+}
+
+/** Tra UUID của tín hiệu nhóm hợp lệ về định dạng khi người phát chưa có trong trang hiện tại. */
+async function resolveMissingGroupSender(context, data, call) {
+  const uuid = data.user_uuid || data.uuid
+  if (
+    !uuid ||
+    uuid === context.authService.getCurrentUserUuid() ||
+    (data.user_uuid && data.uuid && data.user_uuid !== data.uuid)
+  )
+    return
+  const session = captureSessionContext()
+  const generation = context.callService.callGeneration
+  const sip = context.callService.getSipSessionId(call.session || call.rawSession)
+  try {
+    await context.contactService.hydrateContactsByUuid([uuid])
+    const candidate = context.contactService.findContactByUuid(uuid)
+    if (!candidate?.number) return
+    const owner = await context.contactService.getOrLookupContact(candidate.number)
+    const current = callState.activeCall || callState.incomingCall
+    // Chỉ phát lại trong đúng cuộc gọi. Hàm chính kiểm tra lại vai trò và chống trùng.
+    if (
+      owner?.uuid === uuid &&
+      isSessionContextCurrent(session) &&
+      generation === context.callService.callGeneration &&
+      (current === call ||
+        (sip &&
+          sip === context.callService.getSipSessionId(current?.session || current?.rawSession)))
+    )
+      handleGroupPresenceSignal(context, data, true)
+  } catch {
+    // Không xác minh được người phát thì giữ nguyên quyền và trạng thái cuộc gọi.
+  }
 }
 
 /**
@@ -121,7 +157,7 @@ function extensions(value) {
  * Ràng buộc group signal với người phát và peer/nhóm đang hoạt động; không tự nhận chuyển quyền
  * host.
  */
-export function handleGroupPresenceSignal(context, data) {
+export function handleGroupPresenceSignal(context, data, lookupAttempted = false) {
   if (!context.authService.isAuthenticated()) return
   const currentCall = callState.activeCall || callState.incomingCall
   if (!currentCall || !context.callService.hasActiveCall() || typeof data.status !== 'string')
@@ -129,7 +165,13 @@ export function handleGroupPresenceSignal(context, data) {
   const matches = [...data.status.matchAll(/\[(GROUP|GROUP_SYNC|ADD_REQ|NOTICE|LEFT):([^\]]+)\]/g)]
   if (matches.length !== 1) return
   const sender = resolveSender(context, data)
-  if (!sender) return
+  if (!sender) {
+    const uuid = data.user_uuid || data.uuid
+    const cached = context.contactService.findContactByUuid(uuid)
+    if (!lookupAttempted && (!cached || context.contactService.isPagedIdentity(cached)))
+      void resolveMissingGroupSender(context, data, currentCall)
+    return
+  }
   const [, kind, payload] = matches[0]
   const group = context.groupCallService
   const state = group.state

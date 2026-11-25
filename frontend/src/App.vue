@@ -203,7 +203,7 @@ const onMissedIncomingCall = (callData) => {
 const handleAppAction = (event) => {
   const { type, value } = event.detail
   if (type === 'dial') {
-    onDial(value)
+    onDial(value, event.detail?.peerUuid)
   }
 }
 
@@ -233,12 +233,12 @@ const handleLogout = async () => {
 }
 
 /** Chuẩn hóa máy lẻ rồi mở màn hình gọi với query yêu cầu quay số. */
-const onDial = (extension) => {
+const onDial = (extension, peerUuid = '') => {
   const cleanExt = String(extension || '').trim()
   if (!cleanExt) return
   router.push({
     path: '/calls',
-    query: { number: cleanExt, autocall: 'true' },
+    query: { number: cleanExt, autocall: 'true', ...(peerUuid ? { peerUuid } : {}) },
   })
 }
 

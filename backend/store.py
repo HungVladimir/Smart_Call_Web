@@ -41,6 +41,35 @@ class Store:
         if identifier:
             await self.redis.delete(self.key(resource, identifier))
 
+    # Đọc hoặc cập nhật mã từ IdP trong bảng riêng, không sửa schema liên kết đăng nhập.
+    def _employee_ids(self, tenant, updates=()):
+        self.settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(self.settings.database_path, timeout=5)) as database, database:
+            database.execute("""CREATE TABLE IF NOT EXISTS directory_employee_ids (
+                tenant TEXT NOT NULL, user_uuid TEXT NOT NULL, employee_id TEXT NOT NULL,
+                PRIMARY KEY(tenant, user_uuid))""")
+            if updates:
+                database.executemany("""INSERT INTO directory_employee_ids VALUES(?,?,?)
+                    ON CONFLICT(tenant,user_uuid) DO UPDATE SET employee_id=excluded.employee_id""",
+                    [(tenant, user, employee_id) for user, employee_id in updates])
+                return None
+            return dict(database.execute(
+                "SELECT user_uuid, employee_id FROM directory_employee_ids WHERE tenant=?", (tenant,)
+            ))
+
+    # Đọc mã trong worker, chỉ dùng để ghép với UUID danh bạ đã xác minh quyền.
+    async def employee_ids(self, tenant):
+        return await asyncio.to_thread(self._employee_ids, tenant)
+
+    # Giữ mã nhân viên dưới dạng chuỗi để không mất các số 0 ở đầu.
+    async def remember_employee_id(self, tenant, user, employee_id):
+        await self.remember_employee_ids(tenant, [(user, employee_id)])
+
+    # Nhập báo cáo CSV đã xác minh vào một giao dịch, kể cả khi chạy script ở máy khác.
+    async def remember_employee_ids(self, tenant, updates):
+        if updates:
+            await asyncio.to_thread(self._employee_ids, tenant, updates)
+
     # Thao tác SQLite có unique constraint; chạy trong worker để tránh chặn event loop.
     def _mapping(self, identity, tenant, value=None):
         path = self.settings.database_path

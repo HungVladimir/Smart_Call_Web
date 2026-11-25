@@ -148,15 +148,6 @@
               <span class="action-icon">📞</span>
               <span class="action-text">Gọi lại</span>
             </button>
-
-            <!-- 💬 Nút Nhắn tin -->
-            <button
-              class="btn-action btn-chat"
-              title="Nhắn tin với nhân viên này"
-              @click="handleChat(call)"
-            >
-              <span class="action-icon">💬</span>
-            </button>
           </div>
         </div>
 
@@ -219,7 +210,6 @@ import { useRecordingPlayer } from '../composables/useRecordingPlayer.js'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { historyService } from '@/services/index.js'
-import { contactService } from '@/services/index.js'
 import { recordingService } from '@/services/index.js'
 import { callState } from '@/state/callState.js'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
@@ -438,33 +428,12 @@ const handleCallback = (call) => {
     alert('Không tìm thấy số máy lẻ để gọi lại!')
     return
   }
-  const target = contactService.findContactByExtension(call.extension)
-  if (target && (target.status === 'offline' || target.status === 'unavailable')) {
-    const confirmMessage = confirm(
-      `Máy lẻ [${target.name || call.extension}] hiện đang ngoại tuyến.\nBạn có muốn chuyển sang gửi tin nhắn không?`,
-    )
-    if (confirmMessage) {
-      router.push({ path: '/messages', query: { ext: call.extension, name: target.name } })
-    }
-    return
-  }
-
   router.push({
     path: '/calls',
     query: {
       number: call.extension,
       autocall: 'true',
-    },
-  })
-}
-
-// Thao tác Nhắn tin: Điều hướng sang MessagesView
-const handleChat = (call) => {
-  router.push({
-    path: '/messages',
-    query: {
-      name: call.name,
-      ext: call.extension,
+      ...(call.peerUuid ? { peerUuid: call.peerUuid } : {}),
     },
   })
 }
@@ -1023,18 +992,6 @@ const handleChat = (call) => {
   background-color: #059669;
   color: #fff;
   border-color: #059669;
-}
-
-.btn-chat {
-  background-color: #f0f9ff;
-  color: #0284c7;
-  border-color: #bae6fd;
-  padding: 8px 12px;
-}
-
-.btn-chat:hover {
-  background-color: #0284c7;
-  color: #fff;
 }
 
 .btn-delete-item {

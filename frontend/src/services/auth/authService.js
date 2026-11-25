@@ -46,7 +46,6 @@ export class AuthService {
     callService,
     eventConnection,
     contactService,
-    chatService,
     historyService,
     recordingService,
   }) {
@@ -54,7 +53,6 @@ export class AuthService {
       callService,
       eventConnection,
       contactService,
-      chatService,
       historyService,
       recordingService,
     })
@@ -493,10 +491,10 @@ export class AuthService {
     } catch (e) {}
     this.clientId = ''
 
-    // Xóa tất cả các cache phòng chat cục bộ để không rò rỉ sang tài khoản khác
+    // Dọn metadata chat của phiên bản Web cũ khi kết thúc phiên.
     try {
       Object.keys(localStorage).forEach((k) => {
-        if (k.startsWith('smartcall_chat_rooms_')) {
+        if (k.startsWith('smartcall_chat_rooms_') || k.startsWith('smartcall_unread_v1:')) {
           localStorage.removeItem(k)
         }
       })
@@ -528,7 +526,6 @@ export class AuthService {
     callState.incomingCall = null
     callState.callNotice = null
     this.contactService.reset()
-    this.chatService.reset()
     this.historyService.reset()
     logger.info('AUTH', 'Đã xóa toàn bộ token và phiên làm việc cục bộ.')
     return this.sdkCleanupPromise

@@ -3,7 +3,6 @@ import { SettingsService } from './data/settingsService.js'
 import { handleWazoEvent } from './realtime/wazoEventHandler.js'
 import { AuthService } from './auth/authService.js'
 import { ContactService } from './data/contactService.js'
-import { ChatService } from './data/chatService.js'
 import { HistoryService } from './data/historyService.js'
 import { RecordingService } from './audio/recordingService.js'
 import { CallService } from './calls/callService.js'
@@ -25,7 +24,6 @@ export function createServices(sdk) {
   const contactService = new ContactService({ authService })
   const historyService = new HistoryService({ authService })
   const recordingService = new RecordingService({ authService })
-  const chatService = new ChatService({ authService, contactService, eventHub })
   const callControlApi = new CallControlApi({ authService })
   const callService = new CallService({
     sdk,
@@ -57,17 +55,25 @@ export function createServices(sdk) {
   const eventConnection = new EventConnection({
     authService,
     onEnvelope: (envelope) => handleWazoEvent(eventContext, envelope),
-    onConnected: () =>
-      groupCallService
-        ._requestGroupStateSync('socket-' + groupCallService._createGroupSignalId())
-        .catch(() => {}),
+    onConnected: resyncConnectedServices,
+    onDisconnected: markDirectoryPresenceStale,
   })
+  /** Trạng thái từ socket cũ không còn đủ tin cậy sau khi mất kết nối. */
+  function markDirectoryPresenceStale() {
+    contactService.invalidateDirectoryPresence()
+  }
+  /** Khôi phục hội nghị và yêu cầu các view đang mở đồng bộ lại presence sau reconnect. */
+  function resyncConnectedServices() {
+    window.dispatchEvent(new Event('smartcall-directory-reconnect'))
+    return groupCallService
+      ._requestGroupStateSync('socket-' + groupCallService._createGroupSignalId())
+      .catch(() => {})
+  }
   eventContext.eventConnection = eventConnection
   authService.attachLifecycle({
     callService,
     eventConnection,
     contactService,
-    chatService,
     historyService,
     recordingService,
   })
@@ -75,7 +81,6 @@ export function createServices(sdk) {
     authService,
     settingsService,
     contactService,
-    chatService,
     callControlApi,
     historyService,
     recordingService,

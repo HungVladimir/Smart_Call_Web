@@ -8,21 +8,10 @@
         </router-link>
       </li>
 
-      <li v-if="features.messages">
-        <router-link
-          to="/messages"
-          class="nav-btn"
-          active-class="active"
-          @click="onMessagesNavClick"
-        >
-          <span class="icon">💬</span>
-          <span>Tin nhắn</span>
-          <span
-            v-if="totalUnread > 0"
-            class="unread-badge"
-            :aria-label="`${totalUnread} tin nhắn chưa mở`"
-            >{{ totalUnread }}</span
-          >
+      <li v-if="features.callGroups">
+        <router-link to="/call-groups" class="nav-btn" active-class="active">
+          <span class="icon">👥</span>
+          <span>Gọi nhóm</span>
         </router-link>
       </li>
 
@@ -43,19 +32,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { chatService } from '@/services/index.js'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { getFeatures } from '@/config/features.js'
 
 const features = ref(getFeatures())
-/** Tổng badge lấy từ một nguồn state của ChatService. */
-const totalUnread = computed(() => chatService.totalUnread)
-/** Nhận cấu hình màn hình mới để Sidebar cập nhật danh sách mục điều hướng. */
-const onFeaturesChanged = (e) => {
-  const messagesWereEnabled = features.value.messages
-  features.value = e.detail || getFeatures()
-  if (!messagesWereEnabled && features.value.messages)
-    chatService.restoreUnreadNotifications().catch(() => {})
+/** Nhận cấu hình màn hình mới để Sidebar cập nhật điều hướng. */
+function onFeaturesChanged(event) {
+  features.value = event.detail || getFeatures()
 }
 
 /** Điều hướng tới màn hình gọi và phát yêu cầu cập nhật danh bạ theo luồng hiện tại. */
@@ -63,15 +46,9 @@ const onCallsNavClick = () => {
   window.dispatchEvent(new CustomEvent('smartcall-refresh-contacts'))
 }
 
-/** Mở màn hình tin nhắn qua router, giữ việc tải dữ liệu ở View/service. */
-const onMessagesNavClick = () => {
-  window.dispatchEvent(new CustomEvent('smartcall-refresh-rooms'))
-}
-
 // Khi component được gắn vào DOM, nạp dữ liệu và đăng ký các listener/tài nguyên cần cho giao diện
 // này.
 onMounted(() => {
-  if (features.value.messages) chatService.restoreUnreadNotifications().catch(() => {})
   window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 })
 
@@ -83,17 +60,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.unread-badge {
-  margin-left: auto;
-  min-width: 22px;
-  padding: 2px 6px;
-  border-radius: 12px;
-  background: #ef4444;
-  color: white;
-  font-size: 0.75rem;
-  text-align: center;
-}
-
 .app-sidebar {
   width: 220px;
   background: #262c34;

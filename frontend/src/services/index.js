@@ -6,7 +6,6 @@ export const {
   authService,
   settingsService,
   contactService,
-  chatService,
   historyService,
   recordingService,
   callService,

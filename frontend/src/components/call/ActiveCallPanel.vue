@@ -249,7 +249,7 @@ const activeCallTitle = computed(() => {
       props.group.groupConnectedExtensions ||
       []
     ).length
-    return `Cuộc gọi nhóm (${count} người)`
+    return `${props.call.savedGroupName || 'Cuộc gọi nhóm'} (${count} người)`
   }
   const ext = props.call.number || props.call?.number || ''
   if (props.call.status === 'ringing') {
