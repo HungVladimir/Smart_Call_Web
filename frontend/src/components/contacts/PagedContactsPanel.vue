@@ -1,18 +1,21 @@
 <template>
   <section class="contacts-col">
     <div class="contacts-panel-card directory-panel">
-      <div class="panel-header directory-toolbar">
-        <input
-          v-model="term"
-          type="search"
-          class="search-input"
-          aria-label="Tìm trong danh bạ"
-          placeholder="Tìm tên, máy lẻ, mã nhân viên hoặc email"
-          @search="clearUrlSearch"
-        />
+      <div class="directory-toolbar">
+        <div class="directory-search">
+          <span class="directory-search-icon" aria-hidden="true"></span>
+          <input
+            v-model="term"
+            type="search"
+            aria-label="Tìm theo tên, máy lẻ, mã nhân viên hoặc email"
+            placeholder="Tên, máy lẻ, mã nhân viên hoặc email"
+            @search="clearUrlSearch"
+          />
+        </div>
         <button
           type="button"
-          class="btn-action-pill"
+          class="directory-refresh"
+          aria-label="Làm mới danh bạ"
           :disabled="paging.loading.value"
           @click="refresh"
         >
@@ -30,9 +33,9 @@
           {{ tab.label }}
         </button>
       </div>
-      <div v-if="!picker && activeTab === 'all'" class="directory-controls">
+      <div v-if="!picker && activeTab === 'all'" class="directory-controls directory-filters">
         <label
-          >Phạm vi
+          >Trạng thái
           <select v-model="presence">
             <option value="">Tất cả</option>
             <option value="online">Trực tuyến toàn danh bạ</option>
@@ -41,13 +44,17 @@
         </label>
         <button
           v-if="showRecent && recentContacts.length"
+          class="directory-link"
           type="button"
           @click="emit('clear-recent')"
         >
           Xóa gần đây
         </button>
       </div>
-      <div v-if="!picker && activeTab === 'department'" class="directory-controls">
+      <div
+        v-if="!picker && activeTab === 'department'"
+        class="directory-controls directory-filters"
+      >
         <label
           >Bộ phận
           <select v-model="department" :disabled="loadingDepartments">
@@ -60,14 +67,21 @@
           {{ departmentError }} <button type="button" @click="reloadDepartments">Thử lại</button>
         </p>
       </div>
-      <div v-if="isGroupTab && !picker" class="directory-controls">
-        <button type="button" :disabled="selected.size < 2 || busy" @click="startGroup">
+      <div v-if="isGroupTab && !picker" class="directory-controls directory-filters">
+        <button
+          class="directory-primary"
+          type="button"
+          :disabled="selected.size < 2 || busy"
+          @click="startGroup"
+        >
           Gọi nhanh ({{ selected.size }})
         </button>
         <button v-if="selected.size" type="button" @click="clearStartedSelection">Bỏ chọn</button>
-        <RouterLink v-if="groupsEnabled" to="/call-groups">Nhóm đã lưu</RouterLink>
+        <RouterLink v-if="groupsEnabled" class="directory-link" to="/call-groups"
+          >Nhóm đã lưu</RouterLink
+        >
       </div>
-      <div class="panel-list-container directory-results">
+      <div class="directory-results" :aria-busy="paging.loading.value">
         <p v-if="showRecent" class="directory-caption">Liên hệ gần đây</p>
         <p v-if="shortQuery" class="panel-state-message">Nhập ít nhất 2 ký tự để tìm.</p>
         <p v-else-if="waitingDepartment" class="panel-state-message">
@@ -105,7 +119,7 @@
       </div>
       <nav
         v-if="!showRecent && (paging.offset.value || paging.nextOffset.value !== null)"
-        class="directory-controls"
+        class="directory-controls directory-pagination"
         aria-label="Trang danh bạ"
       >
         <button
@@ -341,54 +355,206 @@ onUnmounted(stopPresenceRefresh)
   max-width: 720px;
 }
 .directory-panel {
-  border: 1px solid #dbe4ef;
+  --directory-line: #e2e8f0;
+  --directory-muted: #52647b;
+  --directory-blue: #1d62b2;
+  border: 1px solid var(--directory-line);
   border-radius: 12px;
-  background: var(--card-bg, #fff);
-  overflow: hidden;
+  background: #fff;
+  color: #1e293b;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 6%);
   display: flex;
   flex-direction: column;
-  max-height: 580px;
+  height: 580px;
+  overflow: hidden;
 }
-.directory-toolbar,
-.directory-tabs,
-.directory-controls {
+.directory-toolbar {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px;
-}
-.directory-toolbar input {
-  flex: 1;
-  min-width: 140px;
-  padding: 8px;
-}
-.directory-controls select {
-  max-width: min(280px, 65vw);
-}
-.directory-results {
-  padding: 0 10px 10px;
-  min-height: 90px;
-  overflow-y: auto;
-}
-.contacts-items-list {
-  display: grid;
-  gap: 8px;
-}
-.directory-controls {
   flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  background: #f8fafc;
 }
-.directory-caption {
-  margin: 6px 0;
+.directory-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid #cbd5e1;
+  border-radius: 20px;
+  background: #fff;
 }
-.directory-tabs [aria-pressed='true'] {
-  font-weight: 700;
-  border-color: #4463c7;
+.directory-search:focus-within {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px #dbeafe;
+}
+.directory-search-icon {
+  position: relative;
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  border: 1.6px solid #64748b;
+  border-radius: 50%;
+}
+.directory-search-icon::after {
+  position: absolute;
+  inset: auto auto -2px 8px;
+  width: 6px;
+  height: 1.6px;
+  border-radius: 1px;
+  background: #64748b;
+  content: '';
+  transform: rotate(45deg);
+  transform-origin: left;
+}
+.directory-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.88rem;
+}
+.directory-tabs {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 16px 12px;
+  border-bottom: 1px solid var(--directory-line);
+  background: #f8fafc;
+}
+.directory-panel button,
+.directory-controls select {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--directory-line);
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 .directory-panel button {
   cursor: pointer;
 }
+.directory-panel button:hover:not(:disabled) {
+  border-color: #a9bdd7;
+  background: #f0f6fd;
+}
+.directory-panel button:focus-visible,
+.directory-controls select:focus-visible,
+.directory-link:focus-visible {
+  outline: 2px solid #327fdb;
+  outline-offset: 2px;
+}
 .directory-panel button:disabled {
+  opacity: 0.5;
   cursor: default;
+}
+.directory-tabs button[aria-pressed='true'] {
+  border-color: #93baf0;
+  background: #eaf3ff;
+  color: var(--directory-blue);
+}
+.directory-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px 12px;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+}
+.directory-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  color: var(--directory-muted);
+}
+.directory-controls select {
+  max-width: min(280px, 55vw);
+}
+.directory-filters {
+  border-bottom: 1px solid var(--directory-line);
+}
+.directory-panel .directory-refresh {
+  min-height: 38px;
+  white-space: nowrap;
+  color: var(--directory-blue);
+}
+.directory-panel .directory-link,
+.directory-link {
+  border-color: transparent;
+  color: var(--directory-blue);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.directory-panel .directory-primary {
+  border-color: #1d62b2;
+  background: #1d62b2;
+  color: #fff;
+}
+.directory-panel .directory-primary:hover:not(:disabled) {
+  border-color: #184e8c;
+  background: #184e8c;
+}
+.directory-results {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 16px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.contacts-items-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.directory-caption {
+  margin: 0 0 8px;
+  color: var(--directory-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.panel-state-message {
+  margin: 0;
+  padding: 28px 12px;
+  color: var(--directory-muted);
+  font-size: 0.88rem;
+  text-align: center;
+}
+.directory-pagination {
+  justify-content: space-between;
+  border-top: 1px solid var(--directory-line);
+  background: #f8fafc;
+  color: var(--directory-muted);
+}
+@media (max-width: 540px) {
+  .directory-panel {
+    height: min(580px, max(420px, calc(100dvh - 155px)));
+  }
+  .directory-toolbar,
+  .directory-tabs,
+  .directory-controls,
+  .directory-results {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+  .directory-toolbar {
+    gap: 6px;
+  }
+  .directory-tabs button {
+    padding: 6px 2px;
+  }
 }
 </style>

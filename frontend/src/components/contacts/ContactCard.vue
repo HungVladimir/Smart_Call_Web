@@ -35,7 +35,7 @@
         </svg>
       </div>
     </div>
-    <!-- Ghim yêu thích ⭐ khi ở contactácontact tab thông thường -->
+    <!-- Đánh dấu liên hệ yêu thích khi đang duyệt danh bạ. -->
     <button
       v-else
       class="btn-star"
@@ -47,14 +47,14 @@
       {{ contact.isFavorite ? '⭐' : '☆' }}
     </button>
 
-    <!-- Avatar tròn chữ contactái -->
+    <!-- Ảnh đại diện dạng chữ cái. -->
     <div class="avatar-wrap">
       <div class="contact-avatar" :style="{ backgroundColor: getAvatarColor(contact.name) }">
         {{ getInitials(contact.name) }}
       </div>
     </div>
 
-    <!-- Thông tin nhân viên (Chấm màu đặt ngay trướcontact Tên nhân viên) -->
+    <!-- Chấm màu hiển thị trạng thái ngay trước tên nhân viên. -->
     <div class="contact-meta">
       <div class="meta-row-top">
         <div class="name-status-group">
@@ -73,7 +73,7 @@
                 contact.status !== 'unavailable'
               "
               class="mobile-phone-badge"
-              title="Đang trựcontact tuyến bằng ứng dụng di động"
+              title="Đang trực tuyến bằng ứng dụng di động"
             >
               <svg
                 class="phone-svg-icon"
@@ -101,7 +101,7 @@
       </div>
     </div>
 
-    <!-- Thao tácontact / Chỉ báo: Trong tab Gọi nhóm hiển thị nhãn đã chọn / trạng thái; ở tab thường hiển thị nút Gọi & Nhắn tin -->
+    <!-- Khi chọn thành viên, ưu tiên hiển thị trạng thái lựa chọn. -->
     <div v-if="groupSelectionMode" class="group-select-indicator">
       <span v-if="selected" class="badge-group-selected"> ✓ Đã chọn </span>
       <span v-else class="badge-status-pill" :class="contact.status || 'offline'">
@@ -109,15 +109,15 @@
       </span>
     </div>
 
-    <!-- Nút thao tácontact nhanh khi ở contactácontact tab 1-1: Gọi thoại & Nhắn tin -->
+    <!-- Gọi trực tiếp từ thẻ liên hệ. -->
     <div v-else class="contact-actions">
       <button
         class="btn-action-icon call"
         :title="
           !contact.number || !contact.number.trim()
-            ? 'Chưa contactó số máy lẻ'
+            ? 'Chưa có số máy lẻ'
             : busy
-              ? 'Đang bận cuộcontact gọi'
+              ? 'Đang bận cuộc gọi'
               : `Gọi máy lẻ ${contact.number}`
         "
         :aria-label="`Gọi cho ${contact.name}`"
@@ -199,8 +199,8 @@ const emit = defineEmits(['select', 'call', 'favorite', 'remember'])
 
 .calls-view .contact-item-card {
   display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 10px;
   background: #ffffff;
   border: 1px solid #f1f5f9;
   border-radius: 8px;
