@@ -2,6 +2,8 @@
 
 Đối chiếu mã ở mốc `cd9666d` trên `codex/refactor-architecture`. Dùng trang này để lần nhanh một thao tác. Đọc [hướng dẫn toàn bộ luồng](HUONG_DAN_TOAN_BO_LUONG_SMARTCALL.md) khi cần xem diễn giải và trích đoạn code.
 
+[Bảng API hiện hành và cách test trên Postman](SMARTCALL_API_POSTMAN.md) cập nhật các endpoint theo nhánh refactor mới, gồm Single ID, danh bạ phân trang và nhóm đã lưu.
+
 Để tìm nhanh theo tên hàm hoặc file, mở [bản đồ Graphify](BAN_DO_MA_NGUON_SMARTCALL.html) bằng trình duyệt từ bản clone. Bản đồ tải thư viện hiển thị từ CDN. Graphify lập chỉ mục tĩnh 59 file JS, Vue và Python của ứng dụng. Dùng sơ đồ tuần tự và mã nguồn bên dưới để xác minh lệnh qua SDK, event và kết quả trả về trong từng tình huống.
 
 | Bạn muốn biết | Mở mục |

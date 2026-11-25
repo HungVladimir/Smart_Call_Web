@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     idp_scope: str = "openid"
     idp_pkce_enabled: bool = True
     idp_require_verified_email: bool = False
+    idp_log_claim_schema: bool = False
     allowed_email_domains: str = "samsung.com"
     redis_url: str = "redis://localhost:6379/0"
     redis_prefix: str = "smartcall"

@@ -1,5 +1,7 @@
 # Nhật ký refactor SmartCall Web
 
+26/11/2026. Bổ sung [bảng API hiện hành và cách test trên Postman](../SMARTCALL_API_POSTMAN.md). Backend có tùy chọn `SMARTCALL_IDP_LOG_CLAIM_SCHEMA` để kiểm tra tên và kiểu trường trả về khi đăng nhập Single ID. Tùy chọn mặc định tắt và không ghi giá trị token hoặc claim.
+
 26/11/2026. Màn Gọi nhóm dùng thẻ nhóm với nút Gọi dễ nhận biết và mở bố cục riêng khi tạo hoặc sửa. Danh sách người đã chọn hiển thị avatar chữ, tên và máy lẻ bên cạnh bộ chọn danh bạ. Các biểu tượng giao diện Web dùng chung [UiIcon.vue](../../frontend/src/components/common/UiIcon.vue). Màn gọi, danh bạ, nhóm gọi, lịch sử, đăng nhập, điều hướng, cài đặt và nhật ký chọn icon bằng tên. Danh sách chọn trạng thái của trình duyệt dùng cùng bảng ký tự để giữ tùy chọn HTML chuẩn.
 
 ### Xác minh đích gọi và danh bạ theo quyền phiên

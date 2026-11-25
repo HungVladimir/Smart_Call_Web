@@ -11,7 +11,8 @@
 | Chạy Single ID, cấu hình Wazo hoặc kiểm tra mapping SQLite | [Vận hành backend](../backend/doc/README.md) |
 | Tiếp nhận công việc và xem phần còn lại | [Bàn giao và kế hoạch](../backend/doc/HANDOFF.md) |
 | Kiểm chứng một thay đổi hoặc xem kết quả ở từng mốc | [Kiểm chứng](refactor/VERIFICATION.md) và [nhật ký refactor](refactor/PROGRESS.md) |
-| Đối chiếu các endpoint nền tảng Wazo | [Tham chiếu Wazo 26.10](WAZO_API_REFERENCE.md). Endpoint SmartCall thực sự gọi được mô tả trong hướng dẫn luồng và mã nguồn. |
+| Tra các API SmartCall đang dùng và thử bằng Postman | [API SmartCall và Postman](SMARTCALL_API_POSTMAN.md) |
+| Đối chiếu các endpoint nền tảng Wazo | [Tham chiếu Wazo 26.10](WAZO_API_REFERENCE.md) |
 
 Đọc [AGENTS.md](../AGENTS.md) trước khi sửa. Khi tài liệu ở mốc cũ khác với nhánh đang dùng, đối chiếu mã nguồn và quy tắc hiện hành.
 

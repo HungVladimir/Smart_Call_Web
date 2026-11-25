@@ -1,11 +1,20 @@
 """Xử lý OIDC Authorization Code, xác minh ID token và tạo phiên Single ID."""
 import base64
 import hashlib
+import json
+import logging
 import secrets
 import time
 from urllib.parse import urlencode, urlsplit
 import jwt
 from fastapi import HTTPException
+
+logger = logging.getLogger("uvicorn.error")
+
+
+# Thống kê khóa và kiểu của phản hồi mà không ghi giá trị token hay dữ liệu cá nhân.
+def field_schema(payload):
+    return {key: type(value).__name__ for key, value in payload.items()}
 
 
 # Trả lỗi có mã ổn định, không trả token/credential hoặc nội dung lỗi upstream.
@@ -149,6 +158,15 @@ class OidcClient:
         tokens = await self.exchange_code(code, transaction)
         claims = await self.validate_id_token(tokens, transaction)
         profile = self.build_profile(claims)
+        if self.settings.idp_log_claim_schema:
+            logger.info(
+                "Single ID field schema: %s",
+                json.dumps({
+                    "token_response": field_schema(tokens),
+                    "verified_id_token_claims": field_schema(claims),
+                    "smartcall_profile": field_schema(profile),
+                }, sort_keys=True, ensure_ascii=True),
+            )
         ttl = min(self.settings.session_ttl, int(claims["exp"] - time.time()))
         if ttl <= 0:
             fail("ID_TOKEN_EXPIRED", "Phiên IdP đã hết hạn.", 401)
