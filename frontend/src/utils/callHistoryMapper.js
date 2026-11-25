@@ -27,7 +27,7 @@ export function mapCallHistoryRecord(cdr, { myExtension = '', index = 0 } = {}) 
     name,
     extension,
     peerUuid: (outbound ? cdr.destination_user_uuid : cdr.source_user_uuid) || '',
-    dept: 'Nội bộ công ty',
+    dept: '',
     duration: cdr.duration || 0,
     direction: outbound ? 'outbound' : 'inbound',
     directionLabel: outbound ? 'Outgoing' : 'Incoming',

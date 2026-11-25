@@ -5,6 +5,16 @@ import { normalizeExtension } from '../../utils/callPolicy.js'
 import { logger } from '../common/loggerService.js'
 import { createGroupCallState } from '../../state/callState.js'
 
+const SKIPPABLE_PRIMARY_FAILURES = new Set([
+  'TARGET_BUSY',
+  'TARGET_RINGING',
+  'TARGET_DND',
+  'TARGET_OFFLINE',
+  'TARGET_CHANGED',
+  'TARGET_NOT_FOUND',
+  'TARGET_STATUS_UNKNOWN',
+])
+
 /** Điều phối hội nghị và các nhánh gọi; dùng AuthService để lấy thông tin phiên. */
 export class GroupCallService {
   /**
@@ -37,6 +47,8 @@ export class GroupCallService {
     this._syncAdhocDebounceTimer = null
     this._secondaryInviteTimers = new Map()
     this._primaryInviteTimer = null
+    this.initialInvites = null
+    this.pendingInviteExtensions = new Map()
     this._processedAddReqIds = new Set()
     this._processedNoticeIds = new Set()
     this._pendingConferenceTerminations = new Map()
@@ -191,13 +203,15 @@ export class GroupCallService {
     }
 
     if (availableTargets.length === 1) {
+      const extension = availableTargets[0]
+      const expectedUuid = this.contactService.findContactByExtension(extension)?.uuid
       if (meta.requireGroupConfirmation && cleanList.length > 1)
-        return { success: false, reason: 'TARGET_AVAILABILITY_CHANGED' }
+        return { success: false, reason: 'TARGET_AVAILABILITY_CHANGED', extension, expectedUuid }
       logger.info(
         'CALL',
         `Chỉ còn 1 máy lẻ khả dụng [${availableTargets[0]}]. Chuyển sang cuộc gọi thoại 1-1.`,
       )
-      return this.callService.startCall(availableTargets[0], meta)
+      return this.callService.startCall(extension, expectedUuid ? { ...meta, expectedUuid } : meta)
     }
 
     logger.info(
@@ -214,29 +228,48 @@ export class GroupCallService {
     this.state.mergedCallIds.clear()
     this.state.secondaryCallSessions.clear()
 
-    this.state.groupParticipantExtensions = [myExt, ...availableTargets]
     this.state.groupConnectedExtensions = [myExt] // Các máy đang đổ chuông chưa được tính đã vào nhóm.
     const callEpoch = this.callService.callGeneration
+    const attempt = { timer: null, terminal: null, callEpoch, sessionContext }
+    this.initialInvites = attempt
 
-    const firstTarget = availableTargets[0]
-    const remainingTargets = availableTargets.slice(1)
+    let firstTarget
+    let callResult
+    while (availableTargets.length > 1) {
+      this.state.groupParticipantExtensions = [myExt, ...availableTargets]
+      firstTarget = availableTargets.shift()
+      const expectedUuid = this.contactService.findContactByExtension(firstTarget)?.uuid
+      callResult = await this.callService.startCall(firstTarget, {
+        ...meta,
+        expectedUuid,
+        isGroupCall: true,
+        isGroupHost: true,
+        groupHostExtension: myExt,
+        groupTitle:
+          meta.groupTitle ||
+          `Cuộc gọi nhóm (${this.state.groupParticipantExtensions.length} người)`,
+        groupParticipants: this.state.groupParticipantExtensions,
+      })
 
-    // Khởi tạo cuộc gọi nhánh đầu tiên
-    const callResult = await this.callService.startCall(firstTarget, {
-      ...meta,
-      isGroupCall: true,
-      isGroupHost: true,
-      groupHostExtension: myExt,
-      groupTitle:
-        meta.groupTitle || `Cuộc gọi nhóm (${this.state.groupParticipantExtensions.length} người)`,
-      groupParticipants: this.state.groupParticipantExtensions,
-    })
-
-    if (!isSessionContextCurrent(sessionContext) || callEpoch !== this.callService.callGeneration)
-      return { success: false, reason: 'CANCELED' }
-    if (!callResult || !callResult.success) {
+      if (!isSessionContextCurrent(sessionContext) || callEpoch !== this.callService.callGeneration)
+        return { success: false, reason: 'CANCELED' }
+      if (callResult?.success) break
+      // Chỉ thử đích khác khi lỗi chắc chắn ở bước xác minh đích, trước khi gửi SIP.
+      if (!SKIPPABLE_PRIMARY_FAILURES.has(callResult?.reason)) {
+        this.resetGroupState()
+        return callResult
+      }
+      this.callService.cancelPendingDial()
+    }
+    if (!callResult?.success) {
+      const extension = availableTargets[0]
       this.resetGroupState()
-      return callResult
+      return {
+        success: false,
+        reason: 'TARGET_AVAILABILITY_CHANGED',
+        extension,
+        expectedUuid: this.contactService.findContactByExtension(extension)?.uuid,
+      }
     }
 
     // Đặt bộ đếm Timeout 30 giây cho nhánh chính đầu tiên
@@ -253,25 +286,54 @@ export class GroupCallService {
         meta.groupTitle || `Cuộc gọi nhóm (${this.state.groupParticipantExtensions.length} người)`
     }
 
-    // Sau 700ms (khi nhánh đầu tiên đã sẵn sàng SDP), gọi các nhánh còn lại
-    setTimeout(() => {
-      if (!isSessionContextCurrent(sessionContext) || callEpoch !== this.callService.callGeneration)
-        return
+    /** Mời các đích còn lại rồi phát lại kết thúc nhánh chính để dùng cơ chế chuyển nhánh sẵn có. */
+    const inviteRemaining = async () => {
       if (
-        this.callService.hasActiveCall() &&
-        this.state.isGroupCall &&
-        remainingTargets.length > 0
-      ) {
-        this.dialGroupParticipants(remainingTargets).catch((err) =>
-          logger.warn('CALL', 'Không thể mời thành viên:', err.message),
-        )
+        !isSessionContextCurrent(sessionContext) ||
+        callEpoch !== this.callService.callGeneration ||
+        this.initialInvites !== attempt
+      )
+        return
+      try {
+        await this.dialGroupParticipants(availableTargets)
+      } catch (error) {
+        logger.warn('CALL', 'Không thể mời thành viên:', error.message)
+      } finally {
+        if (this.initialInvites === attempt) {
+          this.initialInvites = null
+          if (attempt.terminal)
+            this.callService.finalizeCallTermination(
+              attempt.terminal.reason,
+              attempt.terminal.session,
+            )
+        }
       }
-    }, 700)
+    }
+    // Giữ khoảng chờ SDP khi nhánh đầu đang rung. Nếu SIP đã xác nhận nhánh lỗi, mời tiếp ngay.
+    attempt.timer = setTimeout(inviteRemaining, attempt.terminal ? 0 : 700)
 
     // Phát trạng thái nhóm lên Presence
     this.broadcastGroupStateViaPresence()
 
     return { success: true }
+  }
+
+  /** Giữ nhóm khi nhánh đầu kết thúc trước lúc SDK trả xong các nhánh còn lại. */
+  deferInitialPrimaryTermination(reason, session) {
+    const attempt = this.initialInvites
+    const sipId = this.callService.getSipSessionId(session)
+    if (
+      !attempt ||
+      attempt.callEpoch !== this.callService.callGeneration ||
+      !isSessionContextCurrent(attempt.sessionContext) ||
+      this.state.activeAdhocConferenceId ||
+      session.answered ||
+      this.callService.answeredSipIds.has(sipId) ||
+      (callState.activeCall?.status !== 'ringing' && !attempt.terminal)
+    )
+      return false
+    attempt.terminal ??= { reason, session }
+    return true
   }
 
   /**
@@ -424,6 +486,16 @@ export class GroupCallService {
     // Khởi tạo các nhánh gọi tới từng máy lẻ qua WebRTC Phone mà không hold nhánh trước
     for (const ext of toInvite) {
       if (!current()) return
+      // Lời mời ban đầu và ADD_REQ có thể đến đồng thời, chỉ gửi một SIP cho cùng đích.
+      if (
+        this.pendingInviteExtensions.has(ext) ||
+        this.state.secondaryCallSessions.has(ext) ||
+        this.state.groupConnectedExtensions.includes(ext) ||
+        normalizeExtension(callState.activeCall?.number) === ext
+      )
+        continue
+      const invite = Symbol()
+      this.pendingInviteExtensions.set(ext, invite)
       const phoneInstance = this.sdk.Phone?.phone
       const prevSipSession = phoneInstance?.currentSipSession
       const prevCallSession = phoneInstance?.currentCallSession
@@ -458,6 +530,8 @@ export class GroupCallService {
         this.broadcastGroupStateViaPresence()
         this.broadcastNoticeToGroup(`Không thể kết nối máy lẻ ${ext}`)
       } finally {
+        if (this.pendingInviteExtensions.get(ext) === invite)
+          this.pendingInviteExtensions.delete(ext)
         if (current() && phoneInstance && prevSipSession) {
           phoneInstance.currentSipSession = prevSipSession
           phoneInstance.currentCallSession = prevCallSession
@@ -1136,6 +1210,9 @@ export class GroupCallService {
 
   /** Tăng thế hệ cuộc gọi và dọn state, timer, Map của hội nghị. */
   resetGroupState() {
+    clearTimeout(this.initialInvites?.timer)
+    this.initialInvites = null
+    this.pendingInviteExtensions.clear()
     this.callService.callGeneration += 1
     this.state.groupConnectedExtensions = []
     this.state.groupPendingExtensions = []

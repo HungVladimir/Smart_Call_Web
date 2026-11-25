@@ -2,10 +2,42 @@
 import asyncio
 import hashlib
 import unicodedata
+from collections import OrderedDict
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from time import monotonic
+from urllib.parse import urlencode
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException
+
+SNAPSHOT_TTL = 120
+MANUAL_REFRESH_INTERVAL = 30
+PRESENCE_TTL = 15
+SNAPSHOT_LIMIT = 32
+UUID_QUERY_BUDGET = 2800
+
+
+@dataclass
+class DirectorySnapshot:
+    rows: list
+    fetched_at: str
+    loaded_at: float
+    notice: str = ""
+
+
+# Chia UUID theo cả số lượng và độ dài truy vấn đã mã hóa để qua được proxy.
+def uuid_batches(ids, parameter, limit=60):
+    batch = []
+    for identifier in ids:
+        encoded = urlencode({parameter: ",".join([*batch, identifier])})
+        if batch and (len(batch) >= limit or len(encoded) > UUID_QUERY_BUDGET):
+            yield batch
+            batch = []
+        batch.append(identifier)
+    if batch:
+        yield batch
 
 
 # Chuẩn hóa tên tìm kiếm tiếng Việt, email và description bằng cùng quy tắc.
@@ -17,6 +49,8 @@ def normalize(value):
 
 # Chọn nhãn bộ phận có nội dung, ưu tiên description từ Wazo.
 def department_name(row):
+    if row.get("department_state") == "empty":
+        return ""
     for key in ("description", "department", "society", "title"):
         value = " ".join(str(row.get(key) or "").split())
         if value:
@@ -54,7 +88,7 @@ def search_page(rows, term, department, presence, states, offset, limit, owner):
         if row.get("uuid") == owner:
             continue
         if department == "__unassigned__":
-            if department_name(row):
+            if department_name(row) or row.get("department_state") == "unknown":
                 continue
         elif department and normalize(department_name(row)) != normalize(department):
             continue
@@ -70,7 +104,10 @@ def search_page(rows, term, department, presence, states, offset, limit, owner):
             continue
         selected.append((0 if term in fields else 1, name, str(row.get("uuid") or ""), row))
     selected.sort(key=directory_order)
-    return {"items": [item[3] for item in selected[offset:offset + limit]], "total": len(selected)}
+    total = len(selected)
+    offset = min(offset, max(0, (total - 1) // limit) * limit)
+    return {"items": [item[3] for item in selected[offset:offset + limit]],
+            "total": total, "offset": offset}
 
 
 # Chỉ dùng kiểu so sánh được và không phụ thuộc nội dung từ điển.
@@ -80,12 +117,16 @@ def directory_order(item):
 
 # Presence thiếu chứng cứ phải là unknown để không lọt vào bộ lọc ngoại tuyến.
 def presence_state(record):
-    lines = [line.get("state") for line in record.get("lines", []) if line.get("state")]
+    line_states = {"available", "unavailable", "talking", "holding", "ringing", "progressing"}
+    lines = [line.get("state") for line in record.get("lines") or []
+             if isinstance(line, dict) and line.get("state") in line_states]
     state = record.get("state")
     if state in ("unavailable", "offline"):
         return "offline"
     if state == "invisible":
         return "unknown"
+    if not lines and record.get("line_state") in line_states:
+        lines = [record["line_state"]]
     if lines:
         return "online" if any(value != "unavailable" for value in lines) else "offline"
     if state in ("available", "online", "away") or record.get("connected") is True:
@@ -96,14 +137,25 @@ def presence_state(record):
 
 
 class Directory:
-    # Cache nằm trong worker, tách theo nguồn đã xác thực trong tenant cấu hình.
+    # Mỗi snapshot thuộc token đã xác thực và source, kể cả dữ liệu làm giàu.
     def __init__(self, wazo):
         self.wazo = wazo
-        self.samples = {}
-        self.presence = {}
-        self.scopes = {}
+        self.samples = OrderedDict()
+        self.presence = OrderedDict()
+        self.refresh_after = OrderedDict()
         self.identities = {}
-        self.locks = {}
+        self.locks = [asyncio.Lock() for _ in range(8)]
+
+    # Giới hạn bộ nhớ theo worker và tránh giữ lock riêng cho từng token đã hết phiên.
+    def remember(self, cache, scope, value):
+        cache[scope] = value
+        cache.move_to_end(scope)
+        if len(cache) > SNAPSHOT_LIMIT:
+            cache.popitem(last=False)
+
+    # Gom các lượt dựng lại của cùng phạm vi và giới hạn số lượt đồng thời vào Wazo.
+    def lock_for(self, scope):
+        return self.locks[hash(scope) % len(self.locks)]
 
     # Xác minh token bằng Auth của cùng Wazo host. Không nhận tenant hoặc actor từ trình duyệt.
     async def actor(self, token):
@@ -117,7 +169,6 @@ class Directory:
             return cached[1], token, key
         if len(self.identities) >= 4096:
             self.identities.clear()
-            self.scopes.clear()
         result = await self.wazo.client.get(
             self.wazo.settings.wazo_url + "/api/auth/0.1/token/" + token,
             headers={"X-Auth-Token": token},
@@ -134,111 +185,152 @@ class Directory:
 
     # Gọi API bằng quyền người dùng ở tenant đã xác minh và phân biệt lỗi với kết quả rỗng.
     async def read(self, path, token, **params):
-        response = await self.wazo.client.get(self.wazo.settings.wazo_url + path, params=params,
-            headers={"X-Auth-Token": token, "Wazo-Tenant": self.wazo.settings.wazo_tenant_uuid})
+        try:
+            response = await self.wazo.client.get(self.wazo.settings.wazo_url + path, params=params,
+                headers={"X-Auth-Token": token, "Wazo-Tenant": self.wazo.settings.wazo_tenant_uuid})
+        except httpx.RequestError:
+            raise HTTPException(502, "Chưa kết nối được nguồn Wazo.") from None
         if not response.is_success:
-            raise HTTPException(403 if response.status_code == 403 else 502, f"Nguồn Wazo trả HTTP {response.status_code}.")
-        return response.json()
+            status = response.status_code if response.status_code in (401, 403) else 502
+            raise HTTPException(status, f"Nguồn Wazo trả HTTP {response.status_code}.")
+        try:
+            data = response.json()
+        except ValueError:
+            raise HTTPException(502, "Nguồn Wazo trả dữ liệu không hợp lệ.") from None
+        if not isinstance(data, dict):
+            raise HTTPException(502, "Nguồn Wazo trả dữ liệu không hợp lệ.")
+        return data
 
-    # Chỉ chia sẻ nguồn Wazo công bố qua profile và tài khoản có quyền đọc chính nguồn đó.
-    async def contacts(self, source, token, key):
+    # Đọc lại profile trên mỗi lượt để quyền nguồn bị thu hồi không dùng lại snapshot.
+    async def contacts(self, source, token, key, refresh=False):
         path = f"/api/dird/0.1/backends/wazo/sources/{source}/contacts"
         scope = (key, source)
-        if self.scopes.get(scope, 0) <= monotonic():
-            sources = await self.read("/api/dird/0.1/directories/default/sources", token, backend="wazo")
-            if not any(str(item.get("uuid")) == source for item in sources.get("items", [])):
-                raise HTTPException(403, "Nguồn danh bạ không thuộc profile Wazo.")
+        sources = await self.read("/api/dird/0.1/directories/default/sources", token, backend="wazo")
+        if not any(str(item.get("uuid")) == source for item in sources.get("items", [])):
+            self.samples.pop(scope, None)
+            self.presence.pop(scope, None)
+            raise HTTPException(403, "Nguồn danh bạ không thuộc profile Wazo.")
+        try:
+            # Profile có source vẫn cần quyền thực đọc endpoint danh bạ.
             await self.read(path, token, limit=1, offset=0)
-            self.scopes[scope] = monotonic() + 30
-        lock = self.locks.setdefault(("directory", source), asyncio.Lock())
-        async with lock:
-            cached = self.samples.get(source)
-            if cached and cached[0] > monotonic():
-                return await self.describe(source, token, key, cached[1])
-            rows, seen = [], set()
-            for offset in range(0, 10000, 100):
-                data = await self.read(path, token, limit=100, offset=offset)
-                page = data.get("items")
-                if not isinstance(page, list) or len(page) > 100:
-                    raise HTTPException(502, "Nguồn Dird không trả trang hợp lệ.")
-                if offset and page and all((item.get('uuid') or item.get('user_uuid')) in seen for item in page):
-                    raise HTTPException(502, 'Wazo lặp trang danh bạ.')
-                for contact in page:
-                    uuid = contact.get("uuid") or contact.get("user_uuid")
-                    if not uuid or uuid in seen:
-                        continue
-                    seen.add(uuid)
-                    rows.append(published_row(contact, uuid))
-                total = data.get("filtered", data.get("total"))
-                if len(page) < 100 or isinstance(total, int) and offset + len(page) >= total:
-                    labels = await self.wazo.store.employee_ids(self.wazo.settings.wazo_tenant_uuid)
-                    for row in rows:
-                        if row["uuid"] in labels and not (row.get("employee_id") or row.get("epId")):
-                            row["employee_id"] = labels[row["uuid"]]
-                    self.samples[source] = (monotonic() + 120, rows)
-                    return await self.describe(source, token, key, rows)
-            raise HTTPException(503, "Nguồn danh bạ vượt giới hạn 10.000 liên hệ.")
-
-    # Bổ sung description trước khi lọc, bằng view directory khi Wazo cấp quyền.
-    async def describe(self, source, token, key, rows):
-        missing = [row["uuid"] for row in rows if not str(row.get("description") or "").strip()]
-        if not missing:
-            return rows
-        path = "/api/confd/1.1/users"
-        scope = (key, "description")
-        checked = self.scopes.get(scope)
-        if not checked or checked[0] <= monotonic():
+        except HTTPException:
+            self.samples.pop(scope, None)
+            self.presence.pop(scope, None)
+            raise
+        async with self.lock_for(scope):
+            cached = self.samples.get(scope)
+            now = monotonic()
+            valid = cached and now - cached.loaded_at < SNAPSHOT_TTL
+            if valid and not refresh:
+                return cached, "cached"
+            if refresh and valid and now < self.refresh_after.get(scope, 0):
+                return cached, "cooldown"
+            if refresh:
+                self.remember(self.refresh_after, scope, now + MANUAL_REFRESH_INTERVAL)
             try:
-                await self.read(path, token, view="directory", limit=1, recurse="false")
-                checked = (monotonic() + 120, True)
+                rows = await self.load_rows(path, token)
+                notice = await self.describe(token, rows)
             except HTTPException as error:
-                if error.status_code != 403:
-                    raise
-                checked = (monotonic() + 120, False)
-            self.scopes[scope] = checked
-        if not checked[1]:
-            return rows
-        cache_key = (source, "description")
-        cached = self.samples.get(cache_key)
-        if cached and cached[1] is rows:
-            return cached[2]
-        descriptions = {}
-        for offset in range(0, len(missing), 100):
-            batch = missing[offset:offset + 100]
-            data = await self.read(path, token, view="directory", uuid=",".join(batch),
-                                   limit=len(batch), recurse="false")
-            for item in data.get("items", []):
-                uuid = item.get("uuid")
-                description = str(item.get("description") or "").strip()
-                if uuid in batch and description:
-                    descriptions[uuid] = description
-        enriched = [dict(row, description=descriptions[row["uuid"]]) if row["uuid"] in descriptions else row
-                    for row in rows]
-        self.samples[cache_key] = (monotonic() + 120, rows, enriched)
-        return enriched
+                if error.status_code in (401, 403):
+                    self.samples.pop(scope, None)
+                    self.presence.pop(scope, None)
+                elif valid:
+                    return cached, "failed"
+                raise
+            snapshot = DirectorySnapshot(rows, datetime.now(timezone.utc).isoformat(), monotonic(), notice)
+            self.remember(self.samples, scope, snapshot)
+            if refresh:
+                self.remember(self.refresh_after, scope, snapshot.loaded_at + MANUAL_REFRESH_INTERVAL)
+            return snapshot, "updated"
 
-    # Đọc trạng thái chỉ khi lọc online/offline. Cache chung tránh mỗi phiên quét hết danh bạ.
-    async def status(self, source, user, token, rows):
+    # Thu đủ các trang Dird theo quyền của phiên trước khi tìm kiếm và lọc.
+    async def load_rows(self, path, token):
+        rows, seen = [], set()
+        for offset in range(0, 10000, 100):
+            data = await self.read(path, token, limit=100, offset=offset)
+            page = data.get("items")
+            if not isinstance(page, list) or len(page) > 100:
+                raise HTTPException(502, "Nguồn Dird không trả trang hợp lệ.")
+            if offset and page and all((item.get("uuid") or item.get("user_uuid")) in seen for item in page):
+                raise HTTPException(502, "Wazo lặp trang danh bạ.")
+            for contact in page:
+                uuid = contact.get("uuid") or contact.get("user_uuid")
+                if not uuid or uuid in seen:
+                    continue
+                seen.add(uuid)
+                rows.append(published_row(contact, uuid))
+            total = data.get("filtered", data.get("total"))
+            if len(page) < 100 or isinstance(total, int) and offset + len(page) >= total:
+                labels = await self.wazo.store.employee_ids(self.wazo.settings.wazo_tenant_uuid)
+                for row in rows:
+                    if row["uuid"] in labels and not (row.get("employee_id") or row.get("epId")):
+                        row["employee_id"] = labels[row["uuid"]]
+                return rows
+        raise HTTPException(503, "Nguồn danh bạ vượt giới hạn 10.000 liên hệ.")
+
+    # Phân biệt description rỗng được Confd xác nhận với thiếu quyền hoặc thiếu dữ liệu.
+    async def describe(self, token, rows):
+        missing = {}
+        for row in rows:
+            if str(row.get("description") or "").strip():
+                row["department_state"] = "confirmed"
+            else:
+                row["department_state"] = "unknown"
+                missing[row["uuid"]] = row
+        notice = ""
+        path = "/api/confd/1.1/users"
+        for batch in uuid_batches(missing, "uuid"):
+            try:
+                data = await self.read(path, token, view="directory", uuid=",".join(batch),
+                                       limit=len(batch), recurse="false")
+                if not isinstance(data.get("items"), list):
+                    raise HTTPException(502, "Nguồn Confd không trả danh sách bộ phận.")
+            except HTTPException as error:
+                if error.status_code == 401:
+                    raise
+                if error.status_code == 403:
+                    return "Tài khoản chưa có quyền đọc đầy đủ bộ phận từ Wazo."
+                notice = "Chưa cập nhật được một phần bộ phận từ Wazo."
+                continue
+            for item in data["items"]:
+                uuid = item.get("uuid")
+                if uuid not in batch or "description" not in item:
+                    continue
+                description = str(item.get("description") or "").strip()
+                missing[uuid]["description"] = description
+                missing[uuid]["department_state"] = "confirmed" if description else "empty"
+        if not notice and any(row["department_state"] == "unknown" for row in missing.values()):
+            return "Wazo chưa trả đủ dữ liệu bộ phận."
+        return notice
+
+    # Chỉ lấy trạng thái của UUID thuộc snapshot đã cấp quyền cho chính token này.
+    async def status(self, source, user, token, key, snapshot):
         path = "/api/chatd/1.0/users/presences"
-        scope = (hashlib.sha256(token.encode()).hexdigest(), 'presence')
-        if self.scopes.get(scope, 0) <= monotonic():
+        scope = (key, source)
+        try:
             await self.read(path, token, user_uuid=user)
-            self.scopes[scope] = monotonic() + 30
-        lock = self.locks.setdefault(("presence", source), asyncio.Lock())
-        async with lock:
-            cached = self.presence.get(source)
-            if cached and cached[0] > monotonic():
-                return cached[1]
-            ids = [row["uuid"] for row in rows]
+        except HTTPException:
+            self.presence.pop(scope, None)
+            raise
+        async with self.lock_for(scope):
+            cached = self.presence.get(scope)
+            if cached and cached[0] > monotonic() and cached[1] is snapshot:
+                return cached[2]
+            ids = [row["uuid"] for row in snapshot.rows]
             states = {}
-            for start in range(0, len(ids), 120):
-                data = await self.read(path, token, user_uuid=",".join(ids[start:start + 120]))
+            for batch in uuid_batches(ids, "user_uuid"):
+                data = await self.read(path, token, user_uuid=",".join(batch))
                 items = data.get("items")
                 if isinstance(items, dict):
-                    items = [dict(record, uuid=uuid) for uuid, record in items.items()]
+                    items = [dict(record, uuid=uuid) for uuid, record in items.items()
+                             if isinstance(record, dict)]
                 if not isinstance(items, list):
                     raise HTTPException(502, "Nguồn presence không trả trạng thái hợp lệ.")
                 for record in items:
-                    states[record.get("uuid") or record.get("user_uuid")] = presence_state(record)
-            self.presence[source] = (monotonic() + 15, states)
+                    if not isinstance(record, dict):
+                        continue
+                    uuid = record.get("uuid") or record.get("user_uuid")
+                    if uuid in batch:
+                        states[uuid] = presence_state(record)
+            self.remember(self.presence, scope, (monotonic() + PRESENCE_TTL, snapshot, states))
             return states

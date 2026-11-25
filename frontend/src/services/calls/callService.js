@@ -405,6 +405,7 @@ export class CallService {
         (endedSipId && primarySipId && String(primarySipId) === String(endedSipId))
       ) {
         this.groupCallService.clearPrimaryInviteTimeout()
+        if (this.groupCallService.deferInitialPrimaryTermination(reason, session)) return
         if (!this.groupCallService.state.activeAdhocConferenceId)
           this.groupCallService.releaseGroupAudio(session)
         if (this.groupCallService.state.secondaryCallSessions.size > 0) {
@@ -1133,10 +1134,9 @@ export class CallService {
     this.isDialing = true
     try {
       let target = this.contactService.findContactByExtension(targetExtension)
-      const verifyTarget =
-        !meta.allowUnknown &&
-        (!target || this.contactService.isPagedIdentity(target) || meta.expectedUuid)
-      if (verifyTarget) target = await this.contactService.getOrLookupContact(targetExtension)
+      const verifyTarget = !meta.allowUnknown || Boolean(meta.expectedUuid)
+      if (verifyTarget)
+        target = await this.contactService.getOrLookupContact(targetExtension, { fresh: true })
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
@@ -1147,7 +1147,7 @@ export class CallService {
       if (meta.expectedUuid && target?.uuid !== meta.expectedUuid)
         return reject('TARGET_CHANGED', 'Máy lẻ đã đổi người sử dụng. Vui lòng tìm và chọn lại.')
       let targetForPolicy = target
-      if (target && !meta.isGroupCall) {
+      if (target) {
         const status = await this.contactService.confirmCallTargetPresence(target)
         // Trong lúc chờ presence, phiên có thể đổi hoặc người dùng đã hủy yêu cầu gọi.
         if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
@@ -1158,11 +1158,6 @@ export class CallService {
             'Chưa xác minh được trạng thái người nhận. Vui lòng thử lại.',
           )
         targetForPolicy = { ...target, status }
-      } else if (verifyTarget && target) {
-        // Nhánh đầu của nhóm vẫn dùng quy trình xác minh do luồng gọi nhóm quản lý.
-        await this.contactService.refreshDirectoryPresence([target])
-        if (!isSessionContextCurrent(context) || generation !== this.callGeneration)
-          return reject('CANCELED')
       }
       const restriction = getContactCallRestriction(targetForPolicy)
       if (restriction) return reject(restriction.reason, restriction.message)

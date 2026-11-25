@@ -66,6 +66,7 @@
         <p v-if="departmentError" role="alert">
           {{ departmentError }} <button type="button" @click="reloadDepartments">Thử lại</button>
         </p>
+        <p v-if="departmentNotice" role="status">{{ departmentNotice }}</p>
       </div>
       <div v-if="isGroupTab && !picker" class="directory-controls directory-filters">
         <button
@@ -82,6 +83,10 @@
         >
       </div>
       <div class="directory-results" :aria-busy="paging.loading.value">
+        <p v-if="refreshNotice" role="status">{{ refreshNotice }}</p>
+        <p v-if="paging.notice.value && activeTab !== 'department'" role="status">
+          {{ paging.notice.value }}
+        </p>
         <p v-if="showRecent" class="directory-caption">Liên hệ gần đây</p>
         <p v-if="shortQuery" class="panel-state-message">Nhập ít nhất 2 ký tự để tìm.</p>
         <p v-else-if="waitingDepartment" class="panel-state-message">
@@ -187,10 +192,15 @@ const department = ref('')
 const presence = ref('')
 const departments = ref([])
 const departmentError = ref('')
+const departmentNotice = ref('')
+const departmentRefreshNotice = ref('')
 const loadingDepartments = ref(false)
 const groupsEnabled = ref(getFeatures().callGroups)
 const selected = ref(new Map())
 let departmentRequest
+let filterTimer
+let lastFilterRead = 0
+const PRESENCE_FILTER_INTERVAL = 15000
 
 /** Áp từ khóa điều hướng khi người dùng đến từ màn khác. */
 function syncSearchQuery(value) {
@@ -233,6 +243,22 @@ function requestPage(query) {
 }
 const paging = useDirectoryPages(getQuery, requestPage)
 
+/** Chỉ hiển thị kết quả làm mới có dữ liệu xác nhận từ backend. */
+function formatRefresh(status, fetchedAt) {
+  if (!fetchedAt || !['failed', 'cooldown', 'updated'].includes(status)) return ''
+  const time = new Date(fetchedAt).toLocaleTimeString('vi-VN')
+  if (status === 'failed') return `Chưa làm mới được. Đang dùng dữ liệu lúc ${time}.`
+  if (status === 'cooldown') return `Danh bạ vừa được đọc lúc ${time}. Vui lòng chờ để tải lại.`
+  return `Đã cập nhật danh bạ lúc ${time}.`
+}
+
+/** Ưu tiên trạng thái từ danh mục khi nút Làm mới được bấm trong tab bộ phận. */
+const refreshNotice = computed(() =>
+  activeTab.value === 'department'
+    ? departmentRefreshNotice.value
+    : formatRefresh(paging.refreshState.value, paging.fetchedAt.value),
+)
+
 /** Dùng tối đa một trang để tính tập presence và dựng giao diện. */
 const visibleContacts = computed(() => {
   if (showRecent.value) return props.recentContacts.slice(0, 30)
@@ -246,18 +272,38 @@ function isFavorite(contact) {
 }
 
 /** Tải lại danh mục khi vào tab bộ phận và hủy khi rời màn. */
-async function reloadDepartments() {
+async function reloadDepartments(force = false) {
   departmentRequest?.abort()
   if (!props.active || activeTab.value !== 'department' || !props.loadDepartments) return
   const request = new AbortController()
   departmentRequest = request
   loadingDepartments.value = true
   departmentError.value = ''
+  departmentRefreshNotice.value = ''
   try {
-    const items = await props.loadDepartments(request.signal)
-    if (!request.signal.aborted) departments.value = items
+    const data = await props.loadDepartments(request.signal, force === true)
+    if (!request.signal.aborted) {
+      departments.value = Array.isArray(data) ? data : data.items
+      departmentNotice.value = data.notice || ''
+      if (force === true)
+        departmentRefreshNotice.value = formatRefresh(data.refresh_state, data.fetched_at)
+      if (
+        department.value &&
+        department.value !== '__unassigned__' &&
+        !departments.value.includes(department.value)
+      )
+        department.value = ''
+      if (force === true && department.value) await paging.refresh()
+    }
   } catch (error) {
-    if (!request.signal.aborted) departmentError.value = error.message
+    if (!request.signal.aborted) {
+      if (error.status === 401 || error.status === 403) {
+        departments.value = []
+        department.value = ''
+        departmentNotice.value = ''
+      }
+      departmentError.value = error.message
+    }
   } finally {
     if (departmentRequest === request) loadingDepartments.value = false
   }
@@ -267,8 +313,8 @@ watch([activeTab, () => props.active], reloadDepartments)
 /** Làm mới trang hiện tại hoặc buộc làm mới presence của nhóm gần đây. */
 function refresh() {
   if (showRecent.value) syncPresence()
-  else if (waitingDepartment.value) void reloadDepartments()
-  else paging.refresh()
+  else if (activeTab.value === 'department') void reloadDepartments(true)
+  else void paging.refresh(true)
 }
 
 /** Dọn query URL khi người dùng xóa từ khóa. */
@@ -313,7 +359,51 @@ function syncPresence(event) {
       visibleContacts.value,
       !event || event.type === 'smartcall-directory-reconnect',
     )
+  queueFilterRefresh()
 }
+
+/** Đối soát khi bộ lọc trạng thái đang hiện, gom sự kiện và giãn lượt đọc khi nguồn lỗi. */
+function queueFilterRefresh() {
+  if (
+    filterTimer ||
+    !props.active ||
+    activeTab.value !== 'all' ||
+    !presence.value ||
+    shortQuery.value ||
+    document.visibilityState === 'hidden'
+  )
+    return
+  const delay = paging.error.value ? 30000 : PRESENCE_FILTER_INTERVAL
+  filterTimer = setTimeout(
+    refreshPresenceFilter,
+    Math.max(500, delay - (Date.now() - lastFilterRead)) + Math.random() * 1000,
+  )
+}
+
+/** Làm mới cả tổng số và danh sách, tránh thay thế lượt tìm hoặc đổi trang đang chờ. */
+async function refreshPresenceFilter() {
+  filterTimer = undefined
+  if (
+    !props.active ||
+    activeTab.value !== 'all' ||
+    !presence.value ||
+    shortQuery.value ||
+    document.visibilityState === 'hidden'
+  )
+    return
+  lastFilterRead = Date.now()
+  if (!paging.loading.value) await paging.refresh()
+  queueFilterRefresh()
+}
+
+/** Hủy timer cũ khi đổi bộ lọc, từ khóa hoặc rời màn. */
+function resetFilterRefresh() {
+  clearTimeout(filterTimer)
+  filterTimer = undefined
+  lastFilterRead = Date.now()
+  queueFilterRefresh()
+}
+watch([activeTab, presence, term, () => props.active], resetFilterRefresh)
 
 /** Nạp trạng thái khi trang hoặc danh sách gần đây thay đổi. */
 function syncVisiblePage() {
@@ -324,6 +414,7 @@ watch([visibleContacts, () => props.active], syncVisiblePage, { immediate: true 
 /** Theo dõi mở lại tab và thay đổi cài đặt menu. */
 function listenForPresenceRefresh() {
   window.addEventListener('smartcall-directory-reconnect', syncPresence)
+  window.addEventListener('wazo-presence-updated', queueFilterRefresh)
   window.addEventListener('focus', syncPresence)
   document.addEventListener('visibilitychange', syncPresence)
   window.addEventListener('smartcall-features-changed', updateFeatures)
@@ -332,6 +423,8 @@ function listenForPresenceRefresh() {
 /** Dọn listener và request bộ phận khi panel bị hủy. */
 function stopPresenceRefresh() {
   departmentRequest?.abort()
+  clearTimeout(filterTimer)
+  window.removeEventListener('wazo-presence-updated', queueFilterRefresh)
   window.removeEventListener('smartcall-directory-reconnect', syncPresence)
   window.removeEventListener('focus', syncPresence)
   document.removeEventListener('visibilitychange', syncPresence)

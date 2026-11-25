@@ -373,6 +373,8 @@ DialerPanel nhận modelValue/contact/isCalling/isDialing qua props. Khi bấm p
 
 Khi người dùng ngừng gõ khoảng 300 ms, CallsView tra đúng máy lẻ qua ContactService, kể cả khi người nhận nằm ngoài trang danh bạ đang mở. Bàn phím, danh bạ và modal mời người dùng chung chấm xanh khi đã xác nhận liên hệ đang kết nối. Chấm xám dùng khi ngoại tuyến hoặc khi chưa xác nhận được kết nối.
 
+Khi bấm Gọi, CallService đọc lại máy lẻ từ Dird. Nếu người dùng gọi từ thẻ liên hệ hoặc lịch sử có UUID và số vừa đổi chủ, Web yêu cầu chọn lại trước khi gửi SIP. Khi gọi nhóm, A vẫn là host. Nếu SIP xác nhận nhánh đầu kết thúc trước lúc mời xong, dịch vụ giữ các lời mời còn lại và chuyển sang nhánh đã mở khi có thể.
+
 ### Các bước của startCall
 
 1. Chuẩn hóa máy lẻ; chặn số rỗng, gọi chính mình, cuộc gọi đang hoạt động hoặc thao tác trùng.

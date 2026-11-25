@@ -148,6 +148,7 @@ export class ContactService {
       this.authService.getHostUrl() + '/api/dird/0.1' + path + '?' + query,
       {
         headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+        cache: 'no-store',
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       },
     )
@@ -230,10 +231,13 @@ export class ContactService {
       const cache = this.state.identities
       const observedAt = this.state.presenceCheckedAt[contact.uuid]
       const cached = cache.get(contact.uuid)
-      if (cached && !contact.dept) {
+      if (cached && !contact.dept && !contact.departmentState) {
         contact.dept = cached.dept
         contact.description = cached.description
       }
+      // Lookup thường không có trạng thái bộ phận. Giữ kết luận của snapshot đã xác minh.
+      if (!contact.departmentState && cached?.departmentState && !contact.dept)
+        contact.departmentState = cached.departmentState
       const identity =
         cached && normalizeExtension(cached.number) === normalizeExtension(contact.number)
           ? Object.assign(cached, contact)
@@ -268,16 +272,18 @@ export class ContactService {
   }
 
   /** Lấy bộ phận từ toàn nguồn đã cấp quyền để bộ lọc bao phủ cả ngoài trang hiện tại. */
-  async listDepartments(signal) {
+  async listDepartments(signal, refresh = false) {
     const context = captureSessionContext()
     const source = await this.getDirectorySource(context)
     const params = new URLSearchParams({ source: source.uuid })
+    if (refresh) params.set('refresh', 'true')
     const data = await requestSmartCall(
       'directory/departments?' + params,
       this.authService.getToken(),
       { signal },
     )
-    return data.items
+    assertSessionContext(context)
+    return data
   }
 
   /** Lấy đúng một trang server đã lọc theo từ khóa, phòng ban và trạng thái. */
@@ -286,11 +292,13 @@ export class ContactService {
     department = '',
     presence = '',
     offset = 0,
+    refresh = false,
     signal,
   }) {
     const context = captureSessionContext()
     const source = await this.getDirectorySource(context)
     const params = new URLSearchParams({ source: source.uuid, term, department, presence, offset })
+    if (refresh) params.set('refresh', 'true')
     const data = await requestSmartCall(
       'directory/contacts?' + params,
       this.authService.getToken(),
@@ -304,10 +312,16 @@ export class ContactService {
     })
     if (!mapped || mapped.length > DIRECTORY_PAGE_SIZE || !Number.isInteger(data.total))
       throw new Error('Backend trả trang danh bạ không hợp lệ.')
+    const pageOffset = Number.isInteger(data.offset) ? data.offset : offset
     return {
       contacts: this.rememberDirectoryContacts(mapped),
-      nextOffset: offset + DIRECTORY_PAGE_SIZE < data.total ? offset + DIRECTORY_PAGE_SIZE : null,
+      offset: pageOffset,
+      nextOffset:
+        pageOffset + DIRECTORY_PAGE_SIZE < data.total ? pageOffset + DIRECTORY_PAGE_SIZE : null,
       total: data.total,
+      notice: data.notice,
+      fetchedAt: data.fetched_at,
+      refreshState: data.refresh_state,
     }
   }
 
@@ -459,7 +473,7 @@ export class ContactService {
     if (matches.size > 1)
       throw new Error('Máy lẻ này có nhiều liên hệ. Vui lòng xác minh người nhận.')
     const match = matches.values().next().value || null
-    return match ? this.rememberDirectoryContacts([match])[0] : null
+    return match
   }
 
   /** Giữ trạng thái nội bộ chưa xác minh khi dữ liệu kết nối còn thiếu hoặc hết hạn. */
@@ -822,7 +836,10 @@ export class ContactService {
     if (p.state === 'unavailable' || p.state === 'offline') return false
 
     // 3. Đối chiếu mảng lines từ Wazo Chatd (chuẩn WazoPresencesResponse.java)
-    const lines = (p.lines || []).map((l) => l.state)
+    const lines = (Array.isArray(p.lines) ? p.lines : [])
+      .map((line) => line?.state)
+      .filter((state) => LINE_PRESENCE_STATES.has(state))
+    if (!lines.length && LINE_PRESENCE_STATES.has(p.line_state)) lines.push(p.line_state)
     if (lines.length > 0) {
       // Chặn nếu có bất kỳ line nào đang bận hoặc đổ chuông
       const isBusy = lines.some((s) => ['talking', 'holding', 'ringing', 'progressing'].includes(s))
@@ -1075,7 +1092,7 @@ export class ContactService {
   async loadPresencesForContacts(
     contacts,
     invalidateOnFailure = false,
-    { supersede = false } = {},
+    { supersede = false, signal } = {},
   ) {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
@@ -1106,20 +1123,24 @@ export class ContactService {
 
     try {
       for (let offset = 0; offset < uuids.length; offset += DIRECTORY_PAGE_SIZE) {
+        if (signal?.aborted) return contacts
         const batch = uuids.slice(offset, offset + DIRECTORY_PAGE_SIZE)
+        const timeout = AbortSignal.timeout(3000)
         const res = await fetch(
           `${host}/api/chatd/1.0/users/presences?user_uuid=${batch.map(encodeURIComponent).join(',')}`,
           {
             headers: { 'X-Auth-Token': token, Accept: 'application/json' },
             cache: 'no-store',
-            signal: AbortSignal.timeout(3000),
+            signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           },
         )
+        if (signal?.aborted) return contacts
         if (!res.ok) {
           if (invalidateOnFailure) for (const uuid of batch) markUnknown(uuid)
           continue
         }
         const data = await res.json()
+        if (signal?.aborted) return contacts
         const items = Array.isArray(data.items)
           ? data.items
           : data.items && typeof data.items === 'object'
@@ -1135,6 +1156,7 @@ export class ContactService {
         }
       }
     } catch (e) {
+      if (signal?.aborted) return contacts
       if (invalidateOnFailure && isSessionContextCurrent(sessionContext))
         for (const uuid of uuids) markUnknown(uuid)
       logger.warn('API', 'Không thể nạp trạng thái presence từ chatd:', e.message)
@@ -1301,23 +1323,37 @@ export class ContactService {
     return matches.size === 1 ? matches.values().next().value : null
   }
 
-  /** Ưu tiên cache; nếu thiếu thì tra Dird trong context hiện tại để hỗ trợ gọi/chat theo máy lẻ. */
-  async getOrLookupContact(ext) {
+  /** Preview ưu tiên cache. Lượt quay số đọc Dird mới và thay quyền ghi của request preview cũ. */
+  async getOrLookupContact(ext, { fresh = false } = {}) {
     const extension = normalizeExtension(ext)
     if (!extension) return null
     const checked = this.extensionChecks.get(extension)
-    if (checked && Date.now() - checked.time < 15000) return checked.contact
-    if (this.pendingLookups.has(extension)) return this.pendingLookups.get(extension)
+    if (!fresh && checked && Date.now() - checked.time < 15000) return checked.contact
+    if (!fresh && this.pendingLookups.has(extension)) return this.pendingLookups.get(extension)
     const context = captureSessionContext()
-    const pending = this.verifyDirectoryExtension(extension, context)
-    this.pendingLookups.set(extension, pending)
-    try {
-      const contact = await pending
+    /** Chỉ lượt tra mới nhất còn quyền cập nhật định danh và cache máy lẻ. */
+    const resolveContact = async () => {
+      const result = await this.verifyDirectoryExtension(extension, context)
       assertSessionContext(context)
+      if (this.pendingLookups.get(extension) !== pending) {
+        const latest = this.pendingLookups.get(extension)
+        return latest ? await latest : (this.extensionChecks.get(extension)?.contact ?? null)
+      }
+      if (!result) {
+        this.extensionChecks.delete(extension)
+        return null
+      }
+      const contact = this.rememberDirectoryContacts([result])[0]
       if (this.extensionChecks.size >= IDENTITY_CACHE_LIMIT)
         this.extensionChecks.delete(this.extensionChecks.keys().next().value)
-      if (contact) this.extensionChecks.set(extension, { contact, time: Date.now() })
+      this.extensionChecks.set(extension, { contact, time: Date.now() })
       return contact
+    }
+    if (fresh) this.extensionChecks.delete(extension)
+    const pending = resolveContact()
+    this.pendingLookups.set(extension, pending)
+    try {
+      return await pending
     } finally {
       if (this.pendingLookups.get(extension) === pending) this.pendingLookups.delete(extension)
     }
@@ -1337,11 +1373,12 @@ export class ContactService {
   }
 
   /** Nạp lại trạng thái còn thiếu/quá hạn, giữ tối đa một lô nhỏ cho mỗi request. */
-  async refreshDirectoryPresence(contacts, force = false) {
+  async refreshDirectoryPresence(contacts, force = false, signal) {
     const needsPresence = contacts.filter(
       (contact) =>
         contact?.uuid && (force || this.directoryContactStatus(contact.uuid).status === 'unknown'),
     )
+    if (signal) return this.loadPresencesForContacts(needsPresence, force, { signal })
     const pending = new Set()
     const fresh = []
     for (const contact of needsPresence) {
@@ -1397,7 +1434,7 @@ export class ContactService {
         const cached = this.findContactByExtension(extension)
         const contact =
           !cached || expectedUuid || this.isPagedIdentity(cached)
-            ? await this.getOrLookupContact(extension)
+            ? await this.getOrLookupContact(extension, { fresh: true })
             : cached
         if (!contact || (expectedUuid && contact.uuid !== expectedUuid)) {
           rejected.push(
@@ -1411,9 +1448,10 @@ export class ContactService {
       }
     }
     assertSessionContext(context)
-    await this.refreshDirectoryPresence(
+    await this.loadPresencesForContacts(
       resolved.filter((contact) => this.isPagedIdentity(contact)),
       true,
+      { supersede: true },
     )
     assertSessionContext(context)
     const extensions = []

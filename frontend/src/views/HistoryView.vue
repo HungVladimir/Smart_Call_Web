@@ -134,7 +134,9 @@
             <div class="contact-ext">
               <span class="ext-badge">Máy lẻ {{ call.extension || '---' }}</span>
             </div>
-            <div class="contact-dept">{{ call.dept || 'Nội bộ SDV LAN' }}</div>
+            <div v-if="historyDepartment(call)" class="contact-dept">
+              {{ historyDepartment(call) }}
+            </div>
           </div>
 
           <!-- Các nút thao tác nhanh -->
@@ -209,7 +211,7 @@
 import { useRecordingPlayer } from '../composables/useRecordingPlayer.js'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { historyService } from '@/services/index.js'
+import { contactService, historyService } from '@/services/index.js'
 import { recordingService } from '@/services/index.js'
 import { callState } from '@/state/callState.js'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
@@ -238,6 +240,11 @@ const searchQuery = ref('')
 const filterDate = ref('')
 
 const calls = ref([])
+
+/** Chỉ ghép bộ phận theo UUID của đối phương để tránh nhầm khi máy lẻ vừa đổi chủ. */
+function historyDepartment(call) {
+  return (call.peerUuid && contactService.findContactByUuid(call.peerUuid)?.dept) || call.dept || ''
+}
 const recordingsMap = ref({})
 
 let historyRequest = 0
@@ -378,7 +385,7 @@ const dateFilteredCalls = computed(() => {
       (c) =>
         (c.name && c.name.toLowerCase().includes(q)) ||
         (c.extension && c.extension.includes(q)) ||
-        (c.dept && c.dept.toLowerCase().includes(q)),
+        historyDepartment(c).toLowerCase().includes(q),
     )
   }
   return list

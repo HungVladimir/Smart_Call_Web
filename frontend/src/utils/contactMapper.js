@@ -70,7 +70,11 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
       email: item.email || item.emails?.[0]?.email || item.emails?.[0]?.address || '',
       employeeId: String(item.employee_id || item.epId || ''),
       description,
-      dept: description || item.department || item.society || item.title || '',
+      departmentState: item.department_state,
+      dept:
+        item.department_state === 'empty'
+          ? ''
+          : description || item.department || item.society || item.title || '',
       status: 'offline',
       statusLabel: 'Ngoại tuyến',
       isMobileApp: false,

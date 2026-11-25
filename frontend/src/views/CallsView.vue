@@ -22,7 +22,7 @@
         :class="{ active: mobileTab === 'contacts' }"
         @click="mobileTab = 'contacts'"
       >
-        👥 Danh bạ ({{ contacts.length }})
+        👥 Danh bạ
       </button>
     </div>
 
@@ -112,6 +112,7 @@
       :my-extension="userSessionState.extension"
       :can-invite-contact="canInviteContact"
       :load-page="loadDirectoryPage"
+      :refresh-presence="refreshVisiblePresence"
       :submitting="submittingInvite"
       @close="closeAddParticipantModal"
       @confirm="confirmAddParticipants"
@@ -159,13 +160,13 @@ async function loadDirectoryPage(query) {
 }
 
 /** Chuyển lệnh tải presence khi panel lấy lại focus hoặc khi socket mở lại. */
-function refreshVisiblePresence(contacts, force) {
-  void contactService.refreshDirectoryPresence(contacts, force)
+function refreshVisiblePresence(contacts, force, signal) {
+  void contactService.refreshDirectoryPresence(contacts, force, signal)
 }
 
 /** Lấy tên các bộ phận trước khi chọn, tránh đoán từ trang hiện tại. */
-function loadDepartments(signal) {
-  return contactService.listDepartments(signal)
+function loadDepartments(signal, force) {
+  return contactService.listDepartments(signal, force)
 }
 
 /** Ghi liên hệ đã được người dùng chọn trong kết quả tìm kiếm. */
@@ -307,13 +308,19 @@ const durationText = computed(() => {
 
 /** Kiểm tra ngay trước khi gọi nhanh từ người đã chọn ở nhiều trang. */
 async function handleStartGroupCallFromContacts(contacts) {
+  const context = captureSessionContext()
   const targets = await prepareSelectedTargets(contacts)
   if (!directoryActive.value || isCalling.value || isDialing.value) return
   if (!targets.length) return
   if (targets.length === 1 && !confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')) return
   mobileTab.value = 'dialer'
-  const result = await groupCallService.startGroupCall(targets, { requireGroupConfirmation: true })
-  if (result?.success) groupSelectionRevision.value++
+  let result = await groupCallService.startGroupCall(targets, { requireGroupConfirmation: true })
+  if (!isSessionContextCurrent(context) || !directoryActive.value) return
+  if (result?.reason === 'TARGET_AVAILABILITY_CHANGED' && result.extension) {
+    if (!confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')) return
+    result = await callService.startCall(result.extension, { expectedUuid: result.expectedUuid })
+  }
+  if (result?.success && isSessionContextCurrent(context)) groupSelectionRevision.value++
 }
 
 /** Xác minh lựa chọn từ nhiều trang một lần, giữ guard phiên và cuộc gọi khi API trả muộn. */

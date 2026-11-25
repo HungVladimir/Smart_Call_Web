@@ -423,5 +423,4 @@ const emit = defineEmits(['select', 'call', 'favorite', 'remember'])
   color: #1d4ed8;
   border: 1px solid #bfdbfe;
 }
-
 </style>

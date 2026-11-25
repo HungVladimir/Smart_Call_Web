@@ -1,5 +1,12 @@
 # Nhật ký refactor SmartCall Web
 
+### Xác minh đích gọi và danh bạ theo quyền phiên
+
+- Khi bấm gọi, tra máy lẻ từ Dird rồi kiểm tra Chatd bằng UUID hiện tại. Nếu UUID khác người đã chọn hoặc người trong lịch sử thì dừng trước SIP. Bản xem trước vẫn có thể dùng cache ngắn.
+- A giữ host. Khi đích đầu không qua bước xác minh, thử đích tiếp theo hoặc hỏi gọi riêng nếu chỉ còn một người. Nếu SIP báo nhánh đầu kết thúc sớm, giữ các lời mời còn lại và chuyển sang nhánh đã mở. Lỗi SDK chưa xác định đã gửi lệnh hay chưa được báo thất bại để tránh gọi trùng.
+- Modal mời đọc trạng thái của trang đang xem và khóa đích không khả dụng. Lựa chọn theo UUID tồn tại qua các trang và được kiểm tra lại khi xác nhận. Danh bạ vẫn dùng chấm xanh/xám.
+- Backend cô lập dữ liệu Dird, Confd và Chatd theo token đã xác thực và nguồn. Dữ liệu bộ phận phân biệt rỗng đã xác nhận, thiếu quyền và lỗi tạm thời. Làm mới thủ công có khoảng chờ 30 giây. Lọc trạng thái đối soát khi màn đang hiện, khoảng 15 giây giữa các lượt tự tải, và lùi trang khi tổng giảm.
+
 25/11/2026. Danh bạ, bàn phím gọi và modal mời người dùng chung chấm xanh/xám thay cho nhãn trạng thái trên từng liên hệ. Lớp nghiệp vụ vẫn phân biệt thiếu dữ liệu với ngoại tuyến khi xác minh cuộc gọi.
 
 25/11/2026. Bàn phím gọi tra trực tiếp máy lẻ sau khi dừng gõ 300 ms và hiển thị trạng thái cho riêng UUID tìm được. Kết quả của số nhập trước không thay thế số hiện tại. Khi bấm gọi một người, CallService xác minh presence bằng lượt đọc mới trước khi gửi lệnh SIP. Nếu chưa xác minh được trạng thái thì báo người dùng thử lại.

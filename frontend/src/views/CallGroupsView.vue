@@ -225,11 +225,18 @@ async function callGroup(group) {
       !confirm(notice.value + '. Tiếp tục gọi ' + result.extensions.length + ' người còn lại?')
     )
       return
-    const started = await groupCallService.startGroupCall(result.extensions, {
+    let started = await groupCallService.startGroupCall(result.extensions, {
       groupTitle: group.name,
       requireGroupConfirmation: true,
     })
     if (!stillActive(context, viewVersion)) return
+    if (started?.reason === 'TARGET_AVAILABILITY_CHANGED' && started.extension) {
+      if (!confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')) return
+      started = await callService.startCall(started.extension, {
+        expectedUuid: started.expectedUuid,
+      })
+      if (!stillActive(context, viewVersion)) return
+    }
     if (!started?.success) {
       error.value = 'Chưa bắt đầu được cuộc gọi. Kiểm tra trạng thái rồi thử lại.'
       return

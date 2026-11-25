@@ -38,8 +38,8 @@
         aria-label="Người đã chọn"
       >
         <button
-          v-for="[number, contact] in selectedContacts"
-          :key="number"
+          v-for="[identity, contact] in selectedContacts"
+          :key="identity"
           type="button"
           @click="toggleContact(contact)"
         >
@@ -70,13 +70,14 @@
           v-for="c in availableAddParticipants"
           :key="c.uuid || c.number"
           class="add-participant-item"
-          :class="{ selected: selectedAddExtensions.includes(String(c.number).trim()) }"
+          :class="{ selected: isSelected(c) }"
           @click="toggleContact(c)"
         >
           <div class="add-item-checkbox">
             <input
               type="checkbox"
-              :checked="selectedAddExtensions.includes(String(c.number).trim())"
+              :checked="isSelected(c)"
+              :disabled="!canToggleContact(c)"
               @click.stop="toggleContact(c)"
             />
           </div>
@@ -106,10 +107,10 @@
         <button class="btn-add-cancel" @click="closeAddParticipantModal">Hủy</button>
         <button
           class="btn-add-confirm"
-          :disabled="selectedAddExtensions.length === 0 || submitting"
+          :disabled="selectedContacts.size === 0 || submitting"
           @click="confirmAddParticipants"
         >
-          Mời vào cuộc gọi ({{ selectedAddExtensions.length }})
+          Mời vào cuộc gọi ({{ selectedContacts.size }})
         </button>
       </div>
     </div>
@@ -132,6 +133,7 @@ const props = defineProps({
   myExtension: { type: String, default: '' },
   canInviteContact: { type: Function, required: true },
   loadPage: { type: Function, default: null },
+  refreshPresence: { type: Function, default: null },
 })
 const emit = defineEmits(['close', 'confirm'])
 /**
@@ -141,7 +143,6 @@ const emit = defineEmits(['close', 'confirm'])
 const contacts = computed(() => props.contacts)
 const addParticipantSearch = ref('')
 
-const selectedAddExtensions = ref([])
 const selectedContacts = ref(new Map())
 
 /** Chỉ tải trang trong vòng đời của modal và cuộc gọi đang mời. */
@@ -156,6 +157,15 @@ function requestPage(query) {
   return props.loadPage(query)
 }
 const paging = useDirectoryPages(getQuery, requestPage)
+
+/** Lấy trạng thái cho đúng trang modal, không quét cả danh bạ khi người dùng mở modal. */
+function refreshModalPresence(page, previousPage, onCleanup) {
+  if (!props.isOpen || !props.refreshPresence || !page[0].length) return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  props.refreshPresence(page[0], true, controller.signal)
+}
+watch([paging.contacts, () => props.isOpen], refreshModalPresence)
 
 /**
  * Lọc người có thể mời: bỏ chính mình, peer/thành viên đã có và người không sẵn sàng; áp dụng từ
@@ -191,29 +201,32 @@ const availableAddParticipants = computed(() => {
   return list
 })
 
-/** Thêm hoặc bỏ máy lẻ trong lựa chọn tạm của modal, chưa gọi API hoặc gửi lời mời. */
-const toggleAddExtension = (ext) => {
-  const s = String(ext).trim()
-  const idx = selectedAddExtensions.value.indexOf(s)
-  if (idx >= 0) {
-    selectedAddExtensions.value.splice(idx, 1)
-  } else {
-    selectedAddExtensions.value.push(s)
-  }
+/** Dùng UUID làm khóa để người mới dùng cùng một số không thừa hưởng lựa chọn cũ. */
+function identityOf(contact) {
+  return contact.uuid || String(contact.number).trim()
+}
+
+/** Kiểm tra đúng liên hệ đã chọn, kể cả khi ở trang khác. */
+function isSelected(contact) {
+  return selectedContacts.value.has(identityOf(contact))
 }
 
 /** Giữ ảnh chụp UUID và số của người đã chọn độc lập với trang đang xem. */
 function toggleContact(contact) {
-  const number = String(contact.number || '').trim()
-  toggleAddExtension(number)
-  if (selectedAddExtensions.value.includes(number)) selectedContacts.value.set(number, contact)
-  else selectedContacts.value.delete(number)
+  if (!canToggleContact(contact)) return
+  const identity = identityOf(contact)
+  if (isSelected(contact)) selectedContacts.value.delete(identity)
+  else selectedContacts.value.set(identity, { ...contact })
+}
+
+/** Khóa thêm đích không khả dụng nhưng vẫn cho bỏ chọn khi trạng thái vừa thay đổi. */
+function canToggleContact(contact) {
+  return isSelected(contact) || props.canInviteContact(contact)
 }
 // Đồng bộ vòng đời mở/đóng modal: reset lựa chọn tạm hoặc dọn tài nguyên không còn dùng.
 /** Xóa bộ chọn khi modal đóng/mở hoặc cuộc gọi đổi. */
 function resetSelection() {
   addParticipantSearch.value = ''
-  selectedAddExtensions.value = []
   selectedContacts.value.clear()
 }
 watch([() => props.isOpen, () => props.call?.callId], resetSelection)
@@ -225,9 +238,9 @@ const confirmAddParticipants = () => {
     if (selectedContacts.value.size) emit('confirm', [...selectedContacts.value.values()])
     return
   }
-  const selected = selectedAddExtensions.value.filter((ext) =>
-    availableAddParticipants.value.some((contact) => String(contact.number) === ext),
-  )
+  const selected = availableAddParticipants.value
+    .filter(isSelected)
+    .map((contact) => String(contact.number).trim())
   if (selected.length) emit('confirm', selected)
 }
 </script>

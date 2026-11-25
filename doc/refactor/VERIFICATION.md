@@ -1,5 +1,9 @@
 # Kiểm chứng bản refactor dễ đọc
 
+Đợt xử lý tồn đọng sau `81de05f` đã chạy `npm run check`, `format:check` và toàn bộ unittest backend. Frontend đạt 180 ca, 35 ca cho tính năng đã gỡ được đánh dấu bỏ qua trong bộ test cục bộ. Backend đạt 48 ca, một suite chat cũ được bỏ qua. Các ca mới kiểm tra máy lẻ đổi chủ khi preview còn chờ, nhánh chính kết thúc sớm, quyền khác nhau trên cùng nguồn danh bạ, làm mới và lùi trang theo tổng số. Bộ test mô phỏng 3.000 liên hệ, còn phép đo 3.000 phiên đồng thời phải thực hiện trên môi trường thử được cấp quyền.
+
+Cache danh bạ tách theo token và source trong từng worker. Quyền truy cập nguồn được đối chiếu khi đọc. Nếu Wazo thay đổi phạm vi của từng dòng nhưng nguồn vẫn cho đọc, bản đã tải có thể tồn tại tối đa theo TTL 120 giây. Cần thử ACL, sự kiện SIP sớm, Android, IdP, proxy và giới hạn tải trên môi trường công ty. Bản triển khai cần cập nhật cả FastAPI và frontend.
+
 25/11/2026. Kiểm tra luồng danh bạ và nhóm gọi trên nhánh refactor với 3.000 liên hệ Wazo mô phỏng. Các ca mới ở backend/tests/test_directory_calls.py và frontend/tests/components/directory-page-contract.test.js, call-groups-flow.test.js. Bộ test chat lưu cục bộ từ các nhánh trước vẫn tham chiếu các module đã gỡ nên cần chọn test phù hợp với nhánh khi chạy Vitest hoặc unittest. [Các bước nghiệm thu trên Wazo công ty](KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
 
 > Các kết quả bên dưới được ghi theo từng mốc. Bộ kiểm thử frontend và backend cùng cấu hình Vitest hiện được giữ cục bộ theo quy tắc Git ignore. Để chạy `npm test`, `npm run check` hoặc `unittest` trên một bản clone mới, cần có bộ test cục bộ tương ứng. Có thể chạy lint, kiểm tra kiến trúc và build riêng bằng các lệnh của dự án.

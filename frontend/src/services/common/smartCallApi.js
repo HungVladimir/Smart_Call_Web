@@ -13,8 +13,11 @@ export async function requestSmartCall(path, token, { method = 'GET', body, sign
   const data = await response.json()
   if (!response.ok) {
     const detail = data.detail
-    throw new Error(
-      typeof detail === 'string' ? detail : detail?.message || 'Backend chưa hoàn tất yêu cầu.',
+    throw Object.assign(
+      new Error(
+        typeof detail === 'string' ? detail : detail?.message || 'Backend chưa hoàn tất yêu cầu.',
+      ),
+      { status: response.status },
     )
   }
   return data
