@@ -56,7 +56,7 @@ def company_email(value):
     return username, f"{username}@{EMAIL_DOMAIN}"
 
 
-# Đọc toàn bộ CSV trước khi gọi Wazo. Giữ ID dưới dạng chuỗi và chỉ báo số dòng khi lỗi.
+# Giữ dòng hợp lệ đầu tiên của Email/ID. Ghi lỗi từng dòng để các dòng khác vẫn được tạo.
 def read_accounts(path):
     required = [NAME_COLUMN, EMAIL_COLUMN, EMPLOYEE_ID_COLUMN, DEPARTMENT_COLUMN]
     accounts, errors, seen_ids, seen_emails = [], [], set(), set()
@@ -73,9 +73,17 @@ def read_accounts(path):
         if missing:
             raise ValueError(f"Mỗi cột phải xuất hiện đúng một lần: {', '.join(missing)}.")
         reader.fieldnames = headers
-        for row in reader:
+        while True:
+            line = reader.reader.line_num + 1
+            try:
+                row = next(reader)
+            except StopIteration:
+                break
+            except csv.Error:
+                errors.append(dict(line=line, status="invalid_csv", reason="Cú pháp CSV không hợp lệ."))
+                continue
             line = reader.line_num
-            if not any(value for key, value in row.items() if key is not None) and None not in row:
+            if None not in row and not any(str(value or "").strip() for value in row.values()):
                 continue
             try:
                 if None in row or any(row.get(column) is None for column in required):
@@ -96,12 +104,38 @@ def read_accounts(path):
                                      firstname=firstname or lastname, lastname=lastname if firstname else "",
                                      department=department))
             except ValueError as error:
-                errors.append(f"Dòng {line}: {error}")
-    if errors:
-        raise ValueError("\n".join(errors[:20]) + f"\nTổng cộng {len(errors)} dòng lỗi.")
-    if not accounts:
+                errors.append(dict(line=line, status="invalid_csv", reason=str(error)))
+    if not accounts and not errors:
         raise ValueError("CSV không có dòng nhân viên.")
-    return accounts
+    return accounts, errors
+
+
+# Đọc context và SIP template trực tiếp qua Confd để CLI không phụ thuộc tên helper nội bộ.
+async def provision_resources(wazo, token, settings):
+    contexts = await wazo.list_items("/api/confd/1.1/contexts", token)
+    matches = [
+        context for context in contexts
+        if context.get("name") == settings.wazo_context
+        and context.get("tenant_uuid") in (None, settings.wazo_tenant_uuid)
+        and context.get("enabled") is not False
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"Không xác định được context {settings.wazo_context} trong tenant đích.")
+    labels = list(dict.fromkeys(label.strip() for label in settings.wazo_template_labels.split(",") if label.strip()))
+    if not labels:
+        raise ValueError("Chưa cấu hình nhãn SIP template của Wazo.")
+    available = await wazo.list_items("/api/confd/1.1/endpoints/sip/templates", token)
+    templates = []
+    for label in labels:
+        matching = [
+            template["uuid"] for template in available
+            if template.get("label") == label and template.get("uuid")
+            and template.get("tenant_uuid") in (None, settings.wazo_tenant_uuid)
+        ]
+        if len(matching) != 1:
+            raise ValueError(f"Không tìm thấy duy nhất một SIP template có nhãn {label}.")
+        templates.append({"uuid": matching[0]})
+    return matches[0], templates
 
 
 # Chọn số từ phần giao của cấu hình, dải thử nghiệm và user_ranges của Wazo.
@@ -130,20 +164,15 @@ def assign_extensions(accounts, available):
     return [dict(account, extension=extension) for account, extension in zip(accounts, chosen, strict=True)]
 
 
-# Thoát sớm nếu người vận hành chưa xác nhận đúng đích Wazo.
-def confirm_import(settings):
-    print(f"Wazo: {settings.wazo_url} | tenant: {settings.wazo_tenant_uuid} | context: {settings.wazo_context}")
-    return input("Nhập TAO để chạy tạo tài khoản trên Wazo: ").strip() == "TAO"
-
-
 # Ghi CSV kết quả theo từng ACK. Trạng thái pending cho phép đối soát nếu mất kết nối sau POST.
-async def create_accounts(accounts, skipped, wazo, token, templates, lock):
+async def create_accounts(accounts, skipped, errors, wazo=None, token=None, templates=None, lock=None):
     output = ROOT / "data" / f"import-wazo-{uuid4().hex}.csv"
     output.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["line", "username", "employee_id", "email", "extension", "status", "uuid"]
+    fields = ["line", "username", "employee_id", "email", "extension", "status", "uuid", "reason"]
     with output.open("x", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
+        writer.writerows(errors)
         for account, existing in skipped:
             writer.writerow(dict(account, status="existing", uuid=existing.get("uuid", "")))
         stream.flush()
@@ -174,8 +203,16 @@ async def create_accounts(accounts, skipped, wazo, token, templates, lock):
             print(f"[{index}/{len(accounts)}] Đã tạo máy lẻ {account['extension']}.", flush=True)
 
 
-# Dùng một phiên quản trị cho cả lô, kiểm tra trùng email rồi mới giữ khóa và đọc kho máy lẻ.
-async def run(args, accounts):
+# Dùng phiên quản trị và cùng khóa cấp phát với Single ID trong suốt lượt ghi.
+async def run(args, accounts, errors):
+    if errors:
+        print(f"Bỏ qua {len(errors)} dòng CSV lỗi.")
+        for error in errors[:10]:
+            print(f"Dòng {error['line']}: {error['reason']}")
+    if not accounts:
+        await create_accounts([], [], errors)
+        print("Không có dòng hợp lệ để tạo.")
+        return
     settings = Settings()
     if not settings.wazo_provisioning_enabled:
         raise ValueError("Cấp tài khoản Wazo đang tắt trong cấu hình backend.")
@@ -189,12 +226,17 @@ async def run(args, accounts):
         wazo = WazoClient(settings, client, store)
         admin = None
         try:
+            if not args.dry_run:
+                locked = await lock.acquire(blocking=False)
+                if not locked:
+                    raise ValueError("Tenant đang cấp phát tài khoản. Vui lòng thử lại.")
             admin = await wazo.token(settings.wazo_admin_username, settings.wazo_admin_password, "smartcall-csv", user=False)
             token = admin["token"]
-            context = await wazo.load_provisioning_context(token)
-            templates = await wazo.load_sip_templates(token)
+            context, templates = await provision_resources(wazo, token, settings)
             pending, skipped = [], []
             for account in accounts:
+                if locked and not await lock.extend(180, replace_ttl=True):
+                    raise ValueError("Khóa cấp phát hết hạn.")
                 existing = await wazo.find_email(account["email"], token)
                 if existing:
                     skipped.append((account, existing))
@@ -205,24 +247,9 @@ async def run(args, accounts):
             print(f"Tenant {settings.wazo_tenant_uuid} · tạo {len(pending)} · bỏ qua {len(skipped)} · số trống {len(available)}.")
             if len(pending) > len(available):
                 raise ValueError("Dải máy lẻ còn trống không đủ cho toàn bộ tài khoản mới.")
-            if args.dry_run or not pending or not confirm_import(settings):
+            if args.dry_run:
                 return
-            locked = await lock.acquire(blocking=False)
-            if not locked:
-                raise ValueError("Tenant đang cấp phát tài khoản. Vui lòng thử lại.")
-            # Xác nhận lại tài khoản và số sau khi đã giữ khóa vì dữ liệu có thể đổi lúc xem trước.
-            confirmed = []
-            for account in pending:
-                if not await lock.extend(180, replace_ttl=True):
-                    raise ValueError("Khóa cấp phát hết hạn.")
-                existing = await wazo.find_email(account["email"], token)
-                if existing:
-                    skipped.append((account, existing))
-                else:
-                    confirmed.append(account)
-            extensions = await wazo.list_items("/api/confd/1.1/extensions", token)
-            available = free_extensions(settings, context, extensions, args.min_extension, args.max_extension)
-            await create_accounts(assign_extensions(confirmed, available), skipped, wazo, token, templates, lock)
+            await create_accounts(assign_extensions(pending, available), skipped, errors, wazo, token, templates, lock)
         finally:
             try:
                 if admin:
@@ -290,7 +317,8 @@ def main():
         if path is None:
             print("Đã hủy chọn CSV.")
             return
-        asyncio.run(run(args, read_accounts(path)))
+        accounts, errors = read_accounts(path)
+        asyncio.run(run(args, accounts, errors))
     except UnicodeError:
         parser.exit(1, "Không đọc được encoding của CSV. Hãy lưu dưới dạng CSV UTF-8.\n")
     except HTTPException as error:
