@@ -1,5 +1,7 @@
 # Kiến trúc Web và cấu trúc dễ đọc
 
+Nhóm message pilot dùng ChatGroupApi → FastAPI chat_routes → ChatStore và Chatd. Mỗi nhóm có một groupId, nhiều lần kích hoạt phòng và một lịch sử có phân quyền. [Kiến trúc và vận hành message](KE_HOACH_MESSAGE_2026-11-25.md).
+
 Cập nhật: 20/11/2026. Tài liệu hiện hành sau lượt đơn giản hóa. Bản gốc đã được push riêng lên main tại 5d5fe3e; những thay đổi mô tả ở đây chỉ thuộc clone.
 
 ## Mô hình chính

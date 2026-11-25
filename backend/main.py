@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
 from config import Settings
+from chat_routes import router as chat_router
+from chat_store import ChatStore
 from store import Store
 from oidc import OidcClient, fail
 from wazo import WazoClient
@@ -24,6 +26,9 @@ def create_app(settings=None):
     async def lifespan(app):
         verify = ssl.create_default_context(cafile=settings.tls_ca_file or None)
         async with httpx.AsyncClient(trust_env=False, verify=verify, timeout=15, follow_redirects=False) as client:
+            if settings.chat_enabled:
+                app.state.chat = ChatStore(settings.chat_database_path)
+                app.state.chat_listeners = {}
             app.state.store = Store(settings)
             app.state.oidc = OidcClient(settings, client)
             app.state.wazo = WazoClient(settings, client, app.state.store)
@@ -34,10 +39,15 @@ def create_app(settings=None):
 
     app = FastAPI(title="SmartCall Backend", lifespan=lifespan)
 
-    # Không cache hồ sơ/token; Origin chặn POST từ website khác trước khi xử lý.
+    if settings.chat_enabled:
+        app.include_router(chat_router)
+
+    # Android xác thực bằng token trên route chat; cookie Single ID vẫn bắt buộc Origin.
     @app.middleware("http")
     async def protect_response(request, call_next):
-        if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("origin") != settings.public_origin:
+        native_chat = (settings.chat_enabled and request.url.path.startswith("/api/chat/v1/")
+                       and not request.headers.get("origin") and request.headers.get("X-Auth-Token"))
+        if request.method not in ("GET", "HEAD", "OPTIONS") and not native_chat and request.headers.get("origin") != settings.public_origin:
             return JSONResponse({"detail": {"code": "ORIGIN_INVALID", "message": "Origin không hợp lệ."}}, status_code=403)
         response = await call_next(request)
         response.headers.update({"Cache-Control": "no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer"})
@@ -58,6 +68,9 @@ def create_app(settings=None):
     # Không để hai danh tính chiếm cùng một tài khoản Wazo.
     @app.exception_handler(sqlite3.IntegrityError)
     async def identity_conflict(request, error):
+        if request.url.path.startswith('/api/chat/v1/'):
+            return JSONResponse({'detail': {'code': 'CHAT_STORAGE_CONFLICT',
+                'message': 'Cần đối soát thao tác với dữ liệu đã lưu.'}}, status_code=503)
         return JSONResponse({"detail": {"code": "IDENTITY_CONFLICT",
             "message": "Tài khoản Wazo đã được liên kết với danh tính khác."}}, status_code=409)
 

@@ -223,6 +223,7 @@
               :title="
                 currentRoom.isDirect ? 'Gọi thoại 1-1 trực tiếp' : 'Khởi tạo cuộc gọi hội nghị nhóm'
               "
+              :disabled="Boolean(currentRoom.groupId && currentRoom.status !== 'active')"
               @click="startVoiceCall"
             >
               <svg
@@ -265,6 +266,9 @@
         </div>
 
         <!-- Danh sách tin nhắn -->
+        <button v-if="currentRoom?.nextCursor" @click="loadOlderMessages">
+          Tải tin nhắn trước
+        </button>
         <MessageList
           ref="messageListRef"
           :messages="currentRoom.messages || []"
@@ -287,7 +291,11 @@
             >Bạn đã được Quản trị viên mời ra khỏi nhóm thảo luận này. Bạn không thể gửi thêm tin
             nhắn.</span
           >
-          <button class="btn-leave-kicked-room" @click="confirmLeaveKickedRoom">
+          <button
+            v-if="!currentRoom?.groupId"
+            class="btn-leave-kicked-room"
+            @click="confirmLeaveKickedRoom"
+          >
             Đã hiểu & Rời nhóm
           </button>
         </div>
@@ -327,8 +335,9 @@
         </div>
 
         <div class="modal-body">
-          <label class="form-label">TÊN NHÓM CHAT (*):</label>
+          <label v-if="!expandingGroupRoomId" class="form-label">TÊN NHÓM CHAT (*):</label>
           <input
+            v-if="!expandingGroupRoomId"
             v-model="newGroupTitle"
             type="text"
             maxlength="100"
@@ -346,7 +355,9 @@
             />
           </div>
 
-          <label class="form-label"> CHỌN ĐỒNG NGHIỆP THAM GIA (TỐI THIỂU 2 NGƯỜI): </label>
+          <label class="form-label"
+            >Chọn đồng nghiệp {{ expandingGroupRoomId ? 'để thêm vào nhóm' : 'để tạo nhóm' }}</label
+          >
           <div class="contact-select-box">
             <div v-if="availableContactsForGroup.length === 0" class="no-contacts-hint">
               Không tìm thấy đồng nghiệp phù hợp trong danh bạ
@@ -377,9 +388,12 @@
             </label>
           </div>
 
-          <div class="select-counter-hint" :class="{ valid: selectedGroupMemberUuids.length >= 2 }">
+          <div
+            class="select-counter-hint"
+            :class="{ valid: selectedGroupMemberUuids.length >= minimumSelected }"
+          >
             Đã chọn: <strong>{{ selectedGroupMemberUuids.length }}</strong> đồng nghiệp
-            <span v-if="selectedGroupMemberUuids.length < 2">
+            <span v-if="!expandingGroupRoomId && selectedGroupMemberUuids.length < 2">
               (Cần chọn thêm ít nhất {{ 2 - selectedGroupMemberUuids.length }} người để tạo
               nhóm)</span
             >
@@ -391,7 +405,7 @@
           <button class="btn-secondary" @click="closeCreateGroupModal">Hủy</button>
           <button
             class="btn-primary"
-            :disabled="selectedGroupMemberUuids.length < 2 || isSubmittingGroup"
+            :disabled="selectedGroupMemberUuids.length < minimumSelected || isSubmittingGroup"
             @click="submitCreateGroup"
           >
             <span v-if="isSubmittingGroup">⏳ Đang xử lý...</span>
@@ -554,7 +568,14 @@
                 </div>
                 <div class="member-actions">
                   <button
+                    v-if="currentRoom?.groupId && currentIsAdmin && !m.isAdmin"
+                    @click="transferGroupAdmin(m)"
+                  >
+                    Chuyển quyền admin
+                  </button>
+                  <button
                     v-if="currentIsAdmin && !m.isAdmin"
+                    :disabled="Boolean(currentRoom?.groupId && currentRoomMembers.length <= 3)"
                     class="btn-remove-member"
                     title="Xóa thành viên khỏi nhóm"
                     @click="handleRemoveMember(m)"
@@ -616,6 +637,8 @@ const router = useRouter()
 
 const showCreateGroupModal = ref(false)
 const expandingGroupRoomId = ref(null)
+/** Khi mở rộng nhóm chỉ cần chọn một người mới. */
+const minimumSelected = computed(() => (expandingGroupRoomId.value ? 1 : 2))
 const showMemberModal = ref(false)
 const inputText = ref('')
 
@@ -926,6 +949,11 @@ const availableContactsForGroup = computed(() => {
   const q = groupContactSearch.value.trim().toLowerCase()
 
   return list.filter((c) => {
+    if (
+      expandingGroupRoomId.value &&
+      currentRoomMembers.value.some((member) => member.id === c.uuid)
+    )
+      return false
     // Loại trừ chính mình
     if (c.uuid && myUuid && c.uuid === myUuid) return false
     if (c.number && myExt && c.number === myExt) return false
@@ -1005,7 +1033,7 @@ const sendMessage = async () => {
 
   // Cập nhật ngay tức thì trên mảng rooms để giao diện nhảy Top 1 lập tức
   const target = rooms.value.find((r) => r.id === targetId)
-  if (target) {
+  if (target && !target.groupId) {
     target.updatedAt = Date.now()
     target.preview = text
     target.time = formatMessageDateTime(new Date())
@@ -1014,10 +1042,9 @@ const sendMessage = async () => {
   try {
     // Lưu bền vững vào cơ sở dữ liệu chatService và đồng bộ Wazo Chatd
     const sentMsg = await chatService.sendMessage(targetId, text, currentUserName.value)
-    // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
-    // muộn sau hủy/đổi phiên.
+    // Nhóm managed đã đưa ACK vào state nên không cần tải lại tất cả phòng sau mỗi tin.
     if (!isSessionContextCurrent(context)) return
-    await chatService.getRooms()
+    if (!target?.groupId) await chatService.getRooms()
     // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
     // muộn sau hủy/đổi phiên.
     if (!isSessionContextCurrent(context)) return
@@ -1253,7 +1280,7 @@ const toggleSelectGroupMember = (uuid) => {
 
 /** Kiểm tra tên/thành viên, tạo phòng qua API rồi chuyển UI sang phòng vừa được server xác nhận. */
 const submitCreateGroup = async () => {
-  if (selectedGroupMemberUuids.value.length < 2) {
+  if (selectedGroupMemberUuids.value.length < minimumSelected.value) {
     alert(
       'Vui lòng chọn ít nhất 2 đồng nghiệp để tạo nhóm chat (nhóm cần ít nhất 3 thành viên bao gồm bạn).',
     )
@@ -1276,6 +1303,11 @@ const submitCreateGroup = async () => {
     let createdRoom = null
     const isExpanding = Boolean(expandingGroupRoomId.value)
     if (isExpanding) {
+      if (
+        currentRoom.value?.groupId &&
+        !confirm('Thành viên được thêm sẽ đọc được toàn bộ lịch sử nhóm. Tiếp tục?')
+      )
+        return
       createdRoom = await chatService.addMembersToGroup(
         expandingGroupRoomId.value,
         selectedGroupMemberUuids.value,
@@ -1298,7 +1330,7 @@ const submitCreateGroup = async () => {
       new CustomEvent('app-toast', {
         detail: {
           message: isExpanding
-            ? `🎉 Đã thêm thành viên và chuyển nhóm chat sang phòng mới thành công!`
+            ? `Đã thêm thành viên vào nhóm.`
             : `🎉 Đã tạo nhóm chat [${title}] thành công!`,
           type: 'success',
         },
@@ -1381,7 +1413,7 @@ const upgradeDirectToGroup = () => {
   showMemberModal.value = false
   const directContact = currentDirectContact.value
   const msgs = currentRoom.value?.messages || []
-  openCreateGroupModal(directContact, msgs)
+  openCreateGroupModal(directContact, chatService.groups?.enabled ? [] : msgs)
 }
 
 /** Mở luồng chọn người bổ sung; không thay phòng/lịch sử để giả lập API thêm thành viên. */
@@ -1396,16 +1428,27 @@ const openAddMoreToGroup = () => {
   openCreateGroupModal(null, msgs)
   // Lưu ID phòng nhóm nguồn cần mở rộng và đóng sau khi tạo nhóm mới
   expandingGroupRoomId.value = sourceRoomId
-  // Chọn sẵn tất cả thành viên của phòng nhóm hiện tại
-  if (currentRoom.value?.members) {
-    const myUuid = userSessionState.userUuid || localStorage.getItem('smartcall_user_uuid') || ''
-    currentRoom.value.members.forEach((m) => {
-      const uId = m.id || m.uuid
-      if (uId && uId !== myUuid && !selectedGroupMemberUuids.value.includes(uId)) {
-        selectedGroupMemberUuids.value.push(uId)
-      }
+  newGroupTitle.value = currentRoom.value.title || 'Nhóm thảo luận'
+}
+
+/** Đọc trang lịch sử trước và giữ đúng nhóm đang xem. */
+async function loadOlderMessages() {
+  try {
+    await chatService.groups.history(currentRoom.value.id, true)
+  } catch (error) {
+    alert(error.message)
+  }
+}
+
+/** Xác nhận chuyển quyền vì người đang thao tác sẽ mất quyền quản trị. */
+async function transferGroupAdmin(member) {
+  if (!confirm('Chuyển quyền quản trị cho ' + member.name + '?')) return
+  try {
+    await chatService.groups.command(currentRoom.value.id, '/admin-transfer', 'POST', {
+      targetUserUuid: member.id,
     })
-    newGroupTitle.value = currentRoom.value.title || 'Nhóm thảo luận'
+  } catch (error) {
+    alert(error.message)
   }
 }
 
@@ -1448,6 +1491,11 @@ const startVoiceCall = async () => {
       const myUuid = String(
         userSessionState.userUuid || localStorage.getItem('smartcall_user_uuid') || '',
       ).trim()
+      if (room.groupId) {
+        const latest = await chatService.groups.refresh(room.id)
+        if (currentRoom.value?.id !== room.id || latest.status !== 'active') return
+        currentRoom.value = latest
+      }
       const memberExts = []
       for (const m of currentRoomMembers.value) {
         const mId = m.id || m.uuid
@@ -1485,6 +1533,18 @@ const startVoiceCall = async () => {
           `Khởi tạo cuộc gọi nhóm tức thời tới [${roomTitle}] (${totalCount} thành viên)?\n\nHệ thống sẽ tự động gọi đồng thời và kết nối các thành viên vào cuộc gọi nhóm (Ad-hoc Conference).`,
         )
       ) {
+        // Người dùng có thể giữ hộp xác nhận lâu trong khi admin đang đổi roster.
+        if (room.groupId) {
+          const activation = currentRoom.value.activeActivationId
+          const latest = await chatService.groups.refresh(room.id)
+          if (
+            currentRoom.value?.id !== room.id ||
+            latest.status !== 'active' ||
+            latest.activeActivationId !== activation
+          ) {
+            throw new Error('Thành viên nhóm vừa thay đổi.')
+          }
+        }
         // Dịch vụ bỏ máy bận/offline/DND; còn một người thì tự chuyển sang gọi 1-1.
         const result = await groupCallService.startGroupCall(memberExts, {
           groupTitle: roomTitle,

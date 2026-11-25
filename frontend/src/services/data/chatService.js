@@ -1,5 +1,6 @@
 import { formatMessageDateTime } from '../../utils/formatMessageDateTime.js'
 import { reactive } from 'vue'
+import { ChatGroupApi } from './chatGroupApi.js'
 import {
   captureSessionContext,
   assertSessionContext,
@@ -18,6 +19,7 @@ export class ChatService {
   constructor({ authService, contactService, eventHub }) {
     Object.assign(this, { authService, contactService, eventHub })
     this.state = reactive({ rooms: [], unreadByRoom: Object.create(null) })
+    this.groups = new ChatGroupApi(this)
     this._fetchingRoomsPromise = null
     this._closedRoomIds = new Set()
     this._seenIncomingMessageIds = new Map()
@@ -115,6 +117,7 @@ export class ChatService {
 
   /** Sidebar khôi phục số sau login/F5, rồi đối chiếu phòng thật trên server trước khi hiển thị tổng. */
   async restoreUnreadNotifications() {
+    this.groups.start()
     this._restoreUnreadState()
     if (Object.values(this.state.unreadByRoom).some((ids) => ids.size > 0)) await this.getRooms()
   }
@@ -279,6 +282,9 @@ export class ChatService {
       ''
 
     if (!roomUuid || !content) return
+    // Nhóm do backend quản lý nhận sự kiện qua SSE. Bỏ sự kiện vật lý cả khi phòng đã ngừng dùng.
+    if (this.groups.enabled && this.rooms.some((room) => room.managedRoomIds?.includes(roomUuid)))
+      return
     if (this._closedRoomIds.has(roomUuid)) return
     if (!this.rooms.some((room) => room.id === roomUuid)) {
       // Nạp metadata/quyền và kiểm tra tombstone trước khi hiển thị một phòng chưa biết.
@@ -521,7 +527,14 @@ export class ChatService {
           // thành công giả.
           if (res.ok) {
             const data = await res.json()
-            const items = Array.isArray(data.items) ? data.items : []
+            const managed = this.groups.enabled ? await this.groups.list() : []
+            const ownedIds = new Set(managed.flatMap((group) => group.managedRoomIds || []))
+            const items = (Array.isArray(data.items) ? data.items : []).filter(
+              (room) =>
+                !ownedIds.has(room.uuid) &&
+                !/^SmartCall\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(room.name || ''),
+            )
+            this.groups.start()
             const myUuid =
               this.authService.getCurrentUserUuid() ||
               localStorage.getItem('smartcall_user_uuid') ||
@@ -708,7 +721,7 @@ export class ChatService {
 
             // Giữ lại các phòng chat 1-1 local nếu CHƯA có phòng server nào tương ứng
             const directRooms = (this.rooms || []).filter((r) => r.id && r.id.startsWith('direct-'))
-            const merged = [...activeServerRooms]
+            const merged = [...managed, ...activeServerRooms]
             for (const dr of directRooms) {
               const hasMatch = merged.some((m) => m.id === dr.id || (dr.ext && m.ext === dr.ext))
               if (!hasMatch) {
@@ -741,6 +754,7 @@ export class ChatService {
    * đóng.
    */
   async getRoomMessages(roomId, limit = 50, roomContext = null) {
+    if (this.groups.owns(roomId)) return this.groups.history(roomId)
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     // Giữ trạng thái đóng phòng: không cho tin mới hoặc kết quả tải lại tự đưa nhóm đã đóng/chưa
@@ -1158,6 +1172,9 @@ export class ChatService {
    * sendFailed khi lỗi.
    */
   async sendMessage(roomId, text, userAlias = null) {
+    if (this.groups.owns(roomId)) return this.groups.send(roomId, text)
+    if (this.groups.enabled && !this.rooms.some((room) => room.id === roomId))
+      throw new Error('Hãy mở lại hội thoại trước khi gửi.')
     // Giữ trạng thái đóng phòng: không cho tin mới hoặc kết quả tải lại tự đưa nhóm đã đóng/chưa
     // xác minh về luồng đang mở.
     if (this._closedRoomIds.has(roomId)) throw new Error('Nhóm này đã đóng trong SmartCall.')
@@ -1289,6 +1306,11 @@ export class ChatService {
 
   /** Tạo phòng nhóm trên server với danh sách UUID đã chuẩn hóa, chỉ đưa vào state sau xác nhận. */
   async createGroupRoom(groupName, memberUserUuids = [], forwardedMessages = []) {
+    if (this.groups.enabled)
+      return this.groups.command(null, '', 'POST', {
+        title: groupName,
+        memberUuids: memberUserUuids,
+      })
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (forwardedMessages.length)
@@ -1392,6 +1414,8 @@ export class ChatService {
 
   /** Kiểm tra quyền admin và gửi command đổi tên; không báo thành công nếu server chưa nhận tin. */
   async renameGroup(roomId, newTitle) {
+    if (this.groups.owns(roomId))
+      return this.groups.command(roomId, '', 'PATCH', { title: newTitle })
     const sessionContext = captureSessionContext()
     const cleanTitle = (newTitle || '').trim()
     if (!cleanTitle) {
@@ -1427,6 +1451,8 @@ export class ChatService {
    * người.
    */
   async removeMemberFromGroup(roomId, memberUuid) {
+    if (this.groups.owns(roomId))
+      return this.groups.command(roomId, '/members/' + encodeURIComponent(memberUuid), 'DELETE')
     throw new Error(
       'Thay đổi thành viên cần API quản lý nhóm của máy chủ. Nhóm và lịch sử hiện tại được giữ nguyên để tránh mất dữ liệu.',
     )
@@ -1437,6 +1463,8 @@ export class ChatService {
    * membership.
    */
   async addMembersToGroup(roomId, allMemberUuids, customTitle = null) {
+    if (this.groups.owns(roomId))
+      return this.groups.command(roomId, '/members', 'POST', { memberUuids: allMemberUuids })
     throw new Error(
       'Thay đổi thành viên cần API quản lý nhóm của máy chủ. Nhóm và lịch sử hiện tại được giữ nguyên để tránh mất dữ liệu.',
     )
@@ -1447,6 +1475,8 @@ export class ChatService {
    * của Wazo.
    */
   async deleteRoom(roomId) {
+    if (this.groups.owns(roomId))
+      return Boolean(await this.groups.command(roomId, '/close', 'POST', {}))
     const sessionContext = captureSessionContext()
     const room = (this.rooms || []).find((r) => r.id === roomId)
     if (!room || room.isDirect) return false
@@ -1519,6 +1549,7 @@ export class ChatService {
    * server.
    */
   reset() {
+    this.groups.reset()
     this.state.unreadByRoom = Object.create(null)
     this._seenIncomingMessageIds.clear()
     this._visibleRoomId = null

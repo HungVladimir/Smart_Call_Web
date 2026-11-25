@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     redis_prefix: str = "smartcall"
     session_ttl: int = 3600
     database_path: Path = ROOT / "data" / "identity.sqlite3"
+    chat_enabled: bool = False
+    chat_read_only: bool = False
+    chat_database_path: Path = ROOT / "data" / "messages.sqlite3"
     tls_ca_file: str = ""
     wazo_url: str = "https://107.126.11.126:9443"
     wazo_admin_username: str = ""

@@ -1,5 +1,7 @@
 # Hướng dẫn frontend từ đầu đến cuối cho người mới
 
+Khi bật pilot nhóm message, MessagesView gọi ChatService và ChatGroupApi để dùng nhóm logic từ FastAPI. ID ở Web có tiền tố `group:`. Dịch vụ tải roster hiện tại trước khi chuyển sang cuộc gọi nhóm. [Hướng dẫn bật và kiểm tra Web/Android](refactor/KE_HOACH_MESSAGE_2026-11-25.md).
+
 Cập nhật: 20/11/2026. Áp dụng cho D:/Project/Smart_Call_Web_Refactor, nhánh codex/refactor-architecture.
 
 Bản này đã chuyển sang cấu trúc phẳng, bỏ các tầng app/core/features/shared và tách UI gọi điện theo cụm. Hãy bắt đầu bằng chương 3 để nhìn cây thư mục, chương 4 để biết luồng chạy và chương 20 để có lộ trình đọc ngắn. Các chương nghiệp vụ còn lại giải thích từ View tới SDK/API và dữ liệu trả về.

@@ -1,5 +1,9 @@
 # Kiểm chứng bản refactor dễ đọc
 
+Ngày 25/11/2026, phép đo cục bộ `backend/tests/pilot_chat_load.py` tạo 3.000 listener trong cùng process, đăng ký trong 6,68 giây và hoàn tất lượt đánh thức/dọn listener sau tổng cộng 10,94 giây. Phép đo dùng SQLite tạm, gọi thẳng handler SSE, chưa đo TLS, reverse proxy, Wazo Auth, tải nhắn tin hỗn hợp hay thiết bị Android. Hai file test cục bộ `paged-directory.test.js` thuộc tính năng danh bạ ở nhánh riêng và lỗi khi chạy toàn bộ test trên nhánh refactor. Bộ kiểm tra định dạng toàn frontend còn báo file cũ ngoài luồng chat.
+
+Pilot message có test API qua HTTP FastAPI, Chatd mô phỏng và SQLite tạm trong `backend/tests/test_managed_chat.py`. Hai ca Web về retry ACK và cursor lịch sử nằm trong `frontend/tests/unit/managed-chat.test.js`. [Kịch bản nghiệm thu với Wazo và Android](KE_HOACH_MESSAGE_2026-11-25.md).
+
 > Các kết quả bên dưới được ghi theo từng mốc. Bộ kiểm thử frontend và backend cùng cấu hình Vitest hiện được giữ cục bộ theo quy tắc Git ignore. Để chạy `npm test`, `npm run check` hoặc `unittest` trên một bản clone mới, cần có bộ test cục bộ tương ứng. Có thể chạy lint, kiểm tra kiến trúc và build riêng bằng các lệnh của dự án.
 
 Cập nhật: 20/11/2026. Windows, Node 22.19.0. Đợt đồng bộ mới chỉ sửa D:/Project/Smart_Call_Web_Refactor; đối chiếu các bản sửa main đến 7485481. Bản gốc không thay đổi trong lượt này.

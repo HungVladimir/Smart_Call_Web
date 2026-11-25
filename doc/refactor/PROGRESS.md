@@ -1,5 +1,7 @@
 # Nhật ký refactor SmartCall Web
 
+25/11/2026 — Thêm pilot quản lý nhóm Web/API Android, chuyển thành viên và admin, lưu lịch sử nguyên gốc, SSE, nhập nhóm cũ và đối soát timeout. [Cấu hình và nghiệm thu](KE_HOACH_MESSAGE_2026-11-25.md).
+
 > Đây là nhật ký theo thời gian. Tên file, cấu trúc thư mục và số liệu kiểm thử trong mỗi mục thuộc mốc đó. Xem [mục lục tài liệu](../README.md) để tìm luồng hiện hành.
 
 Ngày thực hiện: 19/11/2026. Phạm vi ghi: D:/Project/Smart_Call_Web_Refactor. Nhánh: codex/refactor-architecture. Điểm bắt đầu: fac529b; mã nghiệp vụ kế thừa affdb80. Bản gốc cùng cấp được giữ nguyên.
