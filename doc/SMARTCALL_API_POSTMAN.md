@@ -222,6 +222,7 @@ Dán vào Postman **Body → raw → JSON** khi test tạo tài khoản tổng h
 2. **Kiểm tra `description` (Bộ phận) & Danh bạ:** Lấy `{{wazo_admin_token}}` nếu test trực tiếp Confd → đối chiếu `GET /api/confd/1.1/users/{{user_uuid}}` xem trường `description` → dùng `{{wazo_user_token}}` gọi `GET /api/dird/0.1/directories/default/sources?backend=wazo` (lấy `{{source_uuid}}`) → test `GET /api/directory/contacts?source={{source_uuid}}&field=extension&term=1001` và `GET /api/directory/departments?source={{source_uuid}}` (thử `refresh=true` và `field=department&department=...`).
 3. **Nhóm gọi cá nhân:** Gọi `POST /api/call-groups` tạo nhóm 2 thành viên → `PUT /api/call-groups/{{group_id}}` → đổi sang token user khác thử `GET` và `DELETE` để xác nhận cô lập chủ sở hữu (`404`) → dùng đúng token chủ để `DELETE`.
 4. **Thoại, Hội nghị & Ghi âm:** Mở 2 máy Web/Android tạo cuộc gọi thật → gọi `GET /api/calld/1.0/users/me/calls` lấy `{{call_id}}` → test `PUT .../record/start` và `.../record/stop` → cúp máy → gọi `GET /api/call-logd/1.0/users/me/cdr` lấy `{{cdr_id}}`, `{{recording_uuid}}` → gọi `GET .../media` kiểm tra file âm thanh.
+5. **Đăng xuất & dọn dẹp:** Gọi `POST /api/auth/idp-logout` → gọi `GET /api/auth/idp-logout/continue` (hoặc mở trên browser) → gọi lại `GET /api/auth/user_info` xác nhận `401` → `DELETE /api/auth/0.1/token/{{wazo_admin_token}}` cho token admin tạm đã tạo khi test.
 
 ---
 
@@ -354,4 +355,25 @@ suspend fun registerAccount(
 ```
 
 > Lưu ý triển khai thực tế: Sau khi kiểm thử xong luồng với `X-SmartCall-Test-Key`, cần thay thế hoặc bổ sung lớp xác thực ứng dụng/ký request trước khi đóng gói phát hành APK/Web bundle để không lộ key dùng chung.
-5. **Đăng xuất & dọn dẹp:** Gọi `POST /api/auth/idp-logout` → gọi `GET /api/auth/idp-logout/continue` (hoặc mở trên browser) → gọi lại `GET /api/auth/user_info` xác nhận `401` → `DELETE /api/auth/0.1/token/{{wazo_admin_token}}` cho token admin tạm đã tạo khi test.
+
+### 8.5. Bộ Postman Collection import sẵn cho các cổng đang mở
+
+Import 2 file sau vào Postman (**Import → Files**):
+- Collection: [SmartCall_Open_Endpoints.postman_collection.json](postman/SmartCall_Open_Endpoints.postman_collection.json)
+- Environment: [SmartCall_Local.postman_environment.json](postman/SmartCall_Local.postman_environment.json)
+
+| Biến / Header / Trường | Cần truyền giá trị gì | Lấy ở đâu |
+|---|---|---|
+| `backend_base` | `http://127.0.0.1:8801` (gọi thẳng FastAPI) hoặc `http://localhost:8800` (qua Vite proxy) | Cổng chạy `uvicorn` trong [backend/main.py](../backend/main.py) hoặc `server.port` trong [frontend/vite.config.js](../frontend/vite.config.js). |
+| `public_origin` | `http://localhost:8800` (khớp `SMARTCALL_PUBLIC_ORIGIN`) | Giá trị `SMARTCALL_PUBLIC_ORIGIN` trong `backend/.env` ([.env.example](../backend/.env.example)). |
+| Header `X-SmartCall-Test-Key` (`{{wrapper_test_key}}`) | Chuỗi khóa bí mật thử nghiệm (chưa cần mã hóa ở bước thử luồng) | Giá trị biến `SMARTCALL_WAZO_WRAPPER_TEST_KEY` đặt trên máy chạy backend (hoặc trong `backend/.env`). |
+| `target_user_uuid` | UUID của user Wazo cần đọc/sửa `description` hoặc xem CDR/presence | Chạy request **1.2 (`GET /api/confd/1.1/users`)** rồi copy `items[].uuid`, hoặc từ `GET /api/directory/contacts`, hoặc `POST /api/register`. |
+| `source_uuid` | UUID nguồn danh bạ Wazo (`wazo_user`) | Chạy request **1.8 (`GET /api/dird/0.1/backends/wazo/sources`)** rồi copy `items[0].uuid`. |
+| `lookup_term` | Số máy lẻ hoặc tên cần tra cứu trên Dird | Số máy lẻ có trong hệ thống (lấy từ request `1.2` hoặc `GET /api/confd/1.1/extensions`). |
+| `test_department` | Chuỗi tên bộ phận ghi vào `description` | Chuỗi bộ phận thử nghiệm (ví dụ `AI Transformation Part(SDV)`). |
+| Header `X-Auth-Token` (`{{wazo_user_token}}`) | Token phiên Wazo của user thường (dùng cho Nhóm 2: `/api/directory/*`, `/api/call-groups`) | Lấy từ trường `token` khi chạy `POST /api/register` (**1.14**), hoặc `POST /api/auth/wazo-session`, hoặc `POST {{wazo_base}}/api/auth/0.1/token`. |
+| `member_a`, `member_b` | 2 UUID đồng nghiệp khác nhau (và khác chính mình) để test `POST /api/call-groups` | Lấy từ `items[].uuid` ở request **1.2** hoặc **2.2 (`/api/directory/contacts`)**. |
+
+> **Mẹo kiểm tra cả 2 cổng không bị chặn:**
+> - Với `POST /api/wrapper` và `POST /api/register`: Postman mặc định không gửi `Origin` (`origin is None`), backend cho phép đi qua ở cả cổng `8801` lẫn `8800`. Nếu tự thêm `Origin` thủ công mà khác `SMARTCALL_PUBLIC_ORIGIN` (ví dụ gửi `Origin: http://127.0.0.1:8801`), middleware `protect_response` sẽ chặn `403 ORIGIN_INVALID`.
+> - Với `POST/PUT/DELETE /api/call-groups` hoặc `POST /api/auth/wazo-session`: bắt buộc gửi kèm header `Origin: {{public_origin}}` (`http://localhost:8800`), kể cả khi URL gọi vào `127.0.0.1:8801`.

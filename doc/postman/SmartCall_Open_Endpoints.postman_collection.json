@@ -1,0 +1,697 @@
+{
+  "info": {
+    "_postman_id": "7f6b9a10-2611-4026-9801-smartcall0001",
+    "name": "SmartCall - Open Ports & Wrapper Suite",
+    "description": "Bộ test Postman cho các cổng và đầu API đang mở (không bị chặn) trên SmartCall Backend (port 8801 hoặc qua Vite proxy port 8800): /api/health, /api/wrapper/contexts, /api/register, toàn bộ 5 nhóm Wazo trong POST /api/wrapper (confd, dird, chatd, calld, call-logd) và các API User Token (/api/directory/*, /api/call-groups).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Kiểm tra cổng đang mở (Health)",
+      "item": [
+        {
+          "name": "0.1 Health Backend trực tiếp (Port 8801)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Backend 8801 phản hồi 200 OK', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{backend_base}}/api/health",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Kiểm tra trực tiếp tiến trình FastAPI ở {{backend_base}} (mặc định http://127.0.0.1:8801). Không cần key hay token."
+          }
+        },
+        {
+          "name": "0.2 Health qua Vite Proxy (Port 8800)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Vite proxy 8800 chuyển tiếp /api/health thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{public_origin}}/api/health",
+              "host": ["{{public_origin}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Kiểm tra cổng Frontend Vite (http://localhost:8800) chuyển tiếp /api sang backend 8801. Chỉ chạy được khi đã bật npm run dev."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Wrapper Admin & Register (Port 8801 / 8800, chỉ cần X-SmartCall-Test-Key)",
+      "item": [
+        {
+          "name": "1.1 Pilot - GET /api/wrapper/contexts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc danh sách context thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const data = pm.response.json();",
+                  "  pm.expect(data.items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper/contexts?limit=30&offset=0",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper", "contexts"],
+              "query": [
+                { "key": "limit", "value": "30" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "Endpoint đọc context bản thử đầu tiên. Yêu cầu X-SmartCall-Test-Key."
+          }
+        },
+        {
+          "name": "1.2 Confd - Đọc danh sách user (lấy target_user_uuid)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Wrapper Confd GET /users thành công và đã lọc secret', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const data = pm.response.json();",
+                  "  pm.expect(data.items).to.be.an('array');",
+                  "  if (data.items.length > 0) {",
+                  "    pm.expect(data.items[0]).to.not.have.property('auth');",
+                  "    pm.expect(data.items[0]).to.not.have.property('userfield');",
+                  "  }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/confd/1.1/users\",\n  \"query\": {\n    \"limit\": 10,\n    \"offset\": 0,\n    \"recurse\": false\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Chạy bước này đầu tiên để lấy uuid của một user bất kỳ trong items[].uuid gán vào biến môi trường {{target_user_uuid}}."
+          }
+        },
+        {
+          "name": "1.3 Confd - Đọc hồ sơ + description của user khác theo UUID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc hồ sơ user qua Wrapper thành công và không lộ trường nhạy cảm', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const data = pm.response.json();",
+                  "  pm.expect(data).to.have.property('uuid');",
+                  "  pm.expect(data).to.not.have.property('auth');",
+                  "  pm.expect(data).to.not.have.property('password');",
+                  "  pm.expect(data).to.not.have.property('userfield');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/confd/1.1/users/{{target_user_uuid}}\",\n  \"query\": {\n    \"view\": \"directory\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Ca kiểm chứng chính: user thường gọi trực tiếp Wazo bị từ chối quyền, gọi qua /api/wrapper lấy được description và thông tin công khai của user khác."
+          }
+        },
+        {
+          "name": "1.4 Confd - Cập nhật description cho user (PUT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Cập nhật description thành công (204 -> 200 ok)', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().ok).to.eql(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"PUT\",\n  \"path\": \"/api/confd/1.1/users/{{target_user_uuid}}\",\n  \"body\": {\n    \"description\": \"{{test_department}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Nên dùng UUID của tài khoản thử để tránh ghi đè dữ liệu người thật."
+          }
+        },
+        {
+          "name": "1.5 Confd - Đọc contexts qua POST /api/wrapper",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc contexts qua POST /api/wrapper thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/confd/1.1/contexts\",\n  \"query\": {\n    \"limit\": 30,\n    \"offset\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Riêng GET /api/confd/1.1/contexts qua wrapper chỉ nhận đúng 2 tham số query kiểu số nguyên: limit (1..50) và offset (0..10000)."
+          }
+        },
+        {
+          "name": "1.6 Confd - Đọc SIP templates (nhánh endpoints/sip duy nhất được mở)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc SIP templates được phép qua Wrapper', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/confd/1.1/endpoints/sip/templates\",\n  \"query\": {\n    \"limit\": 20,\n    \"offset\": 0,\n    \"recurse\": false\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Trong các đường dẫn /endpoints/sip, wrapper chỉ cho phép GET /api/confd/1.1/endpoints/sip/templates và /templates/..."
+          }
+        },
+        {
+          "name": "1.7 Confd - Đọc danh sách extensions & infos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc extensions qua Wrapper thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/confd/1.1/extensions\",\n  \"query\": {\n    \"limit\": 20,\n    \"offset\": 0,\n    \"recurse\": false\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Đọc danh sách máy lẻ qua /api/confd/1.1/extensions. Có thể đổi path thành /api/confd/1.1/infos (bỏ query) để xem phiên bản Wazo."
+          }
+        },
+        {
+          "name": "1.8 Dird - Lấy nguồn danh bạ Wazo (lấy source_uuid)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc danh sách nguồn danh bạ Wazo thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/dird/0.1/backends/wazo/sources\",\n  \"query\": {\n    \"limit\": 20,\n    \"offset\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Endpoint quản trị (dird.backends.wazo.sources.read). Copy items[0].uuid vào biến {{source_uuid}} để dùng ở bước 1.9."
+          }
+        },
+        {
+          "name": "1.9 Dird - Đọc danh bạ từ nguồn Wazo theo source_uuid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc danh bạ nguồn Dird qua Wrapper thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/dird/0.1/backends/wazo/sources/{{source_uuid}}/contacts\",\n  \"query\": {\n    \"limit\": 20,\n    \"offset\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Cần điền {{source_uuid}} lấy từ bước 1.8."
+          }
+        },
+        {
+          "name": "1.10 Dird - Tra cứu theo từ khóa / máy lẻ (lookup)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Tra cứu Dird qua Wrapper thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/dird/0.1/directories/lookup/default\",\n  \"query\": {\n    \"term\": \"{{lookup_term}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Bắt buộc truyền query.term (ví dụ số máy lẻ hoặc tên)."
+          }
+        },
+        {
+          "name": "1.11 Chatd - Trạng thái dịch vụ & Presence user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc presence qua Chatd Wrapper thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/chatd/1.0/users/presences\",\n  \"query\": {\n    \"user_uuid\": \"{{target_user_uuid}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Đọc trạng thái online/busy/dnd của user bất kỳ theo {{target_user_uuid}}. Hoặc đổi path thành /api/chatd/1.0/status (bỏ query) để kiểm tra tình trạng wazo-chatd."
+          }
+        },
+        {
+          "name": "1.12 Calld - Danh sách cuộc gọi đang diễn ra trong tenant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc danh sách cuộc gọi Calld (quyền admin) thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/calld/1.0/calls\",\n  \"query\": {\n    \"recurse\": false\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "User thường không có ACL calld.calls.read để đọc toàn bộ cuộc gọi; gọi qua Wrapper sẽ trả về các cuộc gọi đang chạy trong tenant."
+          }
+        },
+        {
+          "name": "1.13 Call-Logd - Lịch sử cuộc gọi (CDR) toàn tenant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc CDR toàn tenant qua Call-Logd Wrapper thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"path\": \"/api/call-logd/1.0/cdr\",\n  \"query\": {\n    \"limit\": 10,\n    \"offset\": 0,\n    \"order\": \"start\",\n    \"direction\": \"desc\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/wrapper",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "wrapper"]
+            },
+            "description": "Đọc lịch sử CDR toàn tenant (call-logd.cdr.read) mà token user thường không đọc được. Có thể đổi path thành /api/call-logd/1.0/users/{{target_user_uuid}}/cdr để xem riêng 1 user."
+          }
+        },
+        {
+          "name": "1.14 Register - Đăng ký user mới + nhận token đăng nhập (LƯU Ý: TẠO USER THẬT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đăng ký thành công trả về token và description', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const data = pm.response.json();",
+                  "  pm.expect(data.created).to.eql(true);",
+                  "  pm.expect(data.token).to.be.a('string').and.not.empty;",
+                  "  pm.environment.set('wazo_user_token', data.token);",
+                  "  pm.environment.set('target_user_uuid', data.user_uuid);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstname\": \"Test\",\n  \"lastname\": \"User 01\",\n  \"username\": \"postman.test01\",\n  \"email\": \"postman.test01@samsung.com\",\n  \"department\": \"{{test_department}}\",\n  \"client_id\": \"postman-lab\"\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/register",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "register"]
+            },
+            "description": "Cẩn thận: request này tạo user thật trên Wazo và chiếm 1 số máy lẻ trống! Đổi username/email thử trước khi bấm Send. Khi thành công tự lưu {{wazo_user_token}} và {{target_user_uuid}} để test tiếp Nhóm 2. Bấm Send lần 2 sẽ nhận 409 WAZO_EMAIL_EXISTS."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. API SmartCall dùng User Token (Port 8801 / 8800)",
+      "item": [
+        {
+          "name": "2.1 Danh sách bộ phận (/api/directory/departments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc danh sách bộ phận thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Auth-Token", "value": "{{wazo_user_token}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{backend_base}}/api/directory/departments",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "directory", "departments"]
+            },
+            "description": "Không truyền source thì backend tự lấy nguồn Wazo đầu tiên trong profile của token."
+          }
+        },
+        {
+          "name": "2.2 Tìm danh bạ (/api/directory/contacts)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Tìm danh bạ thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Auth-Token", "value": "{{wazo_user_token}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{backend_base}}/api/directory/contacts?term=a&limit=20&offset=0",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "directory", "contacts"],
+              "query": [
+                { "key": "term", "value": "a" },
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "Tìm chung theo tên/máy lẻ/email/mã nhân viên/bộ phận bằng {{wazo_user_token}}."
+          }
+        },
+        {
+          "name": "2.3 Danh sách nhóm gọi đã lưu (/api/call-groups)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Đọc nhóm gọi cá nhân thành công', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Auth-Token", "value": "{{wazo_user_token}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{backend_base}}/api/call-groups",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "call-groups"]
+            },
+            "description": "Đọc các nhóm gọi của chủ token trong SQLite."
+          }
+        },
+        {
+          "name": "2.4 Tạo nhóm gọi mới (Bắt buộc header Origin khớp public_origin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Tạo nhóm gọi thành công khi gửi đúng Origin', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.have.property('id');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Auth-Token", "value": "{{wazo_user_token}}" },
+              { "key": "Origin", "value": "{{public_origin}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nhom Test Postman\",\n  \"members\": [\"{{member_a}}\", \"{{member_b}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/call-groups",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "call-groups"]
+            },
+            "description": "Khác với /api/wrapper và /api/register, các POST ngoài wrapper bắt buộc phải gửi header Origin bằng {{public_origin}} (http://localhost:8800), nếu thiếu sẽ bị 403 ORIGIN_INVALID. Cần điền 2 UUID khác nhau (và khác chính mình) vào {{member_a}}, {{member_b}}."
+          }
+        }
+      ]
+    }
+  ]
+}
