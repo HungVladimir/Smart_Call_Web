@@ -16,6 +16,7 @@ export const DIRECTORY_PAGE_SIZE = 30
 const LOOKUP_MAX_RESULTS = 100
 const IDENTITY_CACHE_LIMIT = 600
 const PRESENCE_FRESH_MS = 15000
+const WAZO_USER_UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
 const LINE_PRESENCE_STATES = new Set([
   'available',
   'unavailable',
@@ -261,14 +262,31 @@ export class ContactService {
   async getSavedGroupMembers(ids) {
     if (!ids.length) return []
     const context = captureSessionContext()
+    const contacts = await this.readPublishedMembers(ids, context)
+    assertSessionContext(context)
+    return this.rememberDirectoryContacts(contacts)
+  }
+
+  /** Đọc các UUID được yêu cầu trong nguồn đã cấp quyền, chưa đưa dữ liệu vào cache định danh. */
+  async readPublishedMembers(ids, context, signal) {
     const source = await this.getDirectorySource(context)
+    assertSessionContext(context)
+    signal?.throwIfAborted()
     const params = new URLSearchParams({ source: source.uuid })
     for (const id of ids) params.append('ids', id)
-    const data = await requestSmartCall('directory/members?' + params, this.authService.getToken())
+    const data = await requestSmartCall(
+      'directory/members?' + params,
+      this.authService.getToken(),
+      {
+        signal,
+      },
+    )
     assertSessionContext(context)
+    signal?.throwIfAborted()
     const mapped = mapDirectoryContacts(data, { defaultSource: source.name })
-    if (!mapped) throw new Error('Không đọc được thành viên nhóm.')
-    return this.rememberDirectoryContacts(mapped)
+    if (!mapped) throw new Error('Không đọc được các liên hệ từ danh bạ.')
+    const requested = new Set(ids)
+    return mapped.filter((contact) => requested.has(contact.uuid))
   }
 
   /** Lấy bộ phận từ toàn nguồn đã cấp quyền để bộ lọc bao phủ cả ngoài trang hiện tại. */
@@ -490,6 +508,35 @@ export class ContactService {
     return { status: status.key, statusLabel: status.label }
   }
 
+  /** Bổ sung số còn thiếu theo UUID thật, bằng nguồn đã cấp quyền cho cùng phiên. */
+  async loadFavoriteNumbers(contacts, context, signal) {
+    const ids = new Set()
+    for (const contact of contacts) {
+      if (!contact.number && WAZO_USER_UUID.test(contact.uuid)) ids.add(contact.uuid)
+    }
+    const requested = [...ids]
+    const numbers = new Map()
+    try {
+      for (let offset = 0; offset < requested.length; offset += DIRECTORY_PAGE_SIZE) {
+        const batch = requested.slice(offset, offset + DIRECTORY_PAGE_SIZE)
+        const members = await this.readPublishedMembers(batch, context, signal)
+        for (const member of members) {
+          if (member.number) numbers.set(member.uuid, member.number)
+        }
+      }
+    } catch {
+      assertSessionContext(context)
+      signal?.throwIfAborted()
+      // Nếu nguồn từ chối hoặc tạm lỗi, giữ dữ liệu do API Yêu thích trả và báo thiếu máy lẻ.
+      return
+    }
+    assertSessionContext(context)
+    signal?.throwIfAborted()
+    for (const contact of contacts) {
+      if (!contact.number && numbers.has(contact.uuid)) contact.number = numbers.get(contact.uuid)
+    }
+  }
+
   /** Đọc riêng danh sách yêu thích khi vào tab; chỉ cắt trang trong tập yêu thích của chính user. */
   async getFavoritePage({ term = '', offset = 0, signal } = {}) {
     const context = captureSessionContext()
@@ -502,11 +549,19 @@ export class ContactService {
       )
       const contacts = mapDirectoryContacts(Array.isArray(data) ? { items: data } : data)
       if (!contacts) throw new Error('Wazo trả danh sách yêu thích không hợp lệ.')
+      await this.loadFavoriteNumbers(contacts, context, signal)
+      assertSessionContext(context)
+      signal?.throwIfAborted()
       for (const contact of contacts) contact.isFavorite = true
       this.state.favoriteIds = [
         ...new Set(contacts.flatMap((contact) => [contact.rawId, contact.uuid]).filter(Boolean)),
       ]
-      this.state.favoriteContacts = this.rememberDirectoryContacts(contacts)
+      /** Giữ thẻ chưa có số trong Yêu thích mà không ghi đè định danh đầy đủ đã đọc từ Dird. */
+      const rememberFavorite = (contact) => {
+        if (contact.number) return this.rememberDirectoryContacts([contact])[0]
+        return { ...contact, ...this.directoryContactStatus(contact.uuid) }
+      }
+      this.state.favoriteContacts = contacts.map(rememberFavorite)
     }
     const normalized = normalizeDirectoryText(term).replace(/@samsung\.com$/, '')
     const items = this.state.favoriteContacts.filter(
@@ -524,6 +579,9 @@ export class ContactService {
       total: items.length,
       nextOffset: nextOffset < items.length ? nextOffset : null,
       pageKey: JSON.stringify(contacts.map((contact) => [contact.id, contact.number])),
+      notice: this.state.favoriteContacts.some((contact) => contact.isFavorite && !contact.number)
+        ? 'Chưa đọc được máy lẻ của một số liên hệ yêu thích.'
+        : '',
     }
   }
 

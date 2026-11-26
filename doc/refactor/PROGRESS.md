@@ -1,5 +1,9 @@
 # Nhật ký refactor SmartCall Web
 
+26/11/2026. Danh bạ phân trang dùng tenant đã xác minh của token khi đọc Dird, như luồng Web gọi trực tiếp. Nếu Confd trả 401 khi bổ sung `description`, backend kiểm tra lại token với Wazo Auth. Token còn hiệu lực và Dird đã trả dữ liệu thì vẫn hiển thị liên hệ, số máy lẻ và cảnh báo thiếu bộ phận. Token hết hiệu lực hoặc Dird từ chối đọc vẫn chặn kết quả. Lỗi API chỉ rõ bước Wazo bị lỗi.
+
+Yêu thích đọc số nội bộ từ bảng Dird hoặc bổ sung số thiếu theo UUID qua `/api/directory/members`. Khi nguồn từ chối, liên hệ vẫn hiện trong Yêu thích với số bỏ trống. Frontend giữ mã HTTP và báo lỗi backend rõ hơn khi proxy trả body rỗng hoặc HTML. Luồng chuẩn bị gọi tiếp tục xác minh chủ máy lẻ và trạng thái trước khi gửi SIP.
+
 26/11/2026. Bổ sung [bảng API hiện hành và cách test trên Postman](../SMARTCALL_API_POSTMAN.md). Backend có tùy chọn `SMARTCALL_IDP_LOG_CLAIM_SCHEMA` để kiểm tra tên và kiểu trường trả về khi đăng nhập Single ID. Tùy chọn mặc định tắt và không ghi giá trị token hoặc claim.
 
 26/11/2026. Màn Gọi nhóm dùng thẻ nhóm với nút Gọi dễ nhận biết và mở bố cục riêng khi tạo hoặc sửa. Danh sách người đã chọn hiển thị avatar chữ, tên và máy lẻ bên cạnh bộ chọn danh bạ. Các biểu tượng giao diện Web dùng chung [UiIcon.vue](../../frontend/src/components/common/UiIcon.vue). Màn gọi, danh bạ, nhóm gọi, lịch sử, đăng nhập, điều hướng, cài đặt và nhật ký chọn icon bằng tên. Danh sách chọn trạng thái của trình duyệt dùng cùng bảng ký tự để giữ tùy chọn HTML chuẩn.

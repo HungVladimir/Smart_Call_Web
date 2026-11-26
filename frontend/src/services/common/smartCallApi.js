@@ -10,9 +10,21 @@ export async function requestSmartCall(path, token, { method = 'GET', body, sign
     body: body ? JSON.stringify(body) : undefined,
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })
-  const data = await response.json()
+  let data
+  try {
+    data = await response.json()
+  } catch (error) {
+    // Proxy có thể trả body rỗng hoặc HTML. Giữ lại mã HTTP và để lỗi hủy/đổi phiên đi tiếp.
+    if (!(error instanceof SyntaxError)) throw error
+    throw Object.assign(
+      new Error(
+        `Phản hồi từ backend SmartCall không đọc được (HTTP ${response.status}). Kiểm tra FastAPI và cấu hình proxy.`,
+      ),
+      { status: response.status },
+    )
+  }
   if (!response.ok) {
-    const detail = data.detail
+    const detail = data?.detail
     throw Object.assign(
       new Error(
         typeof detail === 'string' ? detail : detail?.message || 'Backend chưa hoàn tất yêu cầu.',

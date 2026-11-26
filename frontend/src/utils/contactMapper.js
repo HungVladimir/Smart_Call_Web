@@ -48,6 +48,7 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
         item.extension ||
         item.number ||
         item.callable ||
+        item.number_office ||
         item.phone_number ||
         (typeof firstNumber === 'object'
           ? firstNumber?.number || firstNumber?.exten

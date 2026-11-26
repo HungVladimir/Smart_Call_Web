@@ -158,12 +158,15 @@ class Directory:
         return self.locks[hash(scope) % len(self.locks)]
 
     # Xác minh token bằng Auth của cùng Wazo host. Không nhận tenant hoặc actor từ trình duyệt.
-    async def actor(self, token):
+    async def actor(self, token, *, fresh=False):
         try:
             token = str(UUID(token or ""))
         except ValueError:
             raise HTTPException(401, "Cần token Wazo hợp lệ.") from None
         key = hashlib.sha256(token.encode()).hexdigest()
+        # Confd có thể từ chối quyền riêng hoặc token vừa hết hạn, nên lần kiểm tra đó phải hỏi Auth thật.
+        if fresh:
+            self.identities.pop(key, None)
         cached = self.identities.get(key)
         if cached and cached[0] > monotonic():
             return cached[1], token, key
@@ -183,36 +186,39 @@ class Directory:
         self.identities[key] = (monotonic() + 15, user)
         return user, token, key
 
-    # Gọi API bằng quyền người dùng ở tenant đã xác minh và phân biệt lỗi với kết quả rỗng.
-    async def read(self, path, token, **params):
+    # Gọi API bằng token người dùng và nêu rõ bước lỗi mà không trả URL, token hay payload upstream.
+    async def read(self, path, token, *, operation, **params):
+        headers = {"X-Auth-Token": token}
+        # Với Dird, dùng tenant gốc của token như Web gọi trực tiếp. actor đã đối chiếu tenant này.
+        if not path.startswith("/api/dird/"):
+            headers["Wazo-Tenant"] = self.wazo.settings.wazo_tenant_uuid
         try:
-            response = await self.wazo.client.get(self.wazo.settings.wazo_url + path, params=params,
-                headers={"X-Auth-Token": token, "Wazo-Tenant": self.wazo.settings.wazo_tenant_uuid})
+            response = await self.wazo.client.get(
+                self.wazo.settings.wazo_url + path, params=params, headers=headers)
         except httpx.RequestError:
-            raise HTTPException(502, "Chưa kết nối được nguồn Wazo.") from None
+            raise HTTPException(502, f"Chưa kết nối được {operation}.") from None
         if not response.is_success:
             status = response.status_code if response.status_code in (401, 403) else 502
-            raise HTTPException(status, f"Nguồn Wazo trả HTTP {response.status_code}.")
+            raise HTTPException(status, f"{operation} trả HTTP {response.status_code}.")
         try:
             data = response.json()
         except ValueError:
-            raise HTTPException(502, "Nguồn Wazo trả dữ liệu không hợp lệ.") from None
+            raise HTTPException(502, f"{operation} trả dữ liệu không hợp lệ.") from None
         if not isinstance(data, dict):
-            raise HTTPException(502, "Nguồn Wazo trả dữ liệu không hợp lệ.")
+            raise HTTPException(502, f"{operation} trả dữ liệu không hợp lệ.")
         return data
 
     # Đọc lại profile trên mỗi lượt để quyền nguồn bị thu hồi không dùng lại snapshot.
     async def contacts(self, source, token, key, refresh=False):
         path = f"/api/dird/0.1/backends/wazo/sources/{source}/contacts"
         scope = (key, source)
-        sources = await self.read("/api/dird/0.1/directories/default/sources", token, backend="wazo")
-        if not any(str(item.get("uuid")) == source for item in sources.get("items", [])):
-            self.samples.pop(scope, None)
-            self.presence.pop(scope, None)
-            raise HTTPException(403, "Nguồn danh bạ không thuộc profile Wazo.")
         try:
+            sources = await self.read("/api/dird/0.1/directories/default/sources", token,
+                                      operation="Wazo Dird (danh sách nguồn)", backend="wazo")
+            if not any(str(item.get("uuid")) == source for item in sources.get("items", [])):
+                raise HTTPException(403, "Nguồn danh bạ không thuộc profile Wazo.")
             # Profile có source vẫn cần quyền thực đọc endpoint danh bạ.
-            await self.read(path, token, limit=1, offset=0)
+            await self.read(path, token, operation="Wazo Dird (liên hệ)", limit=1, offset=0)
         except HTTPException:
             self.samples.pop(scope, None)
             self.presence.pop(scope, None)
@@ -247,7 +253,7 @@ class Directory:
     async def load_rows(self, path, token):
         rows, seen = [], set()
         for offset in range(0, 10000, 100):
-            data = await self.read(path, token, limit=100, offset=offset)
+            data = await self.read(path, token, operation="Wazo Dird (liên hệ)", limit=100, offset=offset)
             page = data.get("items")
             if not isinstance(page, list) or len(page) > 100:
                 raise HTTPException(502, "Nguồn Dird không trả trang hợp lệ.")
@@ -281,14 +287,15 @@ class Directory:
         path = "/api/confd/1.1/users"
         for batch in uuid_batches(missing, "uuid"):
             try:
-                data = await self.read(path, token, view="directory", uuid=",".join(batch),
-                                       limit=len(batch), recurse="false")
+                data = await self.read(path, token, operation="Wazo Confd (bộ phận)",
+                                       view="directory", uuid=",".join(batch), limit=len(batch), recurse="false")
                 if not isinstance(data.get("items"), list):
                     raise HTTPException(502, "Nguồn Confd không trả danh sách bộ phận.")
             except HTTPException as error:
                 if error.status_code == 401:
-                    raise
-                if error.status_code == 403:
+                    await self.actor(token, fresh=True)
+                # Chỉ thiếu phần bổ sung khi token còn hiệu lực nhưng Confd từ chối.
+                if error.status_code in (401, 403):
                     return "Tài khoản chưa có quyền đọc đầy đủ bộ phận từ Wazo."
                 notice = "Chưa cập nhật được một phần bộ phận từ Wazo."
                 continue
@@ -308,7 +315,7 @@ class Directory:
         path = "/api/chatd/1.0/users/presences"
         scope = (key, source)
         try:
-            await self.read(path, token, user_uuid=user)
+            await self.read(path, token, operation="Wazo Chatd (trạng thái)", user_uuid=user)
         except HTTPException:
             self.presence.pop(scope, None)
             raise
@@ -319,7 +326,7 @@ class Directory:
             ids = [row["uuid"] for row in snapshot.rows]
             states = {}
             for batch in uuid_batches(ids, "user_uuid"):
-                data = await self.read(path, token, user_uuid=",".join(batch))
+                data = await self.read(path, token, operation="Wazo Chatd (trạng thái)", user_uuid=",".join(batch))
                 items = data.get("items")
                 if isinstance(items, dict):
                     items = [dict(record, uuid=uuid) for uuid, record in items.items()
