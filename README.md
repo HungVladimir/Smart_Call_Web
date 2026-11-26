@@ -27,6 +27,21 @@ if (!(Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 
 Điền cấu hình IdP, Redis và Wazo cho môi trường của bạn theo danh sách biến trong backend/.env.example. Origin Web và callback đăng ký với IdP phải khớp môi trường đang chạy. Mở Web trên origin đó rồi chọn đăng nhập Single ID.
 
+## API danh bạ cho Web và App
+
+Gửi token Wazo của người đăng nhập trong header X-Auth-Token. App có thể bỏ source để backend lấy nguồn Wazo đầu tiên trong profile Dird của người đó. Khi chỉ định source, backend kiểm tra quyền đọc nguồn đó.
+
+~~~http
+GET /api/directory/contacts?term=nguyen%20an&limit=30&offset=0
+X-Auth-Token: <WAZO_USER_TOKEN>
+~~~
+
+Route trả items, total, offset và có thể kèm notice về dữ liệu bộ phận. Các trường chung mỗi liên hệ gồm uuid, name, number, email, employee_id, department và department_state. Giữ number và employee_id dưới dạng chuỗi để bảo toàn số 0 đầu. department_state gồm confirmed, empty và unknown.
+
+- Bỏ field để tìm cùng lúc theo tên, máy lẻ, email, mã nhân viên và bộ phận. Có thể gửi thêm department hoặc presence (online/offline). limit mặc định là 30, tối đa 50.
+- GET /api/directory/departments dùng cùng header, source là tùy chọn và trả items, has_unassigned và notice.
+- App gọi host HTTPS đã triển khai SmartCall. Trong môi trường dev trên máy tính, có thể gọi FastAPI ở cổng 8801.
+
 ## Đọc code từ đâu
 
 | Muốn đọc | Bắt đầu ở đây |

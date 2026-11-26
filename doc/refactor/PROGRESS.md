@@ -1,5 +1,10 @@
 # Nhật ký refactor SmartCall Web
 
+## Tìm danh bạ bằng một ô cho Web và App
+
+26/11/2026. Danh bạ Web và bộ chọn nhóm đã lưu gửi term chung, không dùng dropdown kiểu tìm kiếm. Khi xem một bộ phận có thể nhập từ khóa để thu hẹp. Web hiện tối đa 50 kết quả mỗi lượt tìm, ô trống ở tab Tất cả vẫn hiện liên hệ gần đây. Bộ lọc trạng thái của Yêu thích và tìm theo trường cụ thể của modal mời vào cuộc gọi vẫn dùng luồng hiện có. API chung hỗ trợ source mặc định theo quyền Dird, lọc, phân trang và trường department chuẩn hóa. Chính sách đọc Confd vẫn theo token của người dùng.
+
+
 26/11/2026. Web bỏ phân trang trong các màn danh bạ và bộ chọn thành viên. Tất cả mặc định hiện liên hệ gần đây. Tìm riêng theo tên, máy lẻ, mã nhân viên hoặc email. Máy lẻ khớp toàn bộ số và mặc định cần 4 chữ số. Có thể đặt `VITE_DIRECTORY_EXTENSION_DIGITS=5` rồi build lại khi đổi dải số. Truy vấn rộng hiện tối đa 50 kết quả và yêu cầu thu hẹp. FastAPI vẫn có thể đọc từng lô từ Wazo để xây snapshot theo quyền nguồn.
 
 Yêu thích tải một danh sách và lọc trực tuyến/ngoại tuyến tại chỗ. Mục thiếu số được ghép theo UUID hoặc ID liên hệ thuộc đúng nguồn Dird. Bộ phận chỉ hiện tùy chọn chưa khai báo khi nguồn xác nhận có bản ghi rỗng. Nếu Dird không công bố `description` và Confd từ chối đọc, danh sách bộ phận có thể còn thiếu. Tab Gọi nhóm mở các nhóm đã lưu, nút Tạo nhóm mở biểu mẫu riêng. Khi Lookup thiếu kết quả, chuẩn bị cuộc gọi tra mới nguồn danh bạ, đối chiếu toàn bộ máy lẻ, UUID đã chọn và presence trước SIP.

@@ -290,12 +290,14 @@ export class ContactService {
     return mapped.filter((contact) => requested.has(contact.uuid) || entries.has(contact.rawId))
   }
 
-  /** Tải kết quả tìm theo một trường hoặc toàn bộ một bộ phận đã chọn. */
+  /** Tải kết quả tìm chung, tìm theo trường riêng hoặc xem một bộ phận đã chọn. */
   async listPublishedContacts({ field, term = '', department = '', refresh = false, signal }) {
     const context = captureSessionContext()
     const source = await this.getDirectorySource(context)
     signal?.throwIfAborted()
-    const params = new URLSearchParams({ source: source.uuid, field, term, department })
+    const params = new URLSearchParams({ source: source.uuid, term, department })
+    if (field) params.set('field', field)
+    else params.set('limit', '50')
     if (refresh) params.set('refresh', 'true')
     const data = await requestSmartCall(
       'directory/contacts?' + params,
@@ -312,7 +314,9 @@ export class ContactService {
     })
     if (!contacts) throw new Error('Backend trả danh bạ không hợp lệ.')
     const notice = [
-      data.limited ? 'Đang hiện 50 kết quả đầu. Hãy nhập cụ thể hơn để thu hẹp.' : '',
+      data.limited || (Number.isInteger(data.total) && data.total > contacts.length)
+        ? `Đang hiện ${contacts.length} kết quả đầu. Hãy nhập cụ thể hơn để thu hẹp.`
+        : '',
       data.notice,
     ]
       .filter(Boolean)

@@ -17,29 +17,20 @@
         <slot v-if="active" name="groups" />
       </div>
       <template v-else>
-        <div v-if="activeTab !== 'department'" class="directory-toolbar">
-          <select
-            v-if="activeTab === 'all'"
-            v-model="field"
-            aria-label="Tìm theo"
-            class="directory-field"
-          >
-            <option v-for="option in searchFields" :key="option.id" :value="option.id">
-              {{ option.label }}
-            </option>
-          </select>
+        <div v-if="activeTab !== 'department' || department" class="directory-toolbar">
           <div class="directory-search">
             <UiIcon name="search-outline" />
             <input
               v-model="term"
               type="search"
-              :inputmode="field === 'extension' && activeTab === 'all' ? 'numeric' : 'search'"
+              inputmode="search"
               :aria-label="searchPlaceholder"
               :placeholder="searchPlaceholder"
               @search="clearUrlSearch"
             />
           </div>
           <button
+            v-if="activeTab !== 'department'"
             type="button"
             class="directory-refresh"
             aria-label="Làm mới danh bạ"
@@ -140,7 +131,7 @@ import ContactCard from './ContactCard.vue'
 import UiIcon from '@/components/common/UiIcon.vue'
 import { useDirectoryResults } from '@/composables/useDirectoryResults.js'
 import { normalizeDirectoryText } from '@/utils/contactMapper.js'
-import { DIRECTORY_EXTENSION_DIGITS, directorySearchHint } from '@/utils/directorySearch.js'
+import { directorySearchHint } from '@/utils/directorySearch.js'
 import { getFeatures } from '@/config/features.js'
 
 const props = defineProps({
@@ -169,15 +160,8 @@ const directoryTabs = [
   { id: 'department', label: 'Bộ phận', icon: 'office' },
   { id: 'group', label: 'Gọi nhóm', icon: 'users' },
 ]
-const searchFields = [
-  { id: 'name', label: 'Tên' },
-  { id: 'extension', label: 'Máy lẻ' },
-  { id: 'employee_id', label: 'Mã nhân viên' },
-  { id: 'email', label: 'Email' },
-]
 const activeTab = ref('all')
 const term = ref('')
-const field = ref('name')
 const department = ref('')
 const presence = ref('')
 const departments = ref([])
@@ -191,38 +175,43 @@ let departmentRequest
 /** Cờ gọi nhóm chỉ ảnh hưởng lối vào danh sách nhóm. */
 const tabs = computed(() => (groupsEnabled.value ? directoryTabs : directoryTabs.slice(0, 3)))
 
-/** Áp từ khóa được chuyển từ màn khác. Chuỗi số đi thẳng vào kiểu tìm máy lẻ. */
+/** Áp từ khóa từ màn hình khác vào ô tìm chung. */
 function syncSearchQuery(value) {
   term.value = value
   if (!value) return
   activeTab.value = 'all'
-  if (/^\d+$/.test(value.trim())) field.value = 'extension'
 }
 watch(() => props.searchQuery, syncSearchQuery, { immediate: true })
 
 /** Hiện lịch sử ở Tất cả khi chưa gõ, bộ chọn nhóm chỉ hiện khi tìm. */
 const showRecent = computed(() => !props.picker && activeTab.value === 'all' && !term.value.trim())
 
-/** Mô tả điều kiện nhập của chế độ tìm hiện tại. */
-const queryHint = computed(() =>
-  activeTab.value === 'all' ? directorySearchHint(field.value, term.value.trim()) : '',
-)
-
-/** Điền gợi ý đúng trường mà người dùng đang tìm. */
-const searchPlaceholder = computed(function getSearchPlaceholder() {
-  if (activeTab.value === 'favorites') return 'Tìm trong Yêu thích'
-  if (field.value === 'extension') return `Nhập ${DIRECTORY_EXTENSION_DIGITS} chữ số máy lẻ`
-  return 'Tìm theo ' + searchFields.find((option) => option.id === field.value).label.toLowerCase()
+/** Chờ đủ ký tự trước khi tìm trên nguồn danh bạ. Yêu thích lọc tại chỗ. */
+const queryHint = computed(function getQueryHint() {
+  if (activeTab.value === 'favorites' || (activeTab.value === 'department' && !department.value))
+    return ''
+  return directorySearchHint('', term.value.trim())
 })
 
-/** Lấy danh sách của tab hiện tại, luôn có điều kiện để tìm từ nguồn toàn danh bạ. */
+/** Hiện các kiểu dữ liệu người dùng có thể nhập trong cùng một ô. */
+const searchPlaceholder = computed(function getSearchPlaceholder() {
+  if (activeTab.value === 'favorites') return 'Tìm trong Yêu thích'
+  if (activeTab.value === 'department') return 'Tìm trong bộ phận đã chọn'
+  return 'Tìm tên, máy lẻ, email, mã nhân viên hoặc bộ phận'
+})
+
+/** Tạo truy vấn mới từ đầu khi đổi từ khóa. Tab bộ phận trống từ khóa vẫn xem cả bộ phận. */
 function getQuery() {
-  if (!props.active) return null
+  if (!props.active || activeTab.value === 'group') return null
   if (activeTab.value === 'favorites') return { tab: 'favorites' }
-  if (activeTab.value === 'department')
-    return department.value ? { field: 'department', department: department.value } : null
-  if (activeTab.value === 'group' || !term.value.trim() || queryHint.value) return null
-  return { field: field.value, term: term.value.trim() }
+  const keyword = term.value.trim()
+  if (activeTab.value === 'department') {
+    if (!department.value || queryHint.value) return null
+    if (!keyword) return { field: 'department', department: department.value }
+    return { term: keyword, department: department.value }
+  }
+  if (!keyword || queryHint.value) return null
+  return { term: keyword }
 }
 
 /** View cung cấp lệnh đọc dữ liệu phù hợp với tab. */
@@ -248,7 +237,7 @@ function matchesFavorite(contact) {
   const keyword = normalizeDirectoryText(term.value).replace(/@samsung\.com$/, '')
   return (
     !keyword ||
-    [contact.name, contact.number, contact.email, contact.employeeId].some((value) =>
+    [contact.name, contact.number, contact.email, contact.employeeId, contact.dept].some((value) =>
       normalizeDirectoryText(value).includes(keyword),
     )
   )
@@ -439,8 +428,7 @@ onUnmounted(stopPresenceRefresh)
   background: #f8fafc;
 }
 .directory-panel button,
-.directory-controls select,
-.directory-field {
+.directory-controls select {
   min-height: 34px;
   padding: 6px 10px;
   border: 1px solid var(--directory-line);
@@ -489,8 +477,7 @@ onUnmounted(stopPresenceRefresh)
   max-width: 100%;
   color: var(--directory-muted);
 }
-.directory-controls select,
-.directory-field {
+.directory-controls select {
   max-width: min(280px, 55vw);
 }
 .directory-filters {
@@ -565,9 +552,6 @@ onUnmounted(stopPresenceRefresh)
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
-}
-.directory-field {
-  max-width: 38%;
 }
 @media (max-width: 460px) {
   .directory-tabs button {

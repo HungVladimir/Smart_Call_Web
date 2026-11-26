@@ -1,5 +1,8 @@
 # Kiểm chứng bản refactor dễ đọc
 
+26/11/2026. Tìm danh bạ chung cho Web và App. Lint, kiểm tra kiến trúc 55 module và build đạt. Vitest đạt 191 ca, 35 ca bỏ qua. Unittest backend đạt 55 ca, một ca bỏ qua. Ca kiểm tra dùng dữ liệu Wazo mô phỏng, gồm bỏ source, nguồn không được cấp quyền, máy lẻ khớp chính xác, mã có số 0 đầu, lọc bộ phận và truy vấn nhiều trang. Chưa thử với Wazo thật. Vite còn cảnh báo kích thước bundle.
+
+
 Đợt xử lý tồn đọng sau `81de05f` đã chạy `npm run check`, `format:check` và toàn bộ unittest backend. Frontend đạt 180 ca, 35 ca cho tính năng đã gỡ được đánh dấu bỏ qua trong bộ test cục bộ. Backend đạt 48 ca, một suite chat cũ được bỏ qua. Các ca mới kiểm tra máy lẻ đổi chủ khi preview còn chờ, nhánh chính kết thúc sớm, quyền khác nhau trên cùng nguồn danh bạ, làm mới và lùi trang theo tổng số. Bộ test mô phỏng 3.000 liên hệ, còn phép đo 3.000 phiên đồng thời phải thực hiện trên môi trường thử được cấp quyền.
 
 Cache danh bạ tách theo token và source trong từng worker. Quyền truy cập nguồn được đối chiếu khi đọc. Nếu Wazo thay đổi phạm vi của từng dòng nhưng nguồn vẫn cho đọc, bản đã tải có thể tồn tại tối đa theo TTL 120 giây. Cần thử ACL, sự kiện SIP sớm, Android, IdP, proxy và giới hạn tải trên môi trường công ty. Bản triển khai cần cập nhật cả FastAPI và frontend.

@@ -26,6 +26,7 @@ class DirectorySnapshot:
     fetched_at: str
     loaded_at: float
     notice: str = ""
+    source: str = ""
 
 
 # Chia UUID theo cả số lượng và độ dài truy vấn đã mã hóa để qua được proxy.
@@ -81,35 +82,68 @@ def published_row(contact, user_uuid):
     return dict(published, uuid=user_uuid, number=str(number))
 
 
-# Xếp kết quả chính xác trước, dùng UUID để ổn định thứ tự giữa các trang.
+# Chuẩn hóa trường công khai để Web và App dùng cùng dữ liệu danh bạ.
+def public_contact(row):
+    return dict(
+        row,
+        name=contact_name(row),
+        number=str(row.get("number") or row.get("extension") or row.get("exten") or ""),
+        email=row.get("email") or "",
+        employee_id=str(row.get("employee_id") or row.get("epId") or ""),
+        department=department_name(row),
+        department_state=row.get("department_state", "unknown"),
+    )
+
+
+# Dựng tên hiển thị từ các dạng dữ liệu mà Dird có thể trả.
+def contact_name(row):
+    return str(row.get("name") or row.get("display_name") or row.get("displayName") or
+               " ".join(str(row.get(key) or "") for key in ("firstname", "lastname"))).strip()
+
+
+# Ưu tiên máy lẻ và email khớp nguyên giá trị trước các chuỗi chỉ chứa từ khóa.
+def search_rank(row, name, department, term):
+    if not term:
+        return 0
+    extension = normalize(row.get("number") or row.get("extension") or row.get("exten"))
+    email = normalize(row.get("email"))
+    employee_id = search_field(row, "employee_id")
+    email_username = email.partition("@")[0]
+    fields = (name, extension, email, employee_id, department)
+    if term == extension or term == email:
+        return 0
+    if term in (name, employee_id, department, email_username):
+        return 1
+    if any(term in field for field in fields):
+        return 2
+    return None
+
+
+# Lọc theo từ khóa chung và các bộ lọc, rồi sắp ổn định trước khi cắt trang.
 def search_page(rows, term, department, presence, states, offset, limit, owner):
-    term = normalize(term).removesuffix("@samsung.com")
+    term = normalize(term)
+    department_filter = normalize(department)
     selected = []
     for row in rows:
         if row.get("uuid") == owner:
             continue
+        department_label = normalize(department_name(row))
         if department == "__unassigned__":
-            if department_name(row) or row.get("department_state") == "unknown":
+            if department_label or row.get("department_state") == "unknown":
                 continue
-        elif department and normalize(department_name(row)) != normalize(department):
+        elif department_filter and department_label != department_filter:
             continue
         if presence and states.get(row.get("uuid")) != presence:
             continue
-        name = normalize(row.get("name") or row.get("display_name") or
-                         " ".join(str(row.get(key) or "") for key in ("firstname", "lastname")))
-        email = normalize(row.get("email") or ((row.get("emails") or [{}])[0]).get("email"))
-        fields = (name, normalize(row.get("number") or row.get("extension") or row.get("exten")),
-                  email, normalize(row.get("employee_id") or row.get("epId")),
-                  normalize(department_name(row)))
-        if term and not any(term in field for field in fields):
-            continue
-        selected.append((0 if term in fields else 1, name, str(row.get("uuid") or ""), row))
+        name = search_field(row, "name")
+        rank = search_rank(row, name, department_label, term)
+        if rank is not None:
+            selected.append((rank, name, str(row.get("uuid") or ""), row))
     selected.sort(key=directory_order)
     total = len(selected)
     offset = min(offset, max(0, (total - 1) // limit) * limit)
-    return {"items": [item[3] for item in selected[offset:offset + limit]],
+    return {"items": [public_contact(item[3]) for item in selected[offset:offset + limit]],
             "total": total, "offset": offset}
-
 
 # Chỉ dùng kiểu so sánh được và không phụ thuộc nội dung từ điển.
 def directory_order(item):
@@ -140,8 +174,7 @@ def search_contacts(rows, field, term, department, owner):
 # Chuẩn hóa đúng trường đã chọn, giữ số 0 đầu mã nhân viên.
 def search_field(row, field):
     if field == "name":
-        return normalize(row.get("name") or row.get("display_name") or row.get("displayName") or
-                         " ".join(str(row.get(key) or "") for key in ("firstname", "lastname")))
+        return normalize(contact_name(row))
     if field == "employee_id":
         return normalize(row.get("employee_id") or row.get("epId"))
     return normalize(row.get(field))
@@ -240,15 +273,31 @@ class Directory:
             raise HTTPException(502, f"{operation} trả dữ liệu không hợp lệ.")
         return data
 
+    # Chọn nguồn mặc định theo thứ tự Dird hoặc đối chiếu nguồn do client yêu cầu.
+    def select_source(self, sources, requested):
+        items = sources.get("items")
+        if not isinstance(items, list):
+            raise HTTPException(502, "Wazo Dird không trả danh sách nguồn hợp lệ.")
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                source_id = str(UUID(str(item.get("uuid"))))
+            except ValueError:
+                continue
+            if requested is None or source_id == requested:
+                return source_id
+        raise HTTPException(403, "Không có nguồn danh bạ phù hợp trong profile Wazo.")
+
     # Đọc lại profile trên mỗi lượt để quyền nguồn bị thu hồi không dùng lại snapshot.
     async def contacts(self, source, token, key, refresh=False):
-        path = f"/api/dird/0.1/backends/wazo/sources/{source}/contacts"
         scope = (key, source)
         try:
             sources = await self.read("/api/dird/0.1/directories/default/sources", token,
                                       operation="Wazo Dird (danh sách nguồn)", backend="wazo")
-            if not any(str(item.get("uuid")) == source for item in sources.get("items", [])):
-                raise HTTPException(403, "Nguồn danh bạ không thuộc profile Wazo.")
+            source = self.select_source(sources, source)
+            path = f"/api/dird/0.1/backends/wazo/sources/{source}/contacts"
+            scope = (key, source)
             # Profile có source vẫn cần quyền thực đọc endpoint danh bạ.
             await self.read(path, token, operation="Wazo Dird (liên hệ)", limit=1, offset=0)
         except HTTPException:
@@ -275,7 +324,7 @@ class Directory:
                 elif valid:
                     return cached, "failed"
                 raise
-            snapshot = DirectorySnapshot(rows, datetime.now(timezone.utc).isoformat(), monotonic(), notice)
+            snapshot = DirectorySnapshot(rows, datetime.now(timezone.utc).isoformat(), monotonic(), notice, source)
             self.remember(self.samples, scope, snapshot)
             if refresh:
                 self.remember(self.refresh_after, scope, snapshot.loaded_at + MANUAL_REFRESH_INTERVAL)
