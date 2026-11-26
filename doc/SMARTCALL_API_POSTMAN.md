@@ -65,7 +65,8 @@ Prefix URL: `{{smartcall_origin}}` (Vite proxy chuyển tiếp `/api/*` sang `ht
 | `GET /api/auth/idp-logout/continue` | Tiêu thụ vé một lần (GETDEL) và redirect trình duyệt sang IdP | Trình duyệt chuyển trang theo `redirect_url` ở bước trên | **URL:** `{{smartcall_origin}}/api/auth/idp-logout/continue`<br>**Settings:** Tắt *Automatically follow redirects*<br>**Headers:** `Cookie: smartcall_logout=<ticket>`<br>**Kỳ vọng:** `302 Found` trỏ tới `end_session_endpoint` kèm `id_token_hint` và `post_logout_redirect_uri`. Bấm **Send** lần 2 với cùng ticket → phải lỗi `400 IDP_LOGOUT_EXPIRED`. |
 | `GET /api/wrapper/contexts` | Đọc nhanh danh sách context Confd (bản tương thích pilot đầu) | Android/Postman kiểm tra nhanh context bằng token quản trị backend | **URL:** `{{smartcall_origin}}/api/wrapper/contexts?limit=30&offset=0`<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Accept: application/json`<br>**Kỳ vọng:** `200 OK`, trả `{items, total, offset}` (chỉ gồm `uuid, name, label, type, enabled`). Chưa bật env key → `404`; sai key → `401`. |
 | `POST /api/wrapper` | Cổng trung gian dùng chung cho App, Web, Postman gọi API Wazo bằng token quản trị server | Đọc `description`/hồ sơ user khác, gọi API Wazo (`GET/POST/PUT/DELETE/PATCH`) thuộc phạm vi cho phép | **URL:** `{{smartcall_origin}}/api/wrapper`<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json` *(trình duyệt cần thêm `Origin: {{smartcall_origin}}`)*<br>**Body (raw JSON):** `{"method": "GET", "path": "/api/confd/1.1/users/{{member_a}}", "query": {"view": "directory"}}` *(hoặc `PUT` cập nhật `{"description": "..."}` kèm `"body"`)*<br>**Kỳ vọng:** `200`/`201` trả JSON Wazo đã lọc bỏ `auth, password, userfield, secret`. Chặn `403` với `/api/auth/*`, `.../endpoints/sip` (trừ đọc `templates`), `.../password*`, `DELETE /users*`, path `..`. |
-| `POST /api/register` | Đăng ký tài khoản Wazo mới (check trùng mail/username -> tạo user + ghi `description` -> trả user token login) | Web và Android tạo user mới không cần biết credential quản trị | **URL:** `{{smartcall_origin}}/api/register`<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json` *(trình duyệt cần `Origin: {{smartcall_origin}}`)*<br>**Body (raw JSON):** `{"firstname": "An", "lastname": "Nguyen", "username": "an.nguyen", "email": "an.nguyen@samsung.com", "department": "AI Transformation Part(SDV)", "client_id": "smartcall-android"}`<br>**Kỳ vọng:** `200 OK` trả `created: true`, `user_uuid`, `extension`, `description`, `token`, `refresh_token`. Trùng email/username → `409`. |
+| `GET / POST /api/register/check-email` | Kiểm tra email đã tồn tại trên Wazo chưa; nếu đã có thì trả về thông tin user công khai (không lộ secret) | Android / Web kiểm tra trước khi đăng ký tài khoản mới | **URL POST:** `{{smartcall_origin}}/api/register/check-email` (hoặc `GET .../check-email?email={{test_email}}`)<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`<br>**Body POST (raw JSON):** `{"email": "{{test_email}}"}`<br>**Kỳ vọng:** `200 OK`: chưa có trả `{"exists": false, "email": "...", "user": null}`; đã có trả `{"exists": true, "email": "...", "user": {"user_uuid", "username", "email", "firstname", "lastname", "department", "description", "extension", "enabled", ...}}`. |
+| `POST /api/register` | Tìm theo email hoặc tạo tài khoản Wazo mới (chưa có → tạo + ghi `description` + trả token; đã có → trả thông tin user hiện có + token nếu đăng nhập được) | Web và Android tạo user mới hoặc lấy lại phiên đăng nhập theo email | **URL:** `{{smartcall_origin}}/api/register`<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json` *(trình duyệt cần `Origin: {{smartcall_origin}}`)*<br>**Body (raw JSON):** `{"firstname": "Test", "lastname": "User 01", "username": "postman.test01", "email": "postman.test01@samsung.com", "department": "AI Transformation Part(SDV)", "client_id": "smartcall-android"}` *(có thể bỏ qua `username` để tự lấy phần trước `@`; nếu email đã có thì chỉ cần `{"email": "..."}`)*<br>**Kỳ vọng:** `200 OK`: tạo mới trả `created: true, exists: false, authenticated: true, token`; email đã tồn tại trả `created: false, exists: true` cùng thông tin user (và `token` mới nếu tài khoản cho phép đăng nhập). Email mới nhưng trùng username user khác → `409 WAZO_USERNAME_EXISTS`. |
 | `GET /api/directory/contacts` | Tìm theo một trường hoặc lấy danh sách của một bộ phận theo quyền user | `DirectoryPanel`, `AddParticipantModal`, `CallGroupsView` dùng `ContactService.listPublishedContacts()` | **URL:** `{{smartcall_origin}}/api/directory/contacts`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Params:** `source={{source_uuid}}`. Chọn `field=name` + `term=An`, `field=extension` + `term=1001`, `field=employee_id` + `term=000007`, `field=email` + `term=an.nguyen`, hoặc `field=department` + `department=AI Transformation Part(SDV)`. Có thể truyền `refresh=true` khi làm mới.<br>**Kỳ vọng:** `200 OK`, JSON `{items, limited, notice, fetched_at, refresh_state}`. Máy lẻ khớp toàn bộ 4 hoặc 5 chữ số. Tìm quá rộng trả tối đa 50 mục với `limited=true`. Bộ phận trả danh sách liền một lần. |
 | `GET /api/directory/departments` | Lấy danh sách tên bộ phận từ toàn bộ nguồn danh bạ mà token được phép đọc | Dropdown bộ phận trong tab Bộ phận (`contactService.listDepartments`) | **URL:** `{{smartcall_origin}}/api/directory/departments`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Params:** `source={{source_uuid}}`, tùy chọn `refresh=true`<br>**Kỳ vọng:** `200 OK`, JSON `{items: ["..."], notice, fetched_at, refresh_state}`. |
 | `GET /api/directory/members` | Phân giải danh sách UUID thành thông tin danh bạ mới nhất thuộc nguồn được cấp quyền | `CallGroupsView` gọi trước khi quay số nhóm đã lưu (`contactService.getSavedGroupMembers`). Tab Yêu thích cũng dùng API này theo lô UUID hoặc `entry_ids` thuộc đúng nguồn khi thiếu máy lẻ. | **URL:** `{{smartcall_origin}}/api/directory/members`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Params (thêm 2 dòng cùng key `ids`):**<br>• `source={{source_uuid}}`<br>• `ids={{member_a}}`<br>• `ids={{member_b}}`<br>**Kỳ vọng:** `200 OK`, JSON `{"items": [...]}` chỉ chứa các UUID thuộc nguồn mà user có quyền. |
@@ -272,22 +273,28 @@ Thêm biến `wrapper_test_key` vào Environment Postman bằng đúng giá tr�
      }
      ```
    - Kỳ vọng: `200 OK` `{"ok": true, "status": 204}`; gọi lại Bước 2 ở trên để xác nhận `description` đã cập nhật.
-3. **Test đăng ký tài khoản mới + tự login (`POST /api/register`):**
-   - `POST {{smartcall_origin}}/api/register`
-   - Headers: `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`
-   - Body (raw JSON):
-     ```json
-     {
-       "firstname": "Test",
-       "lastname": "Nhan Vien",
-       "username": "test.nhanvien",
-       "email": "test.nhanvien@samsung.com",
-       "department": "AI Transformation Part(SDV)",
-       "client_id": "postman-lab"
-     }
-     ```
-   - Kỳ vọng lần 1: `200 OK`, trả `{ "created": true, "user_uuid": "...", "extension": "...", "description": "AI Transformation Part(SDV)", "token": "...", "refresh_token": "..." }`.
-   - Bấm **Send** lần 2 (hoặc đổi `username` giữ nguyên `email`): trả `409 Conflict` (`WAZO_EMAIL_EXISTS`). Đổi `email` mới nhưng giữ nguyên `username`: trả `409 Conflict` (`WAZO_USERNAME_EXISTS`).
+3. **Test kiểm tra email (`POST` hoặc `GET /api/register/check-email`) và đăng ký / lấy thông tin (`POST /api/register`):**
+   - **Bước A — Check email trước:**
+     - `POST {{smartcall_origin}}/api/register/check-email` (hoặc `GET .../check-email?email={{test_email}}`)
+     - Headers: `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`
+     - Body (raw JSON): `{"email": "{{test_email}}"}`
+     - Kỳ vọng: nếu chưa có trả `{"exists": false, "email": "...", "user": null}`; nếu đã có trả `{"exists": true, "email": "...", "user": { "user_uuid", "username", "description", "extension", ... }}`.
+   - **Bước B — Tạo mới hoặc lấy phiên qua `/api/register`:**
+     - `POST {{smartcall_origin}}/api/register`
+     - Headers: `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`
+     - Body (raw JSON):
+       ```json
+       {
+         "firstname": "Test",
+         "lastname": "User 01",
+         "username": "postman.test01",
+         "email": "postman.test01@samsung.com",
+         "department": "AI Transformation Part(SDV)",
+         "client_id": "postman-lab"
+       }
+       ```
+     - Kỳ vọng lần 1 (chưa có email): `200 OK`, `{ "created": true, "exists": false, "authenticated": true, "user_uuid": "...", "extension": "...", "description": "AI Transformation Part(SDV)", "token": "...", "refresh_token": "..." }`.
+     - Bấm **Send** lần 2 (cùng email — thậm chí tối giản chỉ còn `{"email": "postman.test01@samsung.com"}`): vẫn trả `200 OK`, `{ "created": false, "exists": true, "authenticated": true, "user_uuid": "...", "description": "...", "extension": "...", "token": "...", "refresh_token": "..." }` (không lỗi `409` nữa). Với tài khoản tạo từ hệ thống khác chưa gửi `password`, trả `created: false, exists: true, authenticated: false, reason: "WAZO_ACCOUNT_LINK_REQUIRED"` kèm đầy đủ thông tin user. Nếu dùng **email mới** mà giữ `username` đã có → `409 WAZO_USERNAME_EXISTS`.
 
 ---
 
@@ -311,7 +318,18 @@ const wrapperRes = await fetch('/api/wrapper', {
 })
 const targetUser = await wrapperRes.json() // targetUser.description
 
-// 2) Đăng ký tài khoản mới rồi nhận token đăng nhập ngay
+// 2) Kiểm tra email đã tồn tại trên Wazo chưa
+const checkRes = await fetch('/api/register/check-email', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-SmartCall-Test-Key': testKey,
+  },
+  body: JSON.stringify({ email: 'postman.test01@samsung.com' }),
+})
+const checkData = await checkRes.json() // { exists: false, user: null } hoặc { exists: true, user: {...} }
+
+// 3) Tạo tài khoản mới hoặc lấy lại phiên đăng nhập theo email
 const regRes = await fetch('/api/register', {
   method: 'POST',
   headers: {
@@ -320,14 +338,14 @@ const regRes = await fetch('/api/register', {
   },
   body: JSON.stringify({
     firstname: 'Test',
-    lastname: 'Nhan Vien',
-    username: 'test.nhanvien',
-    email: 'test.nhanvien@samsung.com',
+    lastname: 'User 01',
+    username: 'postman.test01',
+    email: 'postman.test01@samsung.com',
     department: 'AI Transformation Part(SDV)',
     client_id: 'smartcall-web',
   }),
 })
-const sessionData = await regRes.json() // sessionData.token, sessionData.refresh_token
+const sessionData = await regRes.json() // created, exists, authenticated, token, refresh_token, user_uuid, extension
 ```
 
 ---
@@ -347,11 +365,17 @@ suspend fun callWazoWrapper(
     @Body body: WrapperRequest // method, path, query, body
 ): Response<JsonObject>
 
+@POST("api/register/check-email")
+suspend fun checkRegisterEmail(
+    @Header("X-SmartCall-Test-Key") testKey: String,
+    @Body body: CheckEmailRequest // email
+): Response<CheckEmailResponse> // exists, email, user
+
 @POST("api/register")
 suspend fun registerAccount(
     @Header("X-SmartCall-Test-Key") testKey: String,
-    @Body body: RegisterRequest // firstname, lastname, username, email, department, client_id
-): Response<RegisterResponse>
+    @Body body: RegisterRequest // email (+ firstname, lastname, username, department khi tạo mới)
+): Response<RegisterResponse> // created, exists, authenticated, reason, user_uuid, ..., token
 ```
 
 > Lưu ý triển khai thực tế: Sau khi kiểm thử xong luồng với `X-SmartCall-Test-Key`, cần thay thế hoặc bổ sung lớp xác thực ứng dụng/ký request trước khi đóng gói phát hành APK/Web bundle để không lộ key dùng chung.
@@ -367,11 +391,12 @@ Import 2 file sau vào Postman (**Import → Files**):
 | `backend_base` | `http://127.0.0.1:8801` (gọi thẳng FastAPI) hoặc `http://localhost:8800` (qua Vite proxy) | Cổng chạy `uvicorn` trong [backend/main.py](../backend/main.py) hoặc `server.port` trong [frontend/vite.config.js](../frontend/vite.config.js). |
 | `public_origin` | `http://localhost:8800` (khớp `SMARTCALL_PUBLIC_ORIGIN`) | Giá trị `SMARTCALL_PUBLIC_ORIGIN` trong `backend/.env` ([.env.example](../backend/.env.example)). |
 | Header `X-SmartCall-Test-Key` (`{{wrapper_test_key}}`) | Chuỗi khóa bí mật thử nghiệm (chưa cần mã hóa ở bước thử luồng) | Giá trị biến `SMARTCALL_WAZO_WRAPPER_TEST_KEY` đặt trên máy chạy backend (hoặc trong `backend/.env`). |
-| `target_user_uuid` | UUID của user Wazo cần đọc/sửa `description` hoặc xem CDR/presence | Chạy request **1.2 (`GET /api/confd/1.1/users`)** rồi copy `items[].uuid`, hoặc từ `GET /api/directory/contacts`, hoặc `POST /api/register`. |
+| `target_user_uuid` | UUID của user Wazo cần đọc/sửa `description` hoặc xem CDR/presence | Chạy request **1.2 (`GET /api/confd/1.1/users`)**, **1.14 (`check-email`)** hoặc **1.16 (`register`)** rồi copy `uuid` / `user_uuid`. |
 | `source_uuid` | UUID nguồn danh bạ Wazo (`wazo_user`) | Chạy request **1.8 (`GET /api/dird/0.1/backends/wazo/sources`)** rồi copy `items[0].uuid`. |
-| `lookup_term` | Số máy lẻ hoặc tên cần tra cứu trên Dird | Số máy lẻ có trong hệ thống (lấy từ request `1.2` hoặc `GET /api/confd/1.1/extensions`). |
+| `lookup_term` | Số máy lẻ hoặc tên cần tra cứu trên Dird | Số máy lẻ có trong hệ thống (lấy từ request `1.2` hoặc `1.7`). |
 | `test_department` | Chuỗi tên bộ phận ghi vào `description` | Chuỗi bộ phận thử nghiệm (ví dụ `AI Transformation Part(SDV)`). |
-| Header `X-Auth-Token` (`{{wazo_user_token}}`) | Token phiên Wazo của user thường (dùng cho Nhóm 2: `/api/directory/*`, `/api/call-groups`) | Lấy từ trường `token` khi chạy `POST /api/register` (**1.14**), hoặc `POST /api/auth/wazo-session`, hoặc `POST {{wazo_base}}/api/auth/0.1/token`. |
+| `test_email` | Email thử nghiệm để check tồn tại / tạo tài khoản | Email thử nghiệm hợp lệ theo `SMARTCALL_ALLOWED_EMAIL_DOMAINS` (ví dụ `postman.test01@samsung.com`). |
+| Header `X-Auth-Token` (`{{wazo_user_token}}`) | Token phiên Wazo của user thường (dùng cho Nhóm 2: `/api/directory/*`, `/api/call-groups`) | Lấy từ trường `token` khi chạy `POST /api/register` (**1.16**), hoặc `POST /api/auth/wazo-session`, hoặc `POST {{wazo_base}}/api/auth/0.1/token`. |
 | `member_a`, `member_b` | 2 UUID đồng nghiệp khác nhau (và khác chính mình) để test `POST /api/call-groups` | Lấy từ `items[].uuid` ở request **1.2** hoặc **2.2 (`/api/directory/contacts`)**. |
 
 > **Mẹo kiểm tra cả 2 cổng không bị chặn:**

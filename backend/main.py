@@ -42,8 +42,11 @@ def create_app(settings=None):
     @app.middleware("http")
     async def protect_response(request, call_next):
         origin = request.headers.get("origin")
-        # Postman và App gọi wrapper hoặc đăng ký bằng header key riêng, không dùng cookie hay Origin.
-        native_client_route = request.method == "POST" and request.url.path in ("/api/wrapper", "/api/register")
+        # Postman và App gọi wrapper, check email hoặc đăng ký bằng header key riêng, không dùng cookie hay Origin.
+        native_client_route = (
+            request.method == "POST"
+            and request.url.path in ("/api/wrapper", "/api/register", "/api/register/check-email")
+        )
         wrapper_from_native_client = native_client_route and origin is None
         if (request.method not in ("GET", "HEAD", "OPTIONS")
                 and origin != settings.public_origin and not wrapper_from_native_client):
@@ -120,7 +123,21 @@ def create_app(settings=None):
         )
         return JSONResponse(payload, status_code=status_code)
 
-    # Tạo tài khoản mới cho Web/Android bằng quyền quản trị rồi đăng nhập trả user token.
+    # Kiểm tra email đã tồn tại trên Wazo chưa (hỗ trợ cả GET query và POST JSON cho App/Web/Postman).
+    @app.get("/api/register/check-email")
+    async def check_register_email_query(request: Request, email: str = Query(..., min_length=3, max_length=256),
+                                         x_smartcall_test_key: str = Header("", max_length=256)):
+        require_wrapper_key(x_smartcall_test_key)
+        return await request.app.state.wazo.check_register_email(email)
+
+    # Biến thể POST JSON của check-email để không đưa địa chỉ email lên query URL log.
+    @app.post("/api/register/check-email")
+    async def check_register_email_body(body: CheckRegisterEmailRequest, request: Request,
+                                        x_smartcall_test_key: str = Header("", max_length=256)):
+        require_wrapper_key(x_smartcall_test_key)
+        return await request.app.state.wazo.check_register_email(body.email)
+
+    # Tìm theo email hoặc tạo tài khoản mới cho Web/Android bằng quyền quản trị rồi trả thông tin và token khi đăng nhập được.
     @app.post("/api/register")
     async def register_account(body: RegisterUserRequest, request: Request,
                                x_smartcall_test_key: str = Header("", max_length=256)):
@@ -328,12 +345,18 @@ class WazoWrapperCommand(BaseModel):
     body: dict | list | None = None
 
 
-class RegisterUserRequest(BaseModel):
-    """Thông tin đăng ký tài khoản Wazo mới cho Web và Android."""
+class CheckRegisterEmailRequest(BaseModel):
+    """Email cần kiểm tra tồn tại trên tổng đài Wazo cho Web và Android."""
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-    firstname: str = Field(min_length=1, max_length=128)
-    lastname: str = Field(min_length=1, max_length=128)
-    username: str = Field(min_length=1, max_length=256)
+    email: str = Field(min_length=3, max_length=256)
+
+
+class RegisterUserRequest(BaseModel):
+    """Thông tin tạo tài khoản mới hoặc lấy phiên tài khoản Wazo đã tồn tại theo email cho Web và Android."""
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    firstname: str = Field(default="", max_length=128)
+    lastname: str = Field(default="", max_length=128)
+    username: str | None = Field(default=None, min_length=1, max_length=256)
     email: str = Field(min_length=3, max_length=256)
     department: str = Field(default="", max_length=256)
     password: str | None = Field(default=None, min_length=1, max_length=128)

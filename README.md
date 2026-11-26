@@ -46,9 +46,15 @@ Route trả items, total, offset và có thể kèm notice về dữ liệu bộ
 
 Bật wrapper và `/api/register` trên backend bằng biến môi trường `SMARTCALL_WAZO_WRAPPER_TEST_KEY` (hoặc đặt tạm trong `backend/.env` trên môi trường thử). Bỏ biến hoặc để trống để tắt route (`404`). Backend tự lấy token quản trị và ép `Wazo-Tenant` từ cấu hình server, tuyệt đối không trả token quản trị về client.
 
-### 1) Đăng ký tài khoản mới + tự login (`POST /api/register`)
+### 1) Kiểm tra email & Đăng ký / Lấy thông tin tài khoản (`GET/POST /api/register/check-email`, `POST /api/register`)
 
-Dùng cho Android và Web khi tạo user Wazo mới: kiểm tra trùng email/username → nếu chưa trùng thì cấp máy lẻ trống + ghi `department` vào `description` → đăng nhập lấy `token` + `refresh_token` của user vừa tạo.
+- **Kiểm tra email đã tồn tại chưa (`GET` hoặc `POST /api/register/check-email`):**
+  - App gửi `email` (qua query `?email=...` với `GET`, hoặc JSON `{"email": "..."}` với `POST`) kèm `X-SmartCall-Test-Key`.
+  - Trả `200 OK`: nếu chưa có → `{"exists": false, "email": "...", "user": null}`; nếu đã có → `{"exists": true, "email": "...", "user": {"user_uuid", "username", "email", "firstname", "lastname", "department", "description", "extension", "enabled", "host", "tenant_uuid"}}` (đã lọc sạch trường nhạy cảm).
+
+- **Tạo mới hoặc lấy tài khoản hiện có (`POST /api/register`):**
+  - Chưa có email → tạo user + cấp máy lẻ trống + ghi `department` vào `description` + đăng nhập trả `created: true, exists: false, authenticated: true, token, refresh_token` (nếu bỏ trống `username`, backend tự lấy phần trước `@` của email).
+  - Email đã tồn tại → **không báo lỗi 409**, trả `200 OK` với `created: false, exists: true` cùng đầy đủ thông tin user hiện có (kèm `authenticated: true, token, refresh_token` nếu là tài khoản SmartCall quản lý, client có gửi `password` đúng, hoặc bật opt-in cấu hình; nếu chưa xác thực được mật khẩu cũ thì trả `authenticated: false, reason, token: ""` mà vẫn đủ thông tin user).
 
 ~~~http
 POST /api/register
@@ -56,16 +62,16 @@ Content-Type: application/json
 X-SmartCall-Test-Key: <KEY_THU_NGHIEM>
 
 {
-  "firstname": "An",
-  "lastname": "Nguyen",
-  "username": "an.nguyen",
-  "email": "an.nguyen@samsung.com",
+  "firstname": "Test",
+  "lastname": "User 01",
+  "username": "test.user01",
+  "email": "test.user01@samsung.com",
   "department": "AI Transformation Part(SDV)",
   "client_id": "smartcall-android"
 }
 ~~~
 
-- Trả `200 OK` gồm `created: true`, `user_uuid`, `username`, `email`, `department`, `description`, `extension`, `host`, `tenant_uuid`, `token`, `refresh_token`. Trùng email/username trả `409` (`WAZO_EMAIL_EXISTS` / `WAZO_USERNAME_EXISTS`).
+- Nếu email mới nhưng `username` trùng tài khoản khác sẽ trả `409 WAZO_USERNAME_EXISTS`. Trùng email ở tenant khác trả `409 WAZO_EMAIL_OTHER_TENANT`.
 
 ### 2) Gọi API Wazo bằng quyền quản trị (`POST /api/wrapper`)
 

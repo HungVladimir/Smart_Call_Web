@@ -519,19 +519,22 @@
           }
         },
         {
-          "name": "1.14 Register - Đăng ký user mới + nhận token đăng nhập (LƯU Ý: TẠO USER THẬT)",
+          "name": "1.14 Check Email tồn tại chưa (POST /api/register/check-email)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Đăng ký thành công trả về token và description', function () {",
+                  "pm.test('Check email POST trả 200 OK và không lộ trường nhạy cảm', function () {",
                   "  pm.response.to.have.status(200);",
                   "  const data = pm.response.json();",
-                  "  pm.expect(data.created).to.eql(true);",
-                  "  pm.expect(data.token).to.be.a('string').and.not.empty;",
-                  "  pm.environment.set('wazo_user_token', data.token);",
-                  "  pm.environment.set('target_user_uuid', data.user_uuid);",
+                  "  pm.expect(data).to.have.property('exists');",
+                  "  if (data.exists && data.user) {",
+                  "    pm.expect(data.user).to.not.have.property('auth');",
+                  "    pm.expect(data.user).to.not.have.property('password');",
+                  "    pm.expect(data.user).to.not.have.property('userfield');",
+                  "    pm.environment.set('target_user_uuid', data.user.user_uuid);",
+                  "  }",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -546,14 +549,88 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"firstname\": \"Test\",\n  \"lastname\": \"User 01\",\n  \"username\": \"postman.test01\",\n  \"email\": \"postman.test01@samsung.com\",\n  \"department\": \"{{test_department}}\",\n  \"client_id\": \"postman-lab\"\n}"
+              "raw": "{\n  \"email\": \"{{test_email}}\"\n}"
+            },
+            "url": {
+              "raw": "{{backend_base}}/api/register/check-email",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "register", "check-email"]
+            },
+            "description": "Kiểm tra email đã tồn tại trên Wazo chưa. Nếu chưa có -> trả {exists: false, user: null}. Nếu đã có -> trả {exists: true, user: {...}} (kèm description, extension, username, user_uuid)."
+          }
+        },
+        {
+          "name": "1.15 Check Email tồn tại chưa (GET /api/register/check-email)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Check email GET trả 200 OK', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.have.property('exists');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{backend_base}}/api/register/check-email?email={{test_email}}",
+              "host": ["{{backend_base}}"],
+              "path": ["api", "register", "check-email"],
+              "query": [
+                { "key": "email", "value": "{{test_email}}" }
+              ]
+            },
+            "description": "Biến thể GET trên URL của /api/register/check-email để kiểm tra nhanh trên Postman."
+          }
+        },
+        {
+          "name": "1.16 Register - Tìm hoặc Tạo user + nhận token (POST /api/register)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Register trả 200 OK (tạo mới hoặc trả thông tin tài khoản đã có)', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const data = pm.response.json();",
+                  "  pm.expect(data).to.have.property('user_uuid');",
+                  "  pm.expect(data).to.have.property('created');",
+                  "  pm.expect(data).to.have.property('exists');",
+                  "  pm.environment.set('target_user_uuid', data.user_uuid);",
+                  "  if (data.token) {",
+                  "    pm.environment.set('wazo_user_token', data.token);",
+                  "  }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-SmartCall-Test-Key", "value": "{{wrapper_test_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstname\": \"Test\",\n  \"lastname\": \"User 01\",\n  \"username\": \"postman.test01\",\n  \"email\": \"{{test_email}}\",\n  \"department\": \"{{test_department}}\",\n  \"client_id\": \"postman-lab\"\n}"
             },
             "url": {
               "raw": "{{backend_base}}/api/register",
               "host": ["{{backend_base}}"],
               "path": ["api", "register"]
             },
-            "description": "Cẩn thận: request này tạo user thật trên Wazo và chiếm 1 số máy lẻ trống! Đổi username/email thử trước khi bấm Send. Khi thành công tự lưu {{wazo_user_token}} và {{target_user_uuid}} để test tiếp Nhóm 2. Bấm Send lần 2 sẽ nhận 409 WAZO_EMAIL_EXISTS."
+            "description": "Nếu {{test_email}} chưa tồn tại: tạo user thật trên Wazo (chiếm 1 máy lẻ trống) và trả created=true, exists=false, authenticated=true, token. Nếu {{test_email}} đã tồn tại: KHÔNG lỗi 409 mà trả 200 OK với created=false, exists=true, thông tin user hiện có (và token mới nếu tài khoản cho phép đăng nhập)."
           }
         }
       ]
