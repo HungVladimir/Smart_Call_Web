@@ -6,9 +6,9 @@ import ssl
 import time
 from uuid import UUID
 import httpx
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from redis.exceptions import RedisError
 from config import Settings
 from store import Store
@@ -42,10 +42,9 @@ def create_app(settings=None):
     @app.middleware("http")
     async def protect_response(request, call_next):
         origin = request.headers.get("origin")
-        # Postman và App gọi route đọc này bằng header riêng, không dùng cookie hay Origin.
-        wrapper_from_native_client = (
-            request.method == "POST" and request.url.path == "/api/wrapper" and origin is None
-        )
+        # Postman và App gọi wrapper hoặc đăng ký bằng header key riêng, không dùng cookie hay Origin.
+        native_client_route = request.method == "POST" and request.url.path in ("/api/wrapper", "/api/register")
+        wrapper_from_native_client = native_client_route and origin is None
         if (request.method not in ("GET", "HEAD", "OPTIONS")
                 and origin != settings.public_origin and not wrapper_from_native_client):
             return JSONResponse({"detail": {"code": "ORIGIN_INVALID", "message": "Origin không hợp lệ."}}, status_code=403)
@@ -102,15 +101,31 @@ def create_app(settings=None):
         require_wrapper_key(x_smartcall_test_key)
         return await request.app.state.wazo.list_wrapper_contexts(limit, offset)
 
-    # Điều phối lệnh đã duyệt. Backend tự chọn token, tenant, host và URL gọi Wazo.
+    # Điều phối lệnh đã kiểm tra. Backend tự chọn token admin, tenant, host và URL gọi Wazo.
     @app.post("/api/wrapper")
     async def wrapper_command(command: WazoWrapperCommand, request: Request,
                               x_smartcall_test_key: str = Header("", max_length=256)):
         require_wrapper_key(x_smartcall_test_key)
-        operation = (command.method.strip().upper(), command.path)
-        if operation != ("GET", "/api/confd/1.1/contexts"):
-            fail("WRAPPER_OPERATION_FORBIDDEN", "Thao tác Wazo chưa được phép qua wrapper.", 403)
-        return await request.app.state.wazo.list_wrapper_contexts(command.query.limit, command.query.offset)
+        method = command.method.strip().upper()
+        if (method, command.path) == ("GET", "/api/confd/1.1/contexts"):
+            if command.body is not None:
+                fail("WRAPPER_INVALID_BODY", "Yêu cầu GET không nhận body JSON.", 422)
+            try:
+                page_query = WazoWrapperQuery.model_validate(command.query)
+            except ValidationError as error:
+                raise HTTPException(422, detail=error.errors()) from None
+            return await request.app.state.wazo.list_wrapper_contexts(page_query.limit, page_query.offset)
+        status_code, payload = await request.app.state.wazo.execute_wrapper(
+            method, command.path, command.query, command.body,
+        )
+        return JSONResponse(payload, status_code=status_code)
+
+    # Tạo tài khoản mới cho Web/Android bằng quyền quản trị rồi đăng nhập trả user token.
+    @app.post("/api/register")
+    async def register_account(body: RegisterUserRequest, request: Request,
+                               x_smartcall_test_key: str = Header("", max_length=256)):
+        require_wrapper_key(x_smartcall_test_key)
+        return await request.app.state.wazo.register_user(body)
 
     # Chuyển cửa sổ tới authorization endpoint, gắn cookie giao dịch riêng cho browser.
     @app.get("/api/auth/login")
@@ -305,11 +320,24 @@ class WazoWrapperQuery(BaseModel):
 
 
 class WazoWrapperCommand(BaseModel):
-    """Mô tả thao tác đã đăng ký, không cho client gửi header hay body tùy ý tới Wazo."""
+    """Mô tả yêu cầu gửi tới wrapper; backend tự kiểm tra đường dẫn và gắn token quản trị."""
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     method: str = Field(min_length=1, max_length=12)
-    path: str = Field(min_length=1, max_length=160)
-    query: WazoWrapperQuery = Field(default_factory=WazoWrapperQuery)
+    path: str = Field(min_length=1, max_length=320)
+    query: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    body: dict | list | None = None
+
+
+class RegisterUserRequest(BaseModel):
+    """Thông tin đăng ký tài khoản Wazo mới cho Web và Android."""
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    firstname: str = Field(min_length=1, max_length=128)
+    lastname: str = Field(min_length=1, max_length=128)
+    username: str = Field(min_length=1, max_length=256)
+    email: str = Field(min_length=3, max_length=256)
+    department: str = Field(default="", max_length=256)
+    password: str | None = Field(default=None, min_length=1, max_length=128)
+    client_id: str = Field(default="smartcall-app", min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
 class WazoSessionRequest(BaseModel):

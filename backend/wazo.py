@@ -1,9 +1,111 @@
 """Cấp tài khoản WebRTC qua Confd; chỉ trả token của user, tuyệt đối không trả token quản trị."""
+from contextlib import asynccontextmanager
 import hashlib
+import re
 import secrets
+from urllib.parse import unquote
+from fastapi import HTTPException
 import httpx
 from httpx import BasicAuth
 from oidc import fail
+
+WRAPPER_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"})
+WRAPPER_ALLOWED_PREFIXES = (
+    "/api/confd/1.1/",
+    "/api/dird/0.1/",
+    "/api/chatd/1.0/",
+    "/api/calld/1.0/",
+    "/api/call-logd/1.0/",
+)
+WRAPPER_SENSITIVE_FIELDS = frozenset({
+    "auth",
+    "password",
+    "secret",
+    "auth_section_options",
+    "userfield",
+    "token",
+    "refresh_token",
+    "session_uuid",
+})
+WRAPPER_DESTRUCTIVE_CONF_RESOURCES = (
+    "/api/confd/1.1/users",
+    "/api/confd/1.1/contexts",
+    "/api/confd/1.1/extensions",
+)
+WRAPPER_FORBIDDEN_CONF_ROOTS = (
+    "/api/confd/1.1/tenants",
+    "/api/confd/1.1/trunks",
+    "/api/confd/1.1/registers",
+    "/api/confd/1.1/wizard",
+    "/api/confd/1.1/incalls",
+    "/api/confd/1.1/outcalls",
+)
+WRAPPER_BLOCKED_FRAGMENTS = ("/password", "/tokens", "/sessions")
+
+
+# Loại bỏ credential, mật khẩu SIP và liên kết nội bộ khỏi dữ liệu trả về qua wrapper.
+def sanitize_wrapper_payload(value, *, tenant_uuid=None):
+    if isinstance(value, list):
+        sanitized = []
+        for item in value:
+            if isinstance(item, dict) and tenant_uuid and item.get("tenant_uuid") not in (None, tenant_uuid):
+                continue
+            sanitized.append(sanitize_wrapper_payload(item, tenant_uuid=tenant_uuid))
+        return sanitized
+    if isinstance(value, dict):
+        result = {}
+        for key, entry in value.items():
+            if key in WRAPPER_SENSITIVE_FIELDS:
+                continue
+            item_tenant = tenant_uuid if key == "items" else None
+            result[key] = sanitize_wrapper_payload(entry, tenant_uuid=item_tenant)
+        return result
+    return value
+
+
+# Kiểm tra chặt method, tiền tố Wazo và chặn path traversal hoặc endpoint nhạy cảm trước khi gọi server.
+def validate_wrapper_command(method, path, body=None):
+    clean_method = str(method or "").strip().upper()
+    if clean_method not in WRAPPER_METHODS:
+        fail("WRAPPER_OPERATION_FORBIDDEN", "Phương thức HTTP chưa được phép qua wrapper.", 403)
+    raw_path = str(path or "")
+    unquoted = unquote(raw_path)
+    double_unquoted = unquote(unquoted)
+    for candidate in (raw_path, unquoted, double_unquoted):
+        if (not candidate.startswith("/") or candidate.startswith("//") or "//" in candidate
+                or "?" in candidate or "#" in candidate or "\\" in candidate or "://" in candidate
+                or any(ord(ch) < 32 or ch.isspace() for ch in candidate)):
+            fail("WRAPPER_OPERATION_FORBIDDEN", "Đường dẫn API không hợp lệ.", 403)
+        segments = candidate.split("/")[1:]
+        if any(segment in ("", ".", "..") for segment in segments):
+            fail("WRAPPER_OPERATION_FORBIDDEN", "Đường dẫn API không hợp lệ.", 403)
+    if not any(unquoted.startswith(prefix) for prefix in WRAPPER_ALLOWED_PREFIXES):
+        fail("WRAPPER_OPERATION_FORBIDDEN", "Đường dẫn API Wazo chưa được phép qua wrapper.", 403)
+    lower_path = unquoted.casefold()
+    if "/endpoints/sip" in lower_path:
+        is_template_read = (
+            clean_method == "GET"
+            and (lower_path == "/api/confd/1.1/endpoints/sip/templates"
+                 or lower_path.startswith("/api/confd/1.1/endpoints/sip/templates/"))
+        )
+        if not is_template_read:
+            fail("WRAPPER_OPERATION_FORBIDDEN", "Không được phép đọc/sửa cấu hình SIP qua wrapper.", 403)
+    if any(fragment in lower_path for fragment in WRAPPER_BLOCKED_FRAGMENTS):
+        fail("WRAPPER_OPERATION_FORBIDDEN", "Không được phép truy cập tài nguyên xác thực/mật khẩu qua wrapper.", 403)
+    if any(lower_path == root or lower_path.startswith(root + "/") for root in WRAPPER_FORBIDDEN_CONF_ROOTS):
+        fail("WRAPPER_OPERATION_FORBIDDEN", "Thao tác hạ tầng Wazo chưa được phép qua wrapper.", 403)
+    if clean_method in ("PUT", "PATCH") and (
+        lower_path == "/api/confd/1.1/users" or lower_path.startswith("/api/confd/1.1/users/")
+    ) and isinstance(body, dict) and any(key in body for key in WRAPPER_SENSITIVE_FIELDS):
+        fail("WRAPPER_OPERATION_FORBIDDEN", "Không được phép sửa credential hoặc userfield qua wrapper.", 403)
+    if clean_method == "DELETE" and any(
+        lower_path == resource or re.fullmatch(re.escape(resource) + r"/[^/]+", lower_path)
+        for resource in WRAPPER_DESTRUCTIVE_CONF_RESOURCES
+    ):
+        fail("WRAPPER_OPERATION_FORBIDDEN", "Không được phép xóa user/context/extension qua wrapper.", 403)
+    if clean_method in ("GET", "HEAD") and body is not None:
+        fail("WRAPPER_INVALID_BODY", "Yêu cầu GET không nhận body JSON.", 422)
+    return clean_method, unquoted
 
 
 class WazoClient:
@@ -50,18 +152,30 @@ class WazoClient:
             fail("WAZO_RESPONSE_INVALID", "Wazo chưa trả token hợp lệ.", 502)
         return data
 
-    # Đọc một trang context trong tenant cấu hình và chỉ công bố trường cần thiết cho thử nghiệm.
-    async def list_wrapper_contexts(self, limit, offset):
+    # Cấp phát admin token ngắn hạn và luôn thu hồi sau khi wrapper hoặc cấp phát dùng xong.
+    @asynccontextmanager
+    async def admin_token_scope(self, client_id, *, expiration=60):
         settings = self.settings
         if not settings.wazo_admin_username or not settings.wazo_admin_password or not settings.wazo_tenant_uuid:
             fail("WAZO_NOT_CONFIGURED", "Chưa cấu hình tài khoản và tenant Wazo.", 503)
 
         admin_session = await self.token(
             settings.wazo_admin_username, settings.wazo_admin_password,
-            "smartcall-wrapper-contexts", user=False, expiration=60,
+            client_id, user=False, expiration=expiration,
         )
         admin_token = admin_session["token"]
         try:
+            yield admin_token
+        finally:
+            # Cố gắng thu hồi ngay cả khi xử lý thất bại. Giữ lỗi gốc nếu thu hồi gặp lỗi mạng.
+            try:
+                await self.client.delete(settings.wazo_url + "/api/auth/0.1/token/" + admin_token)
+            except httpx.HTTPError:
+                pass
+
+    # Đọc một trang context trong tenant cấu hình và chỉ công bố trường cần thiết cho thử nghiệm.
+    async def list_wrapper_contexts(self, limit, offset):
+        async with self.admin_token_scope("smartcall-wrapper-contexts", expiration=60) as admin_token:
             result = await self.request(
                 "GET", "/api/confd/1.1/contexts", token=admin_token,
                 params={"limit": limit, "offset": offset, "recurse": False},
@@ -75,12 +189,75 @@ class WazoClient:
                 for item in items if isinstance(item, dict)
             ]
             return {"items": contexts, "total": result.get("total", len(contexts)), "offset": offset}
-        finally:
-            # Cố gắng thu hồi ngay cả khi đọc thất bại. Giữ lỗi gốc nếu thu hồi gặp lỗi mạng.
+
+    # Chuyển tiếp lệnh đã kiểm tra tới Wazo bằng token quản trị của server và lọc trường nhạy cảm.
+    async def execute_wrapper(self, method, path, query=None, body=None):
+        clean_method, clean_path = validate_wrapper_command(method, path, body)
+        raw_query = query or {}
+        if len(raw_query) > 50:
+            fail("WRAPPER_QUERY_TOO_LARGE", "Số lượng tham số query vượt giới hạn cho phép.", 422)
+        params = {}
+        for key, value in raw_query.items():
+            key_text = str(key).strip()
+            if not key_text or len(key_text) > 100 or not isinstance(value, (str, int, float, bool)):
+                fail("WRAPPER_INVALID_QUERY", "Tham số query không hợp lệ.", 422)
+            params[key_text] = "true" if value is True else "false" if value is False else str(value)
+
+        async with self.admin_token_scope("smartcall-wrapper", expiration=60) as admin_token:
+            response = await self.client.request(
+                clean_method,
+                self.settings.wazo_url + clean_path,
+                headers={
+                    "Accept": "application/json",
+                    "Wazo-Tenant": self.settings.wazo_tenant_uuid,
+                    "X-Auth-Token": admin_token,
+                },
+                params=params or None,
+                json=body if body is not None else None,
+            )
+
+        if response.status_code in (401, 403) or response.status_code >= 500:
+            fail(
+                "WAZO_REQUEST_FAILED",
+                f"Wazo từ chối {clean_method} {clean_path} (HTTP {response.status_code}). Kiểm tra quyền và cấu hình trên tổng đài.",
+                502,
+            )
+        if response.status_code >= 400:
+            detail_message = f"Wazo trả lỗi HTTP {response.status_code}."
             try:
-                await self.client.delete(settings.wazo_url + "/api/auth/0.1/token/" + admin_token)
-            except httpx.HTTPError:
+                error_payload = response.json()
+                if isinstance(error_payload, dict) and isinstance(error_payload.get("message"), str):
+                    detail_message = error_payload["message"].strip()[:300] or detail_message
+                elif isinstance(error_payload, list) and error_payload and isinstance(error_payload[0], str):
+                    detail_message = error_payload[0].strip()[:300] or detail_message
+            except ValueError:
                 pass
+            raise HTTPException(
+                response.status_code,
+                detail={"code": "WAZO_CLIENT_ERROR", "status": response.status_code, "message": detail_message},
+            )
+        if response.status_code == 204 or not response.content:
+            return 200, {"ok": True, "status": response.status_code}
+        try:
+            payload = response.json()
+        except ValueError:
+            fail("WAZO_RESPONSE_INVALID", "Wazo trả dữ liệu không đúng định dạng JSON.", 502)
+        if isinstance(payload, dict) and payload.get("tenant_uuid") not in (None, self.settings.wazo_tenant_uuid):
+            fail("WRAPPER_TENANT_FORBIDDEN", "Tài nguyên không thuộc tenant Wazo được cấu hình.", 403)
+        return response.status_code, sanitize_wrapper_payload(payload, tenant_uuid=self.settings.wazo_tenant_uuid)
+
+    # Kiểm tra username đã tồn tại trong danh sách user của tenant hay chưa.
+    async def find_username(self, username, token):
+        users = await self.list_items("/api/confd/1.1/users", token, search=username)
+        for user in users:
+            user_tenant = user.get("tenant_uuid")
+            if user_tenant and user_tenant != self.settings.wazo_tenant_uuid:
+                continue
+            auth_username = str((user.get("auth") or {}).get("username") or "").strip().casefold()
+            direct_username = str(user.get("username") or "").strip().casefold()
+            if username in (auth_username, direct_username):
+                return user
+        return None
 
     # Lấy đủ các trang trước khi kết luận không tồn tại; lỗi API không phải danh sách rỗng.
     async def list_items(self, path, token, **params):
@@ -226,11 +403,12 @@ class WazoClient:
         return secrets.choice(available_extension_numbers)
 
     # Credential đăng nhập Wazo khác credential SIP; không dùng token IdP làm mật khẩu.
-    def build_user_payload(self, user_profile, wazo_username, identity_marker, selected_templates, selected_extension_number):
+    def build_user_payload(self, user_profile, wazo_username, identity_marker, selected_templates,
+                           selected_extension_number, password=None):
         settings = self.settings
         authentication_payload = {
             "username": wazo_username,
-            "password": settings.wazo_default_password,
+            "password": settings.wazo_default_password if password is None else password,
             "email_address": user_profile["email"],
             "firstname": user_profile["firstname"],
             "lastname": user_profile["lastname"],
@@ -266,13 +444,15 @@ class WazoClient:
             "lines": [line_payload],
         }
 
-    # Chuẩn bị dữ liệu và gửi một POST để tạo user cùng tài khoản thoại.
-    async def create_user(self, user_profile, wazo_username, identity_marker, admin_token, provisioning_lock):
+    # Cấp phát đầy đủ user + line + extension và trả thêm số máy lẻ đã chọn.
+    async def _create_user_with_extension(self, user_profile, wazo_username, identity_marker,
+                                          admin_token, provisioning_lock, password=None):
         selected_context = await self.load_provisioning_context(admin_token)
         selected_templates = await self.load_sip_templates(admin_token)
         selected_extension_number = await self.choose_extension_number(selected_context, admin_token)
         create_user_payload = self.build_user_payload(
-            user_profile, wazo_username, identity_marker, selected_templates, selected_extension_number,
+            user_profile, wazo_username, identity_marker, selected_templates,
+            selected_extension_number, password=password,
         )
 
         # Giữ khóa kho số tới lúc POST; lỗi/timeout không được retry tạo user mù.
@@ -280,12 +460,101 @@ class WazoClient:
             fail("WAZO_PROVISION_BUSY", "Khóa cấp phát đã hết hạn; vui lòng thử lại.", 409)
         await provisioning_lock.extend(180, replace_ttl=True)
 
-        return await self.request(
+        user = await self.request(
             "POST",
             "/api/confd/1.1/users",
             token=admin_token,
             json=create_user_payload,
         )
+        return user, selected_extension_number
+
+    # Chuẩn bị dữ liệu và gửi một POST để tạo user cùng tài khoản thoại.
+    async def create_user(self, user_profile, wazo_username, identity_marker, admin_token, provisioning_lock):
+        user, _ = await self._create_user_with_extension(
+            user_profile, wazo_username, identity_marker, admin_token, provisioning_lock,
+        )
+        return user
+
+    # Kiểm tra trùng email/username, tạo tài khoản mới và cấp user token cho Web/Android.
+    async def register_user(self, payload):
+        settings = self.settings
+        if not settings.wazo_provisioning_enabled:
+            fail("WAZO_DISABLED", "Cấp tài khoản Wazo đang tắt trong cấu hình backend.", 409)
+        if not settings.wazo_admin_username or not settings.wazo_admin_password or not settings.wazo_tenant_uuid:
+            fail("WAZO_NOT_CONFIGURED", "Chưa cấu hình tài khoản quản trị và tenant Wazo.", 503)
+
+        firstname = " ".join(payload.firstname.split())
+        lastname = " ".join(payload.lastname.split())
+        if not firstname or not lastname:
+            fail("REGISTER_NAME_INVALID", "Cần nhập đầy đủ firstname và lastname.", 422)
+
+        username = payload.username.strip().casefold()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._+-]{0,255}", username) or username.endswith(".") or ".." in username:
+            fail("REGISTER_USERNAME_INVALID", "Username chỉ được dùng chữ thường, số và . _ + -.", 422)
+
+        email = payload.email.strip().casefold()
+        if any(ch.isspace() or ord(ch) < 32 for ch in email) or email.count("@") != 1:
+            fail("REGISTER_EMAIL_INVALID", "Email đăng ký không hợp lệ.", 422)
+        local, domain = email.split("@", 1)
+        if not local or not domain or "." not in domain:
+            fail("REGISTER_EMAIL_INVALID", "Email đăng ký không hợp lệ.", 422)
+        allowed_domains = {item.strip().casefold() for item in settings.allowed_email_domains.split(",") if item.strip()}
+        if allowed_domains and domain not in allowed_domains:
+            fail("EMAIL_NOT_ALLOWED", "Email không thuộc phạm vi được cấp tài khoản SmartCall.", 403)
+
+        department = " ".join(payload.department.split())
+        effective_password = settings.wazo_default_password if payload.password is None else payload.password
+
+        lock = self.store.redis.lock(self.store.key("provision", settings.wazo_tenant_uuid), timeout=180, blocking_timeout=0)
+        if not await lock.acquire(blocking=False):
+            fail("WAZO_PROVISION_BUSY", "Đang cấp phát tài khoản khác. Vui lòng thử lại sau.", 409)
+        try:
+            async with self.admin_token_scope("smartcall-register", expiration=60) as admin_token:
+                if await self.find_email(email, admin_token):
+                    fail("WAZO_EMAIL_EXISTS", "Email đã được đăng ký tài khoản trên tổng đài Wazo.", 409)
+                if await self.find_username(username, admin_token):
+                    fail("WAZO_USERNAME_EXISTS", "Username đã tồn tại trên tổng đài Wazo.", 409)
+                profile = {
+                    "firstname": firstname,
+                    "lastname": lastname,
+                    "email": email,
+                    "department": department,
+                }
+                marker = "smartcall:register:" + hashlib.sha256(email.encode()).hexdigest()
+                user, assigned_extension = await self._create_user_with_extension(
+                    profile, username, marker, admin_token, lock, password=effective_password,
+                )
+                if not user.get("uuid"):
+                    fail("WAZO_RESPONSE_INVALID", "Wazo chưa trả UUID user sau khi đăng ký.", 502)
+
+            user_token = await self.token(username, effective_password, payload.client_id, user=True)
+            metadata = user_token.get("metadata") or {}
+            token_user_uuid = metadata.get("pbx_user_uuid") or metadata.get("uuid") or user_token.get("pbx_user_uuid")
+            if token_user_uuid != user["uuid"]:
+                try:
+                    await self.client.delete(settings.wazo_url + "/api/auth/0.1/token/" + user_token["token"])
+                except httpx.HTTPError:
+                    pass
+                fail("WAZO_IDENTITY_MISMATCH", "Token Wazo không khớp với tài khoản vừa tạo.", 502)
+
+            return {
+                "created": True,
+                "user_uuid": user["uuid"],
+                "username": username,
+                "email": email,
+                "firstname": firstname,
+                "lastname": lastname,
+                "department": department,
+                "description": department,
+                "extension": assigned_extension,
+                "host": settings.wazo_url,
+                "tenant_uuid": settings.wazo_tenant_uuid,
+                "token": user_token["token"],
+                "refresh_token": user_token.get("refresh_token", ""),
+            }
+        finally:
+            if await lock.owned():
+                await lock.release()
 
     # Thu hồi token/refresh mới cấp nếu phiên backend bị hủy trước khi giao cho Web.
     async def revoke_session(self, result, client_id):

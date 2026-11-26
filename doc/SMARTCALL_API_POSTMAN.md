@@ -1,6 +1,6 @@
 # API SmartCall Web và Hướng dẫn Test chi tiết trên Postman
 
-Tài liệu đối chiếu mã nguồn nhánh `codex/refactor-architecture` (bao gồm cấu hình `SMARTCALL_IDP_LOG_CLAIM_SCHEMA` ở [backend/oidc.py](../backend/oidc.py) và [backend/config.py](../backend/config.py)). Phạm vi bao gồm **toàn bộ API HTTP và WebSocket** mà Backend FastAPI + Frontend Vue gọi trực tiếp, các lệnh của `@wazo/sdk`, và API dùng trong script [seed_wazo_test_users.py](../backend/seed_wazo_test_users.py).
+Tài liệu đối chiếu mã nguồn nhánh `codex/refactor-architecture` (mốc `3cbc827` kèm phần mở rộng `/api/wrapper` và `/api/register`). Phạm vi bao gồm **toàn bộ API HTTP và WebSocket** mà Backend FastAPI + Frontend Vue gọi trực tiếp, các lệnh của `@wazo/sdk`, và API dùng trong script [seed_wazo_test_users.py](../backend/seed_wazo_test_users.py).
 
 Tài liệu liên quan:
 - Bảng thông số gốc nền tảng Wazo: [WAZO_API_REFERENCE.md](WAZO_API_REFERENCE.md)
@@ -31,6 +31,7 @@ Vào **Environments → Create Environment** (lưu cục bộ, không commit lê
 | `wazo_user_token`, `wazo_refresh_token` | Lấy từ `POST /api/auth/wazo-session` hoặc `POST /api/auth/0.1/token` | Gắn `X-Auth-Token: {{wazo_user_token}}` vào các API người dùng. |
 | `smartcall_session` | Cookie `smartcall_session` (HttpOnly, `Path=/api/auth`) | Lấy từ DevTools trình duyệt sau khi đăng nhập Single ID. |
 | `csrf_token` | `csrf_token` từ `GET /api/auth/user_info` | Gắn `X-CSRF-Token: {{csrf_token}}` cho `POST /api/auth/*`. |
+| `wrapper_test_key` | Giá trị khớp `SMARTCALL_WAZO_WRAPPER_TEST_KEY` trên server thử | Gắn vào header `X-SmartCall-Test-Key` cho `GET /api/wrapper/contexts`, `POST /api/wrapper` và `POST /api/register`. |
 | `user_uuid`, `member_a`, `member_b` | UUID tài khoản mình và 2 đồng nghiệp thử | Lấy từ Auth metadata hoặc `GET /api/directory/contacts`. |
 | `source_uuid`, `source_name` | UUID nguồn Dird (ví dụ `wazo_user`) | Lấy từ `GET /api/dird/0.1/directories/default/sources?backend=wazo`. |
 | `group_id`, `endpoint_uuid`, `line_id` | Lấy từ response tạo nhóm / hồ sơ Confd | Dùng cho sửa/xóa nhóm và kiểm tra SIP endpoint. |
@@ -62,7 +63,10 @@ Prefix URL: `{{smartcall_origin}}` (Vite proxy chuyển tiếp `/api/*` sang `ht
 | `POST /api/auth/logout` | Hủy phiên cookie SmartCall tại Redis | Gọi khi thoát trên Web hoặc rời `/callback` mà không đăng xuất IdP | **URL:** `{{smartcall_origin}}/api/auth/logout`<br>**Headers:** `Origin: {{smartcall_origin}}`, `X-CSRF-Token: {{csrf_token}}`, `Cookie: smartcall_session={{smartcall_session}}`<br>**Body:** Không cần<br>**Kỳ vọng:** `200 OK` `{"status": "logged_out"}` và xóa cookie `smartcall_session`. Gửi lại `GET /api/auth/user_info` ngay sau đó → phải trả `401`. |
 | `POST /api/auth/idp-logout` | Hủy phiên SmartCall và cấp vé dùng 1 lần để điều hướng đăng xuất IdP | `AuthService.logoutSingleId()` | **URL:** `{{smartcall_origin}}/api/auth/idp-logout`<br>**Headers:** `Origin: {{smartcall_origin}}`, `X-CSRF-Token: {{csrf_token}}`, `Cookie: smartcall_session={{smartcall_session}}`<br>**Body:** Không cần<br>**Kỳ vọng:** `200 OK` `{"redirect_url": "/api/auth/idp-logout/continue"}`, nhận `Set-Cookie: smartcall_logout=<ticket>` (`Path=/api/auth/idp-logout`, `Max-Age=60`). Lưu cookie `smartcall_logout` vào Cookie Jar hoặc biến tạm cho bước dưới. Thiếu `id_token_hint` hoặc discovery thiếu endpoint logout → `409`/`503`. |
 | `GET /api/auth/idp-logout/continue` | Tiêu thụ vé một lần (GETDEL) và redirect trình duyệt sang IdP | Trình duyệt chuyển trang theo `redirect_url` ở bước trên | **URL:** `{{smartcall_origin}}/api/auth/idp-logout/continue`<br>**Settings:** Tắt *Automatically follow redirects*<br>**Headers:** `Cookie: smartcall_logout=<ticket>`<br>**Kỳ vọng:** `302 Found` trỏ tới `end_session_endpoint` kèm `id_token_hint` và `post_logout_redirect_uri`. Bấm **Send** lần 2 với cùng ticket → phải lỗi `400 IDP_LOGOUT_EXPIRED`. |
-| `GET /api/directory/contacts` | Tìm theo một trường hoặc lấy danh sách của một bộ phận theo quyền user | `DirectoryPanel`, `AddParticipantModal`, `CallGroupsView` dùng `ContactService.listPublishedContacts()` | **URL:** `{{smartcall_origin}}/api/directory/contacts`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Params:** `source={{source_uuid}}`. Chọn `field=name` + `term=Hùng`, `field=extension` + `term=1001`, `field=employee_id` + `term=000007`, `field=email` + `term=alice`, hoặc `field=department` + `department=AI Transformation Part(SDV)`. Có thể truyền `refresh=true` khi làm mới.<br>**Kỳ vọng:** `200 OK`, JSON `{items, limited, notice, fetched_at, refresh_state}`. Máy lẻ khớp toàn bộ 4 hoặc 5 chữ số. Tìm quá rộng trả tối đa 50 mục với `limited=true`. Bộ phận trả danh sách liền một lần. |
+| `GET /api/wrapper/contexts` | Đọc nhanh danh sách context Confd (bản tương thích pilot đầu) | Android/Postman kiểm tra nhanh context bằng token quản trị backend | **URL:** `{{smartcall_origin}}/api/wrapper/contexts?limit=30&offset=0`<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Accept: application/json`<br>**Kỳ vọng:** `200 OK`, trả `{items, total, offset}` (chỉ gồm `uuid, name, label, type, enabled`). Chưa bật env key → `404`; sai key → `401`. |
+| `POST /api/wrapper` | Cổng trung gian dùng chung cho App, Web, Postman gọi API Wazo bằng token quản trị server | Đọc `description`/hồ sơ user khác, gọi API Wazo (`GET/POST/PUT/DELETE/PATCH`) thuộc phạm vi cho phép | **URL:** `{{smartcall_origin}}/api/wrapper`<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json` *(trình duyệt cần thêm `Origin: {{smartcall_origin}}`)*<br>**Body (raw JSON):** `{"method": "GET", "path": "/api/confd/1.1/users/{{member_a}}", "query": {"view": "directory"}}` *(hoặc `PUT` cập nhật `{"description": "..."}` kèm `"body"`)*<br>**Kỳ vọng:** `200`/`201` trả JSON Wazo đã lọc bỏ `auth, password, userfield, secret`. Chặn `403` với `/api/auth/*`, `.../endpoints/sip` (trừ đọc `templates`), `.../password*`, `DELETE /users*`, path `..`. |
+| `POST /api/register` | Đăng ký tài khoản Wazo mới (check trùng mail/username -> tạo user + ghi `description` -> trả user token login) | Web và Android tạo user mới không cần biết credential quản trị | **URL:** `{{smartcall_origin}}/api/register`<br>**Headers:** `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json` *(trình duyệt cần `Origin: {{smartcall_origin}}`)*<br>**Body (raw JSON):** `{"firstname": "An", "lastname": "Nguyen", "username": "an.nguyen", "email": "an.nguyen@samsung.com", "department": "AI Transformation Part(SDV)", "client_id": "smartcall-android"}`<br>**Kỳ vọng:** `200 OK` trả `created: true`, `user_uuid`, `extension`, `description`, `token`, `refresh_token`. Trùng email/username → `409`. |
+| `GET /api/directory/contacts` | Tìm theo một trường hoặc lấy danh sách của một bộ phận theo quyền user | `DirectoryPanel`, `AddParticipantModal`, `CallGroupsView` dùng `ContactService.listPublishedContacts()` | **URL:** `{{smartcall_origin}}/api/directory/contacts`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Params:** `source={{source_uuid}}`. Chọn `field=name` + `term=An`, `field=extension` + `term=1001`, `field=employee_id` + `term=000007`, `field=email` + `term=an.nguyen`, hoặc `field=department` + `department=AI Transformation Part(SDV)`. Có thể truyền `refresh=true` khi làm mới.<br>**Kỳ vọng:** `200 OK`, JSON `{items, limited, notice, fetched_at, refresh_state}`. Máy lẻ khớp toàn bộ 4 hoặc 5 chữ số. Tìm quá rộng trả tối đa 50 mục với `limited=true`. Bộ phận trả danh sách liền một lần. |
 | `GET /api/directory/departments` | Lấy danh sách tên bộ phận từ toàn bộ nguồn danh bạ mà token được phép đọc | Dropdown bộ phận trong tab Bộ phận (`contactService.listDepartments`) | **URL:** `{{smartcall_origin}}/api/directory/departments`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Params:** `source={{source_uuid}}`, tùy chọn `refresh=true`<br>**Kỳ vọng:** `200 OK`, JSON `{items: ["..."], notice, fetched_at, refresh_state}`. |
 | `GET /api/directory/members` | Phân giải danh sách UUID thành thông tin danh bạ mới nhất thuộc nguồn được cấp quyền | `CallGroupsView` gọi trước khi quay số nhóm đã lưu (`contactService.getSavedGroupMembers`). Tab Yêu thích cũng dùng API này theo lô UUID hoặc `entry_ids` thuộc đúng nguồn khi thiếu máy lẻ. | **URL:** `{{smartcall_origin}}/api/directory/members`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Params (thêm 2 dòng cùng key `ids`):**<br>• `source={{source_uuid}}`<br>• `ids={{member_a}}`<br>• `ids={{member_b}}`<br>**Kỳ vọng:** `200 OK`, JSON `{"items": [...]}` chỉ chứa các UUID thuộc nguồn mà user có quyền. |
 | `GET /api/call-groups` | Lấy các nhóm gọi cá nhân đã lưu trong SQLite của chính user | `CallGroupsView` nạp danh sách thẻ nhóm (`listCallGroups`) | **URL:** `{{smartcall_origin}}/api/call-groups`<br>**Headers:** `X-Auth-Token: {{wazo_user_token}}`, `Accept: application/json`<br>**Kỳ vọng:** `200 OK`, JSON `{"items": [{"id": "...", "name": "...", "members": ["..."]}]}`. Đổi sang token user B → trả mảng rỗng `[]`. |
@@ -218,4 +222,136 @@ Dán vào Postman **Body → raw → JSON** khi test tạo tài khoản tổng h
 2. **Kiểm tra `description` (Bộ phận) & Danh bạ:** Lấy `{{wazo_admin_token}}` nếu test trực tiếp Confd → đối chiếu `GET /api/confd/1.1/users/{{user_uuid}}` xem trường `description` → dùng `{{wazo_user_token}}` gọi `GET /api/dird/0.1/directories/default/sources?backend=wazo` (lấy `{{source_uuid}}`) → test `GET /api/directory/contacts?source={{source_uuid}}&field=extension&term=1001` và `GET /api/directory/departments?source={{source_uuid}}` (thử `refresh=true` và `field=department&department=...`).
 3. **Nhóm gọi cá nhân:** Gọi `POST /api/call-groups` tạo nhóm 2 thành viên → `PUT /api/call-groups/{{group_id}}` → đổi sang token user khác thử `GET` và `DELETE` để xác nhận cô lập chủ sở hữu (`404`) → dùng đúng token chủ để `DELETE`.
 4. **Thoại, Hội nghị & Ghi âm:** Mở 2 máy Web/Android tạo cuộc gọi thật → gọi `GET /api/calld/1.0/users/me/calls` lấy `{{call_id}}` → test `PUT .../record/start` và `.../record/stop` → cúp máy → gọi `GET /api/call-logd/1.0/users/me/cdr` lấy `{{cdr_id}}`, `{{recording_uuid}}` → gọi `GET .../media` kiểm tra file âm thanh.
+
+---
+
+## 8. Hướng dẫn chi tiết sử dụng & kiểm thử Wrapper (`/api/wrapper`) + Đăng ký (`/api/register`) cho App, Web và Postman
+
+### 8.1. Bật cấu hình trên Backend trước khi test
+Thêm biến môi trường `SMARTCALL_WAZO_WRAPPER_TEST_KEY` (hoặc tạm đặt trong `backend/.env`, **không commit key thật lên Git**), rồi khởi động lại FastAPI:
+
+```powershell
+$env:SMARTCALL_WAZO_WRAPPER_TEST_KEY = "khoa-thu-nghiem-ngau-nhien"
+.\backend\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8801
+```
+
+*(Đảm bảo trong `backend/.env` đã có đủ `SMARTCALL_WAZO_ADMIN_USERNAME`, `SMARTCALL_WAZO_ADMIN_PASSWORD`, `SMARTCALL_WAZO_TENANT_UUID`, `SMARTCALL_WAZO_CONTEXT`, `SMARTCALL_WAZO_TEMPLATE_LABELS`, `SMARTCALL_WAZO_EXTENSION_MIN/MAX`, và dịch vụ Redis đang chạy cho `/api/register`).*
+
+---
+
+### 8.2. Kịch bản kiểm thử trên Postman
+
+Thêm biến `wrapper_test_key` vào Environment Postman bằng đúng giá trị `SMARTCALL_WAZO_WRAPPER_TEST_KEY`.
+
+1. **Test ca chính — User A đọc trực tiếp bị từ chối vs đọc qua Wrapper thành công:**
+   - **Bước 1 (Gọi thẳng Wazo bằng token user A — để thấy lỗi quyền):**
+     - `GET {{wazo_base}}/api/confd/1.1/users/{{member_a}}`
+     - Header: `X-Auth-Token: {{wazo_user_token}}`
+     - Kết quả: Wazo trả `403`/`401` (hoặc không đọc được `description` của user B nếu user thường thiếu quyền).
+   - **Bước 2 (Gọi lại cùng đường dẫn qua SmartCall Wrapper):**
+     - `POST {{smartcall_origin}}/api/wrapper`
+     - Headers: `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`
+     - Body (raw JSON):
+       ```json
+       {
+         "method": "GET",
+         "path": "/api/confd/1.1/users/{{member_a}}",
+         "query": { "view": "directory" }
+       }
+       ```
+     - Kỳ vọng: `200 OK`, trả về đầy đủ `uuid`, `firstname`, `lastname`, `email`, `description`, `enabled`, `lines` nhưng đã tự lọc bỏ `auth`, `userfield`, `password`.
+2. **Test ghi/sửa qua Wrapper (`PUT`):**
+   - `POST {{smartcall_origin}}/api/wrapper`
+   - Body (raw JSON):
+     ```json
+     {
+       "method": "PUT",
+       "path": "/api/confd/1.1/users/{{member_a}}",
+       "body": { "description": "AI Transformation Part(SDV)" }
+     }
+     ```
+   - Kỳ vọng: `200 OK` `{"ok": true, "status": 204}`; gọi lại Bước 2 ở trên để xác nhận `description` đã cập nhật.
+3. **Test đăng ký tài khoản mới + tự login (`POST /api/register`):**
+   - `POST {{smartcall_origin}}/api/register`
+   - Headers: `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`
+   - Body (raw JSON):
+     ```json
+     {
+       "firstname": "Test",
+       "lastname": "Nhan Vien",
+       "username": "test.nhanvien",
+       "email": "test.nhanvien@samsung.com",
+       "department": "AI Transformation Part(SDV)",
+       "client_id": "postman-lab"
+     }
+     ```
+   - Kỳ vọng lần 1: `200 OK`, trả `{ "created": true, "user_uuid": "...", "extension": "...", "description": "AI Transformation Part(SDV)", "token": "...", "refresh_token": "..." }`.
+   - Bấm **Send** lần 2 (hoặc đổi `username` giữ nguyên `email`): trả `409 Conflict` (`WAZO_EMAIL_EXISTS`). Đổi `email` mới nhưng giữ nguyên `username`: trả `409 Conflict` (`WAZO_USERNAME_EXISTS`).
+
+---
+
+### 8.3. Cách gọi từ Web (Frontend / Dev Console tại `http://localhost:8800`)
+
+Vì trình duyệt chạy tại `http://localhost:8800` có gửi header `Origin: http://localhost:8800` khớp `SMARTCALL_PUBLIC_ORIGIN` và đi qua Vite proxy `/api` → `127.0.0.1:8801`, Web gọi thẳng đường dẫn tương đối `/api/...`:
+
+```js
+// 1) Gọi API Wazo qua Wrapper (ví dụ đọc profile + description của user B)
+const wrapperRes = await fetch('/api/wrapper', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-SmartCall-Test-Key': testKey, // Chỉ nhập lúc thử nghiệm, không hardcode lên production
+  },
+  body: JSON.stringify({
+    method: 'GET',
+    path: `/api/confd/1.1/users/${targetUserUuid}`,
+    query: { view: 'directory' },
+  }),
+})
+const targetUser = await wrapperRes.json() // targetUser.description
+
+// 2) Đăng ký tài khoản mới rồi nhận token đăng nhập ngay
+const regRes = await fetch('/api/register', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-SmartCall-Test-Key': testKey,
+  },
+  body: JSON.stringify({
+    firstname: 'Test',
+    lastname: 'Nhan Vien',
+    username: 'test.nhanvien',
+    email: 'test.nhanvien@samsung.com',
+    department: 'AI Transformation Part(SDV)',
+    client_id: 'smartcall-web',
+  }),
+})
+const sessionData = await regRes.json() // sessionData.token, sessionData.refresh_token
+```
+
+---
+
+### 8.4. Cách gọi từ Android App (Kotlin / OkHttp hoặc Retrofit)
+
+- Lưu ý địa chỉ kết nối:
+  - Trên máy thật: trỏ tới domain HTTPS của backend SmartCall hoặc IP LAN máy chạy backend (kèm `--host 0.0.0.0 --port 8801` khi test nội bộ).
+  - Trên Android Emulator: dùng `http://10.0.2.2:8801` (nếu backend chạy trên máy host).
+- Android không tự gửi `Origin` header nên middleware backend cho phép đi thẳng nếu đúng `X-SmartCall-Test-Key`:
+
+```kotlin
+// Retrofit interface hoặc OkHttp gọi cùng hợp đồng JSON
+@POST("api/wrapper")
+suspend fun callWazoWrapper(
+    @Header("X-SmartCall-Test-Key") testKey: String,
+    @Body body: WrapperRequest // method, path, query, body
+): Response<JsonObject>
+
+@POST("api/register")
+suspend fun registerAccount(
+    @Header("X-SmartCall-Test-Key") testKey: String,
+    @Body body: RegisterRequest // firstname, lastname, username, email, department, client_id
+): Response<RegisterResponse>
+```
+
+> Lưu ý triển khai thực tế: Sau khi kiểm thử xong luồng với `X-SmartCall-Test-Key`, cần thay thế hoặc bổ sung lớp xác thực ứng dụng/ký request trước khi đóng gói phát hành APK/Web bundle để không lộ key dùng chung.
 5. **Đăng xuất & dọn dẹp:** Gọi `POST /api/auth/idp-logout` → gọi `GET /api/auth/idp-logout/continue` (hoặc mở trên browser) → gọi lại `GET /api/auth/user_info` xác nhận `401` → `DELETE /api/auth/0.1/token/{{wazo_admin_token}}` cho token admin tạm đã tạo khi test.

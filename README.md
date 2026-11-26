@@ -42,9 +42,34 @@ Route trả items, total, offset và có thể kèm notice về dữ liệu bộ
 - GET /api/directory/departments dùng cùng header, source là tùy chọn và trả items, has_unassigned và notice.
 - App gọi host HTTPS đã triển khai SmartCall. Trong môi trường dev trên máy tính, có thể gọi FastAPI ở cổng 8801.
 
-## Thử wrapper Wazo bằng Android hoặc Postman
+## Thử wrapper Wazo và `/api/register` cho Android, Web và Postman
 
-Bật wrapper trên backend thử nghiệm bằng biến môi trường SMARTCALL_WAZO_WRAPPER_TEST_KEY. Dùng key ngẫu nhiên riêng cho buổi thử. Bỏ biến hoặc để trống để tắt route. Backend dùng credential quản trị và tenant Wazo đã cấu hình.
+Bật wrapper và `/api/register` trên backend bằng biến môi trường `SMARTCALL_WAZO_WRAPPER_TEST_KEY` (hoặc đặt tạm trong `backend/.env` trên môi trường thử). Bỏ biến hoặc để trống để tắt route (`404`). Backend tự lấy token quản trị và ép `Wazo-Tenant` từ cấu hình server, tuyệt đối không trả token quản trị về client.
+
+### 1) Đăng ký tài khoản mới + tự login (`POST /api/register`)
+
+Dùng cho Android và Web khi tạo user Wazo mới: kiểm tra trùng email/username → nếu chưa trùng thì cấp máy lẻ trống + ghi `department` vào `description` → đăng nhập lấy `token` + `refresh_token` của user vừa tạo.
+
+~~~http
+POST /api/register
+Content-Type: application/json
+X-SmartCall-Test-Key: <KEY_THU_NGHIEM>
+
+{
+  "firstname": "An",
+  "lastname": "Nguyen",
+  "username": "an.nguyen",
+  "email": "an.nguyen@samsung.com",
+  "department": "AI Transformation Part(SDV)",
+  "client_id": "smartcall-android"
+}
+~~~
+
+- Trả `200 OK` gồm `created: true`, `user_uuid`, `username`, `email`, `department`, `description`, `extension`, `host`, `tenant_uuid`, `token`, `refresh_token`. Trùng email/username trả `409` (`WAZO_EMAIL_EXISTS` / `WAZO_USERNAME_EXISTS`).
+
+### 2) Gọi API Wazo bằng quyền quản trị (`POST /api/wrapper`)
+
+Android, Web (`http://localhost:8800/api/wrapper` qua Vite proxy) và Postman dùng cùng JSON `{method, path, query, body}`:
 
 ~~~http
 POST /api/wrapper
@@ -53,23 +78,25 @@ X-SmartCall-Test-Key: <KEY_THU_NGHIEM>
 
 {
   "method": "GET",
-  "path": "/api/confd/1.1/contexts",
-  "query": {"limit": 30, "offset": 0}
+  "path": "/api/confd/1.1/users/<user_b_uuid>",
+  "query": { "view": "directory" }
 }
 ~~~
 
-Android/Postman gửi POST đến backend SmartCall. method là thao tác backend thực hiện trên Wazo. path là đường dẫn đã đăng ký. Backend nhận query dạng JSON, với limit và offset nguyên. Có thể bỏ query nếu dùng mặc định. Dùng URL HTTPS của SmartCall trên điện thoại. localhost chỉ trỏ đến chính thiết bị đang gửi request. Web gọi từ origin đã cấu hình.
+- Phạm vi cho phép: `GET`, `POST`, `PUT`, `DELETE`, `PATCH` tới các prefix `/api/confd/1.1/`, `/api/dird/0.1/`, `/api/chatd/1.0/`, `/api/calld/1.0/`, `/api/call-logd/1.0/`.
+- Rào chắn bảo mật: chặn cứng `/api/auth/*`, cấu hình mật khẩu SIP (`.../endpoints/sip` trừ đọc `templates`), đường dẫn chứa `password`/`tokens`/`sessions`, các route `tenants`/`trunks`/`wizard`/`incalls`/`outcalls`/`registers`, xóa user/context/extension, sửa trường nhạy cảm (`auth`/`password`/`userfield`) và path traversal; tự động lọc bỏ `auth`, `password`, `userfield`, secret khỏi dữ liệu trả về.
 
 | Mã HTTP từ SmartCall | Ý nghĩa |
 | --- | --- |
-| 200 | Trả items, total và offset. Mỗi context chỉ có uuid, name, label, type và enabled nếu Wazo cung cấp. |
-| 401 | Thiếu key hoặc key sai. |
-| 403 | method/path chưa được cấp phép hoặc Origin của browser sai. |
-| 404 | Wrapper thử nghiệm chưa bật. |
-| 422 | JSON hoặc query sai định dạng, có trường thừa hoặc vượt giới hạn. |
-| 502/503 | Wazo không phản hồi thành công hoặc backend thiếu cấu hình Wazo. |
+| 200 / 201 | Thành công; `204` từ Wazo được chuẩn hóa thành `{"ok": true, "status": 204}`. |
+| 401 | Thiếu key hoặc `X-SmartCall-Test-Key` sai. |
+| 403 | `method`/`path` bị chặn bảo mật, khác tenant, sai domain email hoặc `Origin` trình duyệt không hợp lệ. |
+| 404 | Chưa bật `SMARTCALL_WAZO_WRAPPER_TEST_KEY`, hoặc tài nguyên không tồn tại trên Wazo. |
+| 409 | Trùng email/username/số máy lẻ khi đăng ký (`WAZO_EMAIL_EXISTS` / `WAZO_USERNAME_EXISTS` / `WAZO_PROVISION_BUSY`). |
+| 422 | JSON, query hoặc thông tin đăng ký sai định dạng. |
+| 502 / 503 | Wazo từ chối quyền admin/lỗi mạng hoặc backend thiếu cấu hình Wazo. |
 
-Phép thử GET /api/wrapper/contexts?limit=30&offset=0 vẫn dùng được với cùng header. Danh sách thao tác hiện chỉ có GET /api/confd/1.1/contexts. Muốn thêm API cần khai báo riêng method, path, tham số và các trường được phép trả. Key thử nghiệm không đưa vào Git, URL hoặc bản phát hành Android/Web.
+Phép thử `GET /api/wrapper/contexts?limit=30&offset=0` vẫn tương thích với cùng header `X-SmartCall-Test-Key`. Xem chi tiết mẫu gọi cho Android, Web và Postman tại [SMARTCALL_API_POSTMAN.md](doc/SMARTCALL_API_POSTMAN.md). Key thử nghiệm không đưa vào Git hoặc bản phát hành công khai.
 
 ## Đọc code từ đâu
 
