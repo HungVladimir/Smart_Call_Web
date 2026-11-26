@@ -110,7 +110,7 @@
               class="direction-arrow inbound"
             />
             <UiIcon name="call-outbound" v-else class="direction-arrow outbound" />
-            <div class="avatar-initials">{{ getInitials(call.name) }}</div>
+            <div class="avatar-initials">{{ getAvatarInitials(call.name) }}</div>
           </div>
 
           <!-- Khối Thông tin chi tiết cuộc gọi -->
@@ -223,10 +223,16 @@ import UiIcon, { iconGlyphs } from '@/components/common/UiIcon.vue'
 import { useRecordingPlayer } from '../composables/useRecordingPlayer.js'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { contactService, historyService } from '@/services/index.js'
-import { recordingService } from '@/services/index.js'
+import { contactService, historyService, recordingService } from '@/services/index.js'
+import { logger } from '@/services/common/loggerService.js'
 import { callState } from '@/state/callState.js'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
+import { getAvatarInitials } from '@/utils/avatar.js'
+
+/** Chỉ cho phát lại file ghi âm khi không có cuộc gọi thoại hoặc chuông đến đang chiếm loa. */
+function canPlayHistoryRecording() {
+  return !callState.activeCall && !callState.incomingCall
+}
 
 const {
   currentPlayingId,
@@ -241,7 +247,7 @@ const {
   deactivatePlayer,
 } = useRecordingPlayer({
   recordingService,
-  canPlay: () => !callState.activeCall && !callState.incomingCall,
+  canPlay: canPlayHistoryRecording,
 })
 
 const router = useRouter()
@@ -265,17 +271,20 @@ let historyRequest = 0
 const syncRecordingsAvailability = () => {
   try {
     const map = {}
-    calls.value.forEach((c) => {
-      // Xác định cuộc gọi có file ghi âm dựa trên mảng recordings từ máy chủ Wazo Call-Logd
-      if (c.recordings && c.recordings.length > 0) {
-        c.hasRecording = true
-        map[c.id] = true
-      } else if (c.hasRecording) {
-        map[c.id] = true
+    /** Đánh dấu từng CDR có sẵn bản ghi âm trên tổng đài Wazo Call-Logd. */
+    function markRecordingAvailability(call) {
+      if (call.recordings && call.recordings.length > 0) {
+        call.hasRecording = true
+        map[call.id] = true
+      } else if (call.hasRecording) {
+        map[call.id] = true
       }
-    })
+    }
+    calls.value.forEach(markRecordingAvailability)
     recordingsMap.value = { ...map }
-  } catch (e) {}
+  } catch (err) {
+    logger.warn('AUDIO', 'Không thể đồng bộ trạng thái bản ghi âm:', err)
+  }
 }
 
 /** Ủy quyền tải bản ghi của CDR cho RecordingService và hiển thị lỗi nếu không lấy được file. */
@@ -311,33 +320,38 @@ const formatTime = (seconds) => {
   return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
 }
 
+/** Rút trích peerUuid của bản ghi CDR phục vụ tra cứu phòng ban còn thiếu. */
+function extractCallPeerUuid(call) {
+  return call.peerUuid
+}
+
+/** Giữ lại UUID hợp lệ chưa có thông tin phòng ban trong bộ nhớ danh bạ hiện tại. */
+function needsDepartmentLookup(uuid) {
+  return Boolean(uuid && !contactService.findContactByUuid(uuid)?.dept)
+}
+
 /** Bổ sung bộ phận theo peerUuid từ backend danh bạ khi CDR thiếu thông tin phòng ban. */
 const hydrateHistoryDepartments = async (list, request, context) => {
-  const missingUuids = [
-    ...new Set(
-      list
-        .map((call) => call.peerUuid)
-        .filter((uuid) => uuid && !contactService.findContactByUuid(uuid)?.dept),
-    ),
-  ]
+  const missingUuids = [...new Set(list.map(extractCallPeerUuid).filter(needsDepartmentLookup))]
   if (!missingUuids.length) return
   try {
     await contactService.getSavedGroupMembers(missingUuids)
     if (request !== historyRequest || !isSessionContextCurrent(context)) return
-  } catch {
+  } catch (err) {
     // Giữ lịch sử cuộc gọi đang hiển thị nếu nguồn danh bạ tạm thời chưa phản hồi.
+    logger.warn('API', 'Chưa bổ sung được phòng ban cho lịch sử cuộc gọi:', err)
   }
 }
 
-// Nạp dữ liệu từ historyService (hỗ trợ Optimistic Rendering & Force Refresh)
+/** Nạp nhật ký CDR từ HistoryService, hỗ trợ hiển thị tạm thời và bỏ dữ liệu trả về muộn. */
 const fetchHistory = async (force = false) => {
   const request = ++historyRequest
   const context = captureSessionContext()
-  // Optimistic rendering: nạp ngay dữ liệu cục bộ nếu calls chưa có
+  // Optimistic rendering: nạp ngay dữ liệu trong RAM nếu danh sách đang trống.
   if (calls.value.length === 0) {
     calls.value = historyService.getLocalHistory({ tab: 'all' })
   }
-  // Bật spinner khi người dùng bấm làm mới hoặc chưa có dữ liệu nào
+  // Bật spinner khi người dùng bấm làm mới hoặc chưa có dữ liệu nào.
   if (force || calls.value.length === 0) {
     loading.value = true
   }
@@ -348,9 +362,9 @@ const fetchHistory = async (force = false) => {
     if (request !== historyRequest || !isSessionContextCurrent(context)) return
     calls.value = [...list]
     void hydrateHistoryDepartments(list, request, context)
-    await syncRecordingsAvailability()
+    syncRecordingsAvailability()
   } catch (err) {
-    console.error('Lỗi khi tải lịch sử cuộc gọi:', err)
+    logger.error('API', 'Lỗi khi tải lịch sử cuộc gọi:', err)
   } finally {
     loading.value = false
   }
@@ -361,106 +375,126 @@ const onCdrUpdated = () => {
   fetchHistory(false)
 }
 
-// Khi component được gắn vào DOM, nạp dữ liệu và đăng ký các listener/tài nguyên cần cho giao diện
-// này.
-onMounted(() => {
+/** Nạp lịch sử ban đầu và đăng ký lắng nghe sự kiện cập nhật CDR khi mount. */
+function registerHistoryLifecycle() {
   fetchHistory(false)
   window.addEventListener('smartcall-cdr-updated', onCdrUpdated)
-  window.addEventListener('smartcall-recording-saved', syncRecordingsAvailability)
-})
+}
 
-// Khi View được KeepAlive mở lại, đồng bộ dữ liệu/tài nguyên với phiên hiện tại thay vì dùng trạng
-// thái cũ.
-onActivated(() => {
+/** Kích hoạt player và làm mới danh sách khi màn lịch sử được KeepAlive mở lại. */
+function refreshHistoryOnActivate() {
   activatePlayer()
   fetchHistory(false)
-})
+}
 
-// Khi View được KeepAlive ẩn đi, dừng tài nguyên/tác vụ không còn cần hoạt động dù component chưa
-// bị hủy.
-onDeactivated(() => {
+/** Dừng audio đang phát khi màn hình bị ẩn đi bởi KeepAlive. */
+function cleanupAudioOnDeactivate() {
   deactivatePlayer()
   stopCurrentAudio()
-})
+}
 
-// Dừng phát ghi âm nếu có cuộc gọi mới phát sinh hoặc gọi đến
-watch(
-  () => Boolean(callState.activeCall || callState.incomingCall),
-  (hasCall) => {
-    if (hasCall) stopCurrentAudio()
-  },
-)
+/** Theo dõi sự xuất hiện của cuộc gọi thoại hoặc cuộc gọi đến để ngắt file ghi âm đang phát. */
+function hasActiveOrIncomingCall() {
+  return Boolean(callState.activeCall || callState.incomingCall)
+}
 
-// Khi component bị hủy, gỡ listener và dọn tài nguyên thuộc vòng đời này để callback cũ không tiếp
-// tục tác động UI.
-onUnmounted(() => {
+/** Dừng phát lại ghi âm ngay khi có cuộc gọi mới phát sinh hoặc gọi đến. */
+function stopAudioWhenCallStarts(hasCall) {
+  if (hasCall) stopCurrentAudio()
+}
+
+/** Hủy mọi yêu cầu chờ, dừng audio và gỡ listener khi component bị unmount. */
+function disposeHistoryLifecycle() {
   deactivatePlayer()
   historyRequest += 1
   stopCurrentAudio()
   window.removeEventListener('smartcall-cdr-updated', onCdrUpdated)
-  window.removeEventListener('smartcall-recording-saved', syncRecordingsAvailability)
-})
+}
+
+onMounted(registerHistoryLifecycle)
+onActivated(refreshHistoryOnActivate)
+onDeactivated(cleanupAudioOnDeactivate)
+watch(hasActiveOrIncomingCall, stopAudioWhenCallStarts)
+onUnmounted(disposeHistoryLifecycle)
+
+/** Kiểm tra bản ghi CDR có hướng gọi đến hay không. */
+function isInboundCall(call) {
+  return call.direction === 'inbound'
+}
+
+/** Kiểm tra bản ghi CDR có hướng gọi đi hay không. */
+function isOutboundCall(call) {
+  return call.direction === 'outbound'
+}
+
+/** Kiểm tra bản ghi CDR thuộc nhóm cuộc gọi nhỡ hay không. */
+function isMissedCall(call) {
+  return call.status === 'missed' || (call.direction === 'inbound' && !call.answered)
+}
 
 /**
  * Lọc CDR theo ngày và từ khóa trước khi tính tab/số đếm để danh sách và thống kê dùng cùng
  * một tập dữ liệu.
  */
-const dateFilteredCalls = computed(() => {
+function computeDateFilteredCalls() {
   let list = calls.value
   if (filterDate.value) {
-    list = list.filter((c) => c.date && c.date.startsWith(filterDate.value))
+    /** Giữ lại các bản ghi khớp ngày được chọn theo tiền tố ISO date. */
+    function matchesSelectedDate(call) {
+      return Boolean(call.date && call.date.startsWith(filterDate.value))
+    }
+    list = list.filter(matchesSelectedDate)
   }
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase().trim()
-    list = list.filter(
-      (c) =>
-        (c.name && c.name.toLowerCase().includes(q)) ||
-        (c.extension && c.extension.includes(q)) ||
-        historyDepartment(c).toLowerCase().includes(q),
-    )
+    /** Khớp từ khóa với tên liên hệ, số máy lẻ hoặc bộ phận đã chuẩn hóa. */
+    function matchesHistorySearch(call) {
+      return (
+        Boolean(call.name && call.name.toLowerCase().includes(q)) ||
+        Boolean(call.extension && call.extension.includes(q)) ||
+        historyDepartment(call).toLowerCase().includes(q)
+      )
+    }
+    list = list.filter(matchesHistorySearch)
   }
   return list
-})
+}
 
-// Đếm số lượng cuộc gọi theo từng tab theo đúng ngày được chọn
-const counts = computed(() => {
+/** Danh sách CDR đã qua lọc ngày và từ khóa tìm kiếm dùng chung cho bảng và các bộ đếm tab. */
+const dateFilteredCalls = computed(computeDateFilteredCalls)
+
+/** Đếm số lượng cuộc gọi theo từng tab trên đúng tập dữ liệu đã lọc ngày/từ khóa. */
+function computeCallCounts() {
   const list = dateFilteredCalls.value
-  const all = list.length
-  const incomings = list.filter((c) => c.direction === 'inbound').length
-  const outgoings = list.filter((c) => c.direction === 'outbound').length
-  const missed = list.filter(
-    (c) => c.status === 'missed' || (c.direction === 'inbound' && !c.answered),
-  ).length
-  return { all, incomings, outgoings, missed }
-})
-
-// Lọc dữ liệu hiển thị theo tab
-const filteredCalls = computed(() => {
-  let list = dateFilteredCalls.value
-  if (currentTab.value === 'incomings') {
-    list = list.filter((c) => c.direction === 'inbound')
-  } else if (currentTab.value === 'outgoings') {
-    list = list.filter((c) => c.direction === 'outbound')
-  } else if (currentTab.value === 'missed') {
-    list = list.filter((c) => c.status === 'missed' || (c.direction === 'inbound' && !c.answered))
+  return {
+    all: list.length,
+    incomings: list.filter(isInboundCall).length,
+    outgoings: list.filter(isOutboundCall).length,
+    missed: list.filter(isMissedCall).length,
   }
-  return list
-})
+}
 
-// Format thời lượng cuộc gọi mm:ss
+/** Bộ đếm hiển thị trên 4 tab lọc lịch sử cuộc gọi. */
+const counts = computed(computeCallCounts)
+
+/** Lọc tiếp danh sách CDR theo tab đang chọn (tất cả, gọi đến, gọi đi hoặc gọi nhỡ). */
+function computeFilteredCalls() {
+  const list = dateFilteredCalls.value
+  if (currentTab.value === 'incomings') return list.filter(isInboundCall)
+  if (currentTab.value === 'outgoings') return list.filter(isOutboundCall)
+  if (currentTab.value === 'missed') return list.filter(isMissedCall)
+  return list
+}
+
+/** Danh sách cuộc gọi cuối cùng hiển thị trên giao diện lịch sử. */
+const filteredCalls = computed(computeFilteredCalls)
+
+/** Định dạng thời lượng cuộc gọi sang mm:ss thông qua HistoryService. */
 const formatDuration = (seconds) => {
   return historyService.formatDuration(seconds)
 }
 
-// Lấy 2 chữ cái đầu cho Avatar
-const getInitials = (name) => {
-  if (!name) return '?'
-  const parts = name.trim().split(' ')
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
-
-// Thao tác Gọi lại nhanh (Callback): Điều hướng sang màn hình /calls và kích hoạt gọi
+/** Điều hướng sang màn hình gọi và tự quay số lại cho bản ghi lịch sử được chọn. */
 const handleCallback = (call) => {
   if (!call.extension) {
     alert('Không tìm thấy số máy lẻ để gọi lại!')
@@ -1032,19 +1066,6 @@ const handleCallback = (call) => {
   border-color: #059669;
 }
 
-.btn-delete-item {
-  background-color: #f8fafc;
-  color: #94a3b8;
-  border-color: #e2e8f0;
-  padding: 8px 10px;
-}
-
-.btn-delete-item:hover {
-  background-color: #fee2e2;
-  color: #dc2626;
-  border-color: #fca5a5;
-}
-
 /* Loading & Empty States */
 .state-message {
   text-align: center;
@@ -1073,79 +1094,6 @@ const handleCallback = (call) => {
 .empty-icon {
   font-size: 2.5rem;
   margin-bottom: 12px;
-}
-
-/* Confirm Modal */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background-color: rgba(15, 23, 42, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.confirm-modal {
-  background: #fff;
-  border-radius: 14px;
-  padding: 24px;
-  width: 90%;
-  max-width: 440px;
-  text-align: center;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-}
-
-.modal-icon.danger {
-  font-size: 2.5rem;
-  margin-bottom: 12px;
-}
-
-.confirm-modal h3 {
-  font-size: 1.25rem;
-  color: #1e293b;
-  margin: 0 0 10px 0;
-}
-
-.confirm-modal p {
-  font-size: 0.9rem;
-  color: #64748b;
-  line-height: 1.5;
-  margin-bottom: 24px;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-}
-
-.btn-cancel {
-  padding: 10px 20px;
-  background-color: #f1f5f9;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  font-weight: 600;
-  color: #475569;
-  cursor: pointer;
-}
-
-.btn-cancel:hover {
-  background-color: #e2e8f0;
-}
-
-.btn-confirm-delete {
-  padding: 10px 20px;
-  background-color: #dc2626;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
-  color: #ffffff;
-  cursor: pointer;
-}
-
-.btn-confirm-delete:hover {
-  background-color: #b91c1c;
 }
 
 @media (max-width: 768px) {

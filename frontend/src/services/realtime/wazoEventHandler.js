@@ -12,9 +12,9 @@ export function handleWazoEvent(context, envelope) {
     const name = ev?.name || ''
     const data = ev?.data || {}
 
-    // Phát sự kiện presence cho toàn hệ thống
+    // Cập nhật presence cho toàn hệ thống và kiểm tra tín hiệu gọi nhóm / đa thiết bị
     if (name.includes('presence')) {
-      window.dispatchEvent(new CustomEvent('wazo-presence-updated', { detail: data }))
+      context.contactService.updateSinglePresence(data)
 
       handleGroupPresenceSignal(context, data)
 
@@ -80,9 +80,18 @@ export function handleWazoEvent(context, envelope) {
 
     // Chuyển tiếp cho các subscriber của luồng thoại.
     context.eventHub.emit(name, data)
-  } catch (e) {
-    /* ignore */
+  } catch (error) {
+    logger.warn('CALL', 'Bỏ qua sự kiện WebSocket Wazo không thể xử lý:', error?.message || error)
   }
+}
+
+/** Thu thập các UUID đã biết trong phiên gắn với cùng máy lẻ để kiểm tra tính duy nhất. */
+function readKnownExtensionOwners(contactService, extension) {
+  const owners = new Set()
+  for (const item of contactService.getKnownContacts()) {
+    if (normalizeExtension(item.number) === extension) owners.add(item.uuid)
+  }
+  return owners
 }
 
 /** Chỉ dùng UUID do envelope server cung cấp, không suy người phát từ alias hoặc tag text. */
@@ -98,11 +107,7 @@ function resolveSender(context, data) {
   if (!extension) return null
   if (context.contactService.isPagedIdentity(contact))
     return context.contactService.isVerifiedExtensionOwner(contact) ? { uuid, extension } : null
-  const owners = new Set(
-    context.contactService.currentContacts
-      .filter((item) => normalizeExtension(item.number) === extension)
-      .map((item) => item.uuid),
-  )
+  const owners = readKnownExtensionOwners(context.contactService, extension)
   // Một máy lẻ phải thuộc duy nhất UUID đã xác minh; danh bạ trùng máy lẻ không đủ an toàn để cấp
   // quyền điều khiển.
   if (owners.size !== 1 || !owners.has(uuid)) return null
@@ -153,11 +158,16 @@ function extensions(value) {
   return [...new Set(list)]
 }
 
+/** Ghi log khi lệnh mời thành viên được ủy quyền từ thành viên nhóm thất bại bất đồng bộ. */
+function logDelegatedInviteFailure(error) {
+  logger.warn('CALL', 'Không thể thực hiện yêu cầu mời từ thành viên:', error.message)
+}
+
 /**
  * Ràng buộc group signal với người phát và peer/nhóm đang hoạt động; không tự nhận chuyển quyền
  * host.
  */
-export function handleGroupPresenceSignal(context, data, lookupAttempted = false) {
+function handleGroupPresenceSignal(context, data, lookupAttempted = false) {
   if (!context.authService.isAuthenticated()) return
   const currentCall = callState.activeCall || callState.incomingCall
   if (!currentCall || !context.callService.hasActiveCall() || typeof data.status !== 'string')
@@ -281,20 +291,23 @@ export function handleGroupPresenceSignal(context, data, lookupAttempted = false
     const [requestId, targetHost, csv] = parts.length === 3 ? parts : ['', ...parts]
     const requested = extensions(csv)
     if (targetHost !== me || !requested) return
-    const targets = requested.filter(
-      (extension) =>
+
+    /** Loại chính mình, peer đang gọi và người đã có trong danh sách nhóm trước khi mời thêm. */
+    function isNewInviteTarget(extension) {
+      return (
         extension !== me &&
         extension !== peer &&
-        !state.groupParticipantExtensions.includes(extension),
-    )
+        !state.groupParticipantExtensions.includes(extension)
+      )
+    }
+
+    const targets = requested.filter(isNewInviteTarget)
     if (!targets.length) return
     // Android cũ không có request ID: giới hạn một nội dung yêu cầu/người phát trong cuộc gọi hiện tại.
     const key = sender.uuid + ':' + (requestId || csv)
     if (group._processedAddReqIds.has(key)) return
     group._processedAddReqIds.add(key)
-    Promise.resolve(group.addParticipantsToGroupCall(targets)).catch((error) =>
-      logger.warn('CALL', 'Không thể thực hiện yêu cầu mời từ thành viên:', error.message),
-    )
+    Promise.resolve(group.addParticipantsToGroupCall(targets)).catch(logDelegatedInviteFailure)
     return
   }
   if (kind === 'NOTICE') {

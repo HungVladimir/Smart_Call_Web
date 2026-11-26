@@ -165,39 +165,52 @@ function refreshModalPresence(page, previousPage, onCleanup) {
 }
 watch([results.contacts, () => props.isOpen], refreshModalPresence)
 
+/** Chuẩn hóa số máy lẻ thành chuỗi gọn không khoảng trắng thừa. */
+function normalizeExtensionText(value) {
+  return String(value || '').trim()
+}
+
+/** Trả về danh sách đồng nghiệp có thể mời vào cuộc gọi sau khi loại người đã tham gia và lọc từ khóa. */
+function computeAvailableAddParticipants() {
+  const myExt = normalizeExtensionText(props.myExtension)
+  const activeExt = normalizeExtensionText(props.call?.number)
+  const isGroup = Boolean(props.call?.isGroupCall)
+  const rawParticipants =
+    props.call?.groupParticipantExtensions || props.group.groupParticipantExtensions || []
+  const inCallExts = new Set(rawParticipants.map(normalizeExtensionText))
+  // Trong cuộc gọi 1-1 mới loại trực tiếp activeExt; trong gọi nhóm chỉ loại các máy lẻ thực sự còn trong danh sách nhóm.
+  if (!isGroup && activeExt) inCallExts.add(activeExt)
+  if (myExt) inCallExts.add(myExt)
+
+  /** Kiểm tra liên hệ có máy lẻ hợp lệ, sẵn sàng nhận cuộc gọi và chưa ở trong cuộc gọi. */
+  function isInvitableCandidate(contact) {
+    const ext = normalizeExtensionText(contact.number)
+    return ext && (props.loadContacts || props.canInviteContact(contact)) && !inCallExts.has(ext)
+  }
+
+  const source = props.loadContacts ? results.contacts.value : contacts.value
+  let list = source.filter(isInvitableCandidate)
+
+  const q = addParticipantSearch.value.trim().toLowerCase()
+  if (q && !props.loadContacts) {
+    /** Khớp từ khóa tìm kiếm theo tên, số máy lẻ hoặc bộ phận khi lọc danh bạ tại chỗ. */
+    function matchesLocalSearch(contact) {
+      return (
+        (contact.name || '').toLowerCase().includes(q) ||
+        (contact.number || '').includes(q) ||
+        (contact.dept || '').toLowerCase().includes(q)
+      )
+    }
+    list = list.filter(matchesLocalSearch)
+  }
+  return list
+}
+
 /**
  * Lọc người có thể mời: bỏ chính mình, peer/thành viên đã có và người không sẵn sàng; áp dụng từ
  * khóa tìm kiếm.
  */
-const availableAddParticipants = computed(() => {
-  const myExt = String(props.myExtension || '').trim()
-  const activeExt = String(props.call?.number || '').trim()
-  const isGroup = Boolean(props.call?.isGroupCall)
-  const inCallExts = new Set(
-    (props.call?.groupParticipantExtensions || props.group.groupParticipantExtensions || []).map(
-      (e) => String(e).trim(),
-    ),
-  )
-  if (!isGroup && activeExt) inCallExts.add(activeExt)
-  if (myExt) inCallExts.add(myExt)
-
-  const source = props.loadContacts ? results.contacts.value : contacts.value
-  let list = source.filter((c) => {
-    const ext = String(c.number || '').trim()
-    return ext && (props.loadContacts || props.canInviteContact(c)) && !inCallExts.has(ext)
-  })
-
-  const q = addParticipantSearch.value.trim().toLowerCase()
-  if (q && !props.loadContacts) {
-    list = list.filter(
-      (c) =>
-        (c.name || '').toLowerCase().includes(q) ||
-        (c.number || '').includes(q) ||
-        (c.dept || '').toLowerCase().includes(q),
-    )
-  }
-  return list
-})
+const availableAddParticipants = computed(computeAvailableAddParticipants)
 
 /** Dùng UUID làm khóa để người mới dùng cùng một số không thừa hưởng lựa chọn cũ. */
 function identityOf(contact) {
@@ -221,6 +234,12 @@ function toggleContact(contact) {
 function canToggleContact(contact) {
   return isSelected(contact) || props.canInviteContact(contact)
 }
+
+/** Rút trích số máy lẻ đã chuẩn hóa từ một liên hệ đã chọn. */
+function extractSelectedExtension(contact) {
+  return String(contact.number).trim()
+}
+
 // Đồng bộ vòng đời mở/đóng modal: reset lựa chọn tạm hoặc dọn tài nguyên không còn dùng.
 /** Xóa bộ chọn khi modal đóng/mở hoặc cuộc gọi đổi. */
 function resetSelection() {
@@ -236,9 +255,7 @@ const confirmAddParticipants = () => {
     if (selectedContacts.value.size) emit('confirm', [...selectedContacts.value.values()])
     return
   }
-  const selected = availableAddParticipants.value
-    .filter(isSelected)
-    .map((contact) => String(contact.number).trim())
+  const selected = availableAddParticipants.value.filter(isSelected).map(extractSelectedExtension)
   if (selected.length) emit('confirm', selected)
 }
 </script>
@@ -255,17 +272,6 @@ const confirmAddParticipants = () => {
   opacity: 0.4;
   cursor: not-allowed;
   background: #f1f5f9;
-}
-
-.calls-view .tab-config-item.selected {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-}
-
-.calls-view .tab-config-item.disabled {
-  cursor: default;
-  background: #f8fafc;
-  opacity: 0.85;
 }
 .calls-view .add-participant-overlay {
   position: fixed;

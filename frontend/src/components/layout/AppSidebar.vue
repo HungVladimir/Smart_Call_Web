@@ -2,7 +2,7 @@
   <aside class="app-sidebar">
     <ul class="sidebar-menu">
       <li v-if="features.calls">
-        <router-link to="/calls" class="nav-btn" active-class="active" @click="onCallsNavClick">
+        <router-link to="/calls" class="nav-btn" active-class="active">
           <UiIcon name="phone-text" class="icon" />
           <span>Gọi điện & Danh bạ</span>
         </router-link>
@@ -42,22 +42,18 @@ function onFeaturesChanged(event) {
   features.value = event.detail || getFeatures()
 }
 
-/** Điều hướng tới màn hình gọi và phát yêu cầu cập nhật danh bạ theo luồng hiện tại. */
-const onCallsNavClick = () => {
-  window.dispatchEvent(new CustomEvent('smartcall-refresh-contacts'))
+/** Đăng ký lắng nghe thay đổi cờ màn hình khi Sidebar được gắn vào DOM. */
+function registerFeaturesListener() {
+  window.addEventListener('smartcall-features-changed', onFeaturesChanged)
 }
 
-// Khi component được gắn vào DOM, nạp dữ liệu và đăng ký các listener/tài nguyên cần cho giao diện
-// này.
-onMounted(() => {
-  window.addEventListener('smartcall-features-changed', onFeaturesChanged)
-})
-
-// Khi component bị hủy, gỡ listener và dọn tài nguyên thuộc vòng đời này để callback cũ không tiếp
-// tục tác động UI.
-onUnmounted(() => {
+/** Gỡ listener cấu hình màn hình khi Sidebar bị hủy để tránh rò rỉ tham chiếu. */
+function unregisterFeaturesListener() {
   window.removeEventListener('smartcall-features-changed', onFeaturesChanged)
-})
+}
+
+onMounted(registerFeaturesListener)
+onUnmounted(unregisterFeaturesListener)
 </script>
 
 <style scoped>
@@ -130,52 +126,12 @@ onUnmounted(() => {
   gap: 2px;
 }
 
-.dev-line {
-  color: #cbd5e1;
-  font-weight: 500;
-  font-size: 0.71rem;
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .dept-line {
   color: #38bdf8;
   font-size: 0.69rem;
   font-weight: 600;
   margin-top: 1px;
   letter-spacing: 0.2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.webrtc-status {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 0.71rem;
-  font-weight: 600;
-  padding-top: 5px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.1);
-  transition: color 0.3s;
-}
-
-.webrtc-status.status-online {
-  color: #4ade80;
-}
-
-.webrtc-status.status-offline {
-  color: #94a3b8;
-}
-
-.status-indicator-dot {
-  font-size: 0.65rem;
-  line-height: 1;
-}
-
-.status-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

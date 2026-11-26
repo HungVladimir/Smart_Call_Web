@@ -6,6 +6,11 @@
 
 import { logger } from '../common/loggerService.js'
 
+/** Bỏ qua lỗi phát tiếng phím từ trình duyệt để không cản trở thao tác nhập số hoặc gửi DTMF. */
+function ignoreDtmfPlaybackError() {
+  /* Autoplay hoặc thiết bị audio lỗi chỉ làm mất tiếng phím cục bộ. */
+}
+
 class CallToneService {
   /** Chuẩn bị timer và danh sách node âm thanh; AudioContext chỉ được lấy/tạo khi cần phát âm báo. */
   constructor() {
@@ -35,13 +40,18 @@ class CallToneService {
 
   /** Theo dõi oscillator đang phát để mọi âm báo đều có thể được dừng và giải phóng tập trung. */
   _trackOscillator(osc) {
+    const toneService = this
     this.activeOscillators.push(osc)
-    osc.onended = () => {
-      const idx = this.activeOscillators.indexOf(osc)
+
+    /** Gỡ oscillator khỏi danh sách theo dõi ngay khi âm báo phát xong. */
+    function handleOscillatorEnded() {
+      const idx = toneService.activeOscillators.indexOf(osc)
       if (idx !== -1) {
-        this.activeOscillators.splice(idx, 1)
+        toneService.activeOscillators.splice(idx, 1)
       }
     }
+
+    osc.onended = handleOscillatorEnded
   }
 
   /** Dừng/disconnect các oscillator còn sống để âm của cuộc gọi trước không kéo dài sang cuộc mới. */
@@ -51,8 +61,8 @@ class CallToneService {
       try {
         osc.stop(0)
         osc.disconnect()
-      } catch (e) {
-        /* ignore */
+      } catch {
+        /* Oscillator có thể đã tự kết thúc hoặc đã bị ngắt kết nối trước lúc cleanup. */
       }
     }
   }
@@ -67,12 +77,13 @@ class CallToneService {
     const ctx = this._getAudioContext()
     if (!ctx) return
 
+    const toneService = this
     this.isRinging = true
     logger.info('AUDIO', '🔔 Bắt đầu phát chuông cuộc gọi đến (Incoming Ringtone)')
 
     /** Phát một nhịp âm báo trong chu kỳ ringing; vòng đời chu kỳ được nơi gọi quản lý. */
-    const playRingCycle = () => {
-      if (!this.isRinging) return
+    function playRingCycle() {
+      if (!toneService.isRinging) return
 
       try {
         const osc1 = ctx.createOscillator()
@@ -94,15 +105,15 @@ class CallToneService {
         osc2.connect(gainNode)
         gainNode.connect(ctx.destination)
 
-        this._trackOscillator(osc1)
-        this._trackOscillator(osc2)
+        toneService._trackOscillator(osc1)
+        toneService._trackOscillator(osc2)
 
         osc1.start(ctx.currentTime)
         osc2.start(ctx.currentTime)
         osc1.stop(ctx.currentTime + 1.6)
         osc2.stop(ctx.currentTime + 1.6)
-      } catch (e) {
-        console.warn('Lỗi phát âm thanh chuông:', e)
+      } catch (error) {
+        logger.warn('AUDIO', 'Lỗi phát âm thanh chuông:', error)
       }
     }
 
@@ -130,16 +141,18 @@ class CallToneService {
    */
   startRingbackTone() {
     if (this.isRingbackActive) return
+    const toneService = this
     this.isRingbackActive = true
     logger.info('AUDIO', '🎵 Bắt đầu phát chuông chờ cuộc gọi đi (Ringback Tone: Tút... Tút...)')
 
-    /** Tạo oscillator/gain cho một âm ngắn và thu hồi node sau khi phát xong. */
-    const playTone = () => {
-      if (!this.isRingbackActive) return
-      this.playRingbackTone()
+    /** Tạo oscillator/gain cho một nhịp chuông chờ và thu hồi node sau khi phát xong. */
+    function playRingbackCycle() {
+      if (!toneService.isRingbackActive) return
+      toneService.playRingbackTone()
     }
-    playTone()
-    this.ringbackInterval = setInterval(playTone, 3000)
+
+    playRingbackCycle()
+    this.ringbackInterval = setInterval(playRingbackCycle, 3000)
   }
 
   /**
@@ -202,8 +215,8 @@ class CallToneService {
 
       osc.start(ctx.currentTime)
       osc.stop(ctx.currentTime + 1.0)
-    } catch (e) {
-      /* ignore */
+    } catch (error) {
+      logger.warn('AUDIO', 'Không thể phát chuông chờ cuộc gọi đi:', error)
     }
   }
 
@@ -231,14 +244,19 @@ class CallToneService {
       sampleCount = 960 // Âm 120 ms, PCM mono 16 bit.
     const buffer = new ArrayBuffer(44 + sampleCount * 2)
     const wave = new DataView(buffer)
-    // Ghi nhãn cấu trúc WAV vào buffer; phần giải mã/phát do HTMLAudio xử lý bất đồng bộ.
-    const writeText = (offset, text) =>
-      [...text].forEach((char, i) => wave.setUint8(offset + i, char.charCodeAt(0)))
+
+    /** Ghi chuỗi ASCII cố định vào header WAV tại offset cho trước để tạo bộ đệm hợp lệ. */
+    function writeWavHeaderText(offset, text) {
+      for (let index = 0; index < text.length; index += 1) {
+        wave.setUint8(offset + index, text.charCodeAt(index))
+      }
+    }
+
     // Header WAV mô tả PCM mono, 16 bit, little-endian; trình duyệt tự giải mã/phát bất đồng bộ.
-    writeText(0, 'RIFF')
+    writeWavHeaderText(0, 'RIFF')
     wave.setUint32(4, buffer.byteLength - 8, true)
-    writeText(8, 'WAVE')
-    writeText(12, 'fmt ')
+    writeWavHeaderText(8, 'WAVE')
+    writeWavHeaderText(12, 'fmt ')
     wave.setUint32(16, 16, true)
     wave.setUint16(20, 1, true)
     wave.setUint16(22, 1, true)
@@ -246,7 +264,7 @@ class CallToneService {
     wave.setUint32(28, sampleRate * 2, true)
     wave.setUint16(32, 2, true)
     wave.setUint16(34, 16, true)
-    writeText(36, 'data')
+    writeWavHeaderText(36, 'data')
     wave.setUint32(40, sampleCount * 2, true)
     for (let i = 0; i < sampleCount; i++) {
       const time = i / sampleRate
@@ -272,9 +290,29 @@ class CallToneService {
       this.dtmfAudio.pause()
       if (this.dtmfAudio.src !== url) this.dtmfAudio.src = url
       this.dtmfAudio.currentTime = 0
-      this.dtmfAudio.play()?.catch(() => {}) // Autoplay/thiết bị lỗi chỉ làm mất tiếng phím.
+      this.dtmfAudio.play()?.catch(ignoreDtmfPlaybackError)
     } catch {
       // Nhập số và DTMF gửi tới tổng đài vẫn hoạt động khi trình duyệt không phát được âm cục bộ.
+    }
+  }
+
+  /** Lập lịch một tiếng bíp kết thúc cuộc gọi tại độ trễ xác định trên AudioContext hiện tại. */
+  _scheduleCallEndedBeep(ctx, startTime, offsetSeconds) {
+    try {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.frequency.setValueAtTime(480, startTime + offsetSeconds)
+      gain.gain.setValueAtTime(0.12, startTime + offsetSeconds)
+      gain.gain.linearRampToValueAtTime(0, startTime + offsetSeconds + 0.12)
+
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+
+      this._trackOscillator(osc)
+      osc.start(startTime + offsetSeconds)
+      osc.stop(startTime + offsetSeconds + 0.12)
+    } catch (error) {
+      logger.warn('AUDIO', 'Không thể phát âm báo kết thúc cuộc gọi:', error)
     }
   }
 
@@ -287,24 +325,9 @@ class CallToneService {
     if (!ctx) return
 
     const now = ctx.currentTime
-    ;[0, 0.2, 0.4].forEach((offset) => {
-      try {
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.frequency.setValueAtTime(480, now + offset)
-        gain.gain.setValueAtTime(0.12, now + offset)
-        gain.gain.linearRampToValueAtTime(0, now + offset + 0.12)
-
-        osc.connect(gain)
-        gain.connect(ctx.destination)
-
-        this._trackOscillator(osc)
-        osc.start(now + offset)
-        osc.stop(now + offset + 0.12)
-      } catch (e) {
-        /* ignore */
-      }
-    })
+    for (const offsetSeconds of [0, 0.2, 0.4]) {
+      this._scheduleCallEndedBeep(ctx, now, offsetSeconds)
+    }
   }
 }
 

@@ -14,7 +14,7 @@
         <div class="avatar-wrapper">
           <div class="pulse-ring"></div>
           <div class="pulse-ring delay"></div>
-          <div class="avatar-circle" :style="{ background: avatarBg }">
+          <div class="avatar-circle" :style="{ backgroundColor: avatarBg }">
             <span class="avatar-initials">{{ initials }}</span>
           </div>
         </div>
@@ -59,6 +59,7 @@ import UiIcon from '@/components/common/UiIcon.vue'
 import { computed, watch } from 'vue'
 import { callToneService } from '@/services/audio/audioService.js'
 import { authService } from '@/services/index.js'
+import { getAvatarInitials, getAvatarColor } from '@/utils/avatar.js'
 
 const props = defineProps({
   isOpen: {
@@ -73,23 +74,24 @@ const props = defineProps({
 
 const emit = defineEmits(['accept', 'reject', 'timeout'])
 
-// Lấy thông tin người gọi
-const callerName = computed(() => {
+/** Trích tên hiển thị người gọi đến, fallback sang số máy lẻ khi thiếu tên. */
+function resolveCallerName() {
   const ext = props.callData?.extension || props.callData?.number
   return (
     props.callData?.name ||
     props.callData?.remote_name ||
     (ext ? `Máy lẻ ${ext}` : 'Chưa xác định người gọi')
   )
-})
+}
+
+/** Lấy tên người gọi đến phản ứng theo dữ liệu phiên gọi hiện tại. */
+const callerName = computed(resolveCallerName)
 
 /** Đọc máy lẻ thực tế của cuộc gọi đến; thiếu dữ liệu thì để trống thay vì tự điền số mẫu. */
-const callerExt = computed(() => {
-  return props.callData?.extension || props.callData?.number || ''
-})
+const callerExt = computed(() => props.callData?.extension || props.callData?.number || '')
 
-/** Hiển thị SIP URI được SDK cung cấp hoặc dựng từ máy lẻ/host thật khi cả hai đều có. */
-const callerSip = computed(() => {
+/** Dựng địa chỉ SIP URI từ dữ liệu SDK hoặc từ máy lẻ và host tổng đài thật. */
+function resolveCallerSip() {
   if (props.callData?.sipUri) return props.callData.sipUri
   const ext = props.callData?.extension || props.callData?.number || ''
   const domain = (authService.host || '')
@@ -97,59 +99,35 @@ const callerSip = computed(() => {
     .replace(/^https?:\/\//, '')
     .split(':')[0]
   return ext && domain ? `sip:${ext}@${domain}` : ''
-})
+}
+
+/** Hiển thị SIP URI được SDK cung cấp hoặc dựng từ máy lẻ/host thật khi cả hai đều có. */
+const callerSip = computed(resolveCallerSip)
 
 /** Đọc phòng ban của người gọi, dùng nhãn chung khi SDK/danh bạ chưa cung cấp. */
-const callerDept = computed(() => {
-  return props.callData?.dept || 'Nội bộ công ty'
-})
+const callerDept = computed(() => props.callData?.dept || 'Nội bộ công ty')
 
-/** Tính chữ viết tắt cho avatar của người gọi đến. */
-const initials = computed(() => {
-  const name = callerName.value
-  if (!name) return 'SC'
-  const parts = name.trim().split(/\s+/)
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-})
+/** Tính chữ viết tắt cho avatar của người gọi đến bằng helper dùng chung. */
+const initials = computed(() => getAvatarInitials(callerName.value))
 
-/** Tính màu avatar ổn định của người gọi đến từ tên hiển thị. */
-const avatarBg = computed(() => {
-  const name = callerName.value || ''
-  const colors = [
-    'linear-gradient(135deg, #3b82f6, #1d4ed8)',
-    'linear-gradient(135deg, #0ea5e9, #0284c7)',
-    'linear-gradient(135deg, #10b981, #047857)',
-    'linear-gradient(135deg, #f59e0b, #b45309)',
-    'linear-gradient(135deg, #8b5cf6, #6d28d9)',
-    'linear-gradient(135deg, #ec4899, #be185d)',
-  ]
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return colors[Math.abs(hash) % colors.length]
-})
+/** Tính màu avatar ổn định của người gọi đến từ tên hiển thị bằng helper dùng chung. */
+const avatarBg = computed(() => getAvatarColor(callerName.value))
 
 let ringTimer = null
 
-// Tự động bật/tắt chuông cuộc gọi khi modal mở hoặc đóng
-watch(
-  () => props.isOpen,
-  (val) => {
-    clearTimeout(ringTimer)
-    if (val) {
-      callToneService.startIncomingRingtone()
-      // Tự động chuyển thành cuộc gọi nhỡ nếu đổ chuông quá 30 giây
-      ringTimer = setTimeout(() => {
-        handleTimeout()
-      }, 30000)
-    } else {
-      callToneService.stopIncomingRingtone()
-    }
-  },
-  { immediate: true },
-)
+/** Bật hoặc tắt chuông báo cuộc gọi đến và đặt hẹn giờ nhỡ 30 giây khi modal mở. */
+function handleIncomingModalVisibility(isModalOpen) {
+  clearTimeout(ringTimer)
+  if (isModalOpen) {
+    callToneService.startIncomingRingtone()
+    // Tự động chuyển thành cuộc gọi nhỡ nếu đổ chuông quá 30 giây.
+    ringTimer = setTimeout(handleTimeout, 30000)
+  } else {
+    callToneService.stopIncomingRingtone()
+  }
+}
+
+watch(() => props.isOpen, handleIncomingModalVisibility, { immediate: true })
 
 /** Phát yêu cầu nghe máy lên nơi sở hữu cuộc gọi; component không tự quyết định đã connected. */
 const handleAccept = () => {

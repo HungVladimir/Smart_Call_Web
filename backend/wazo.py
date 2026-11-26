@@ -1,6 +1,7 @@
 """Cấp tài khoản WebRTC qua Confd; chỉ trả token của user, tuyệt đối không trả token quản trị."""
 from contextlib import asynccontextmanager
 import hashlib
+import logging
 import re
 import secrets
 from urllib.parse import unquote
@@ -8,6 +9,8 @@ from fastapi import HTTPException
 import httpx
 from httpx import BasicAuth
 from oidc import fail
+
+logger = logging.getLogger(__name__)
 
 WRAPPER_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"})
 WRAPPER_ALLOWED_PREFIXES = (
@@ -152,12 +155,21 @@ class WazoClient:
             fail("WAZO_RESPONSE_INVALID", "Wazo chưa trả token hợp lệ.", 502)
         return data
 
+    # Thu hồi token Wazo theo cơ chế best-effort; cảnh báo khi lỗi mạng hoặc HTTP >= 400, giữ nguyên lỗi gốc và không lộ token.
+    async def _revoke_token_best_effort(self, path, *, label, headers=None):
+        try:
+            response = await self.client.delete(self.settings.wazo_url + path, headers=headers)
+        except httpx.HTTPError as error:
+            logger.warning("Không thu hồi được %s (%s).", label, type(error).__name__)
+            return
+        if response.status_code >= 400:
+            logger.warning("Không thu hồi được %s (HTTP %s).", label, response.status_code)
+
     # Cấp phát admin token ngắn hạn và luôn thu hồi sau khi wrapper hoặc cấp phát dùng xong.
     @asynccontextmanager
     async def admin_token_scope(self, client_id, *, expiration=60):
+        self._ensure_admin_configured()
         settings = self.settings
-        if not settings.wazo_admin_username or not settings.wazo_admin_password or not settings.wazo_tenant_uuid:
-            fail("WAZO_NOT_CONFIGURED", "Chưa cấu hình tài khoản và tenant Wazo.", 503)
 
         admin_session = await self.token(
             settings.wazo_admin_username, settings.wazo_admin_password,
@@ -167,11 +179,11 @@ class WazoClient:
         try:
             yield admin_token
         finally:
-            # Cố gắng thu hồi ngay cả khi xử lý thất bại. Giữ lỗi gốc nếu thu hồi gặp lỗi mạng.
-            try:
-                await self.client.delete(settings.wazo_url + "/api/auth/0.1/token/" + admin_token)
-            except httpx.HTTPError:
-                pass
+            # Cố gắng thu hồi ngay cả khi xử lý thất bại. Giữ lỗi gốc nếu thu hồi gặp lỗi mạng hoặc HTTP >= 400.
+            await self._revoke_token_best_effort(
+                "/api/auth/0.1/token/" + admin_token,
+                label="admin token Wazo sau thao tác",
+            )
 
     # Đọc một trang context trong tenant cấu hình và chỉ công bố trường cần thiết cho thử nghiệm.
     async def list_wrapper_contexts(self, limit, offset):
@@ -231,6 +243,7 @@ class WazoClient:
                 elif isinstance(error_payload, list) and error_payload and isinstance(error_payload[0], str):
                     detail_message = error_payload[0].strip()[:300] or detail_message
             except ValueError:
+                # Giữ nguyên thông báo mã HTTP mặc định khi phản hồi 4xx từ Wazo không phải JSON hợp lệ.
                 pass
             raise HTTPException(
                 response.status_code,
@@ -468,13 +481,6 @@ class WazoClient:
         )
         return user, selected_extension_number
 
-    # Chuẩn bị dữ liệu và gửi một POST để tạo user cùng tài khoản thoại.
-    async def create_user(self, user_profile, wazo_username, identity_marker, admin_token, provisioning_lock):
-        user, _ = await self._create_user_with_extension(
-            user_profile, wazo_username, identity_marker, admin_token, provisioning_lock,
-        )
-        return user
-
     # Kiểm tra bật cấp phát và đủ thông tin quản trị Wazo trước khi tìm hoặc tạo tài khoản.
     def _ensure_admin_configured(self):
         settings = self.settings
@@ -550,12 +556,24 @@ class WazoClient:
         metadata = user_token.get("metadata") or {}
         token_user_uuid = metadata.get("pbx_user_uuid") or metadata.get("uuid") or user_token.get("pbx_user_uuid")
         if token_user_uuid != expected_user_uuid:
-            try:
-                await self.client.delete(self.settings.wazo_url + "/api/auth/0.1/token/" + user_token["token"])
-            except httpx.HTTPError:
-                pass
+            await self._revoke_token_best_effort(
+                "/api/auth/0.1/token/" + user_token["token"],
+                label="token Wazo lệch danh tính",
+            )
             fail("WAZO_IDENTITY_MISMATCH", "Token Wazo không khớp với tài khoản vừa liên kết.", 502)
         return user_token
+
+    # Đồng bộ bộ phận lên Wazo sau khi có user token; thu hồi phiên vừa cấp nếu cập nhật thất bại.
+    async def _sync_description_or_rollback(self, user_record, profile, admin_token, user_uuid, user_token_value, client_id):
+        try:
+            await self.synchronize_department_description(user_record, profile, admin_token)
+        except Exception:
+            # Không giữ phiên hoạt động nếu cập nhật bộ phận lỗi; lỗi thu hồi chỉ cảnh báo để giữ nguyên lỗi gốc.
+            try:
+                await self.revoke_session({"token": user_token_value, "user_uuid": user_uuid}, client_id)
+            except Exception as error:
+                logger.warning("Không thu hồi được phiên Wazo sau lỗi đồng bộ bộ phận (%s).", type(error).__name__)
+            raise
 
     # Dùng quyền quản trị đặt lại mật khẩu Wazo Auth khi tài khoản cũ chưa khớp mật khẩu cấu hình (dùng cho luồng xác thực tập trung không qua form mật khẩu).
     async def _reset_user_password(self, user_uuid, new_password, admin_token):
@@ -607,16 +625,16 @@ class WazoClient:
         reason = ""
 
         # Chỉ ghi đè description sau khi token đăng nhập vừa cấp đã xác minh khớp đúng UUID của user.
-        if sync_department and authenticated and department:
-            try:
-                await self.synchronize_department_description(record, {"department": department}, admin_token)
-                summary = self._build_public_user_summary(record, existing_username, email)
-            except Exception:
-                try:
-                    await self.revoke_session({"token": token_value, "user_uuid": record["uuid"]}, client_id)
-                except Exception:
-                    pass
-                raise
+        if sync_department and department:
+            await self._sync_description_or_rollback(
+                record,
+                {"department": department},
+                admin_token,
+                record["uuid"],
+                token_value,
+                client_id,
+            )
+            summary = self._build_public_user_summary(record, existing_username, email)
 
         return summary, authenticated, token_value, refresh_value, reason
 
@@ -758,10 +776,16 @@ class WazoClient:
     # Thu hồi token/refresh mới cấp nếu phiên backend bị hủy trước khi giao cho Web.
     async def revoke_session(self, result, client_id):
         try:
-            await self.client.delete(self.settings.wazo_url + "/api/auth/0.1/users/" + result["user_uuid"] + "/tokens/" + client_id,
-                                     headers={"X-Auth-Token": result["token"]})
+            await self._revoke_token_best_effort(
+                "/api/auth/0.1/users/" + result["user_uuid"] + "/tokens/" + client_id,
+                label="refresh token Wazo",
+                headers={"X-Auth-Token": result["token"]},
+            )
         finally:
-            await self.client.delete(self.settings.wazo_url + "/api/auth/0.1/token/" + result["token"])
+            await self._revoke_token_best_effort(
+                "/api/auth/0.1/token/" + result["token"],
+                label="user token Wazo",
+            )
 
     # Đồng bộ tên endpoint cũ do SmartCall quản lý, giữ nguyên password và các option SIP.
     async def repair_managed_sip_name(self, user_uuid, admin_token):
@@ -836,78 +860,70 @@ class WazoClient:
         settings = self.settings
         if not settings.wazo_provisioning_enabled:
             fail("WAZO_DISABLED", "Đã xác thực Single ID. Cấp phiên Wazo đang tắt trong cấu hình backend.", 409)
-        if not settings.wazo_admin_username or not settings.wazo_admin_password or not settings.wazo_tenant_uuid:
-            fail("WAZO_NOT_CONFIGURED", "Đã có hồ sơ Single ID. Cần cấu hình credential quản trị và tenant Wazo trong backend/.env.", 503)
+        self._ensure_admin_configured()
         # Khóa tenant bảo vệ cả kho máy lẻ, không chỉ việc tạo trùng cùng một người.
         lock = self.store.redis.lock(self.store.key("provision", settings.wazo_tenant_uuid), timeout=180, blocking_timeout=0)
         if not await lock.acquire(blocking=False):
             fail("WAZO_PROVISION_BUSY", "Đang cấp phát tài khoản khác. Vui lòng thử lại sau.", 409)
-        admin = None
         try:
-            admin = await self.token(settings.wazo_admin_username, settings.wazo_admin_password, "smartcall-provision", user=False)
-            identity = session["identity"]
-            profile = session["profile"]
-            digest = hashlib.sha256(identity.encode()).hexdigest()
-            marker = "smartcall:sso:" + digest
-            default_username = self.username_from_email(profile["email"])
-            user, mapping, stale_mapping = await self.find_provisioning_user(
-                identity, profile["email"], admin["token"],
-            )
-            if user and (user.get("tenant_uuid") not in (None, settings.wazo_tenant_uuid) or user.get("enabled") is False):
-                fail("WAZO_USER_UNAVAILABLE", "Tài khoản Wazo bị khóa hoặc không thuộc tenant cấu hình.", 403)
-            managed = bool(mapping and mapping["managed"]) or bool(user and user.get("userfield") == marker)
-            created = False
-            if not user:
-                user = await self.create_user(profile, default_username, marker, admin["token"], lock)
-                managed = True
-                created = True
-            if not user.get("uuid"):
-                fail("WAZO_RESPONSE_INVALID", "Wazo chưa trả UUID user sau cấp phát.", 502)
-            if not managed and not settings.wazo_existing_password_login:
-                fail("WAZO_ACCOUNT_LINK_REQUIRED",
-                     "Email đã có tài khoản Wazo. Cần cơ chế SSO hoặc cho phép thử mật khẩu cấu hình; backend không đổi mật khẩu cũ.", 409)
-            if managed and not created:
-                await self.repair_managed_sip_name(user["uuid"], admin["token"])
-            username = await self.resolve_account_username(
-                user, mapping, created, default_username, admin["token"],
-            )
-            if not await lock.owned():
-                fail("WAZO_PROVISION_BUSY", "Khóa cấp phát đã hết hạn; vui lòng thử lại.", 409)
-            await lock.extend(180, replace_ttl=True)
-            # Lưu ngay sau tạo, trước đăng nhập: retry không được tạo thêm một user khác.
-            mapping_value = dict(user_uuid=user["uuid"], username=username, managed=managed)
-            if stale_mapping:
-                # Thay đúng binding đã xác nhận mất user; nếu công cụ khác sửa DB thì dừng.
-                await self.store.replace_mapping(identity, settings.wazo_tenant_uuid,
-                                                 stale_mapping["user_uuid"], mapping_value)
-            elif not mapping:
-                await self.store.mapping(identity, settings.wazo_tenant_uuid, mapping_value)
-            token = await self.token(username, settings.wazo_default_password, client_id)
-            metadata = token.get("metadata") or {}
-            token_user_uuid = metadata.get("pbx_user_uuid") or metadata.get("uuid") or token.get("pbx_user_uuid")
-            if token_user_uuid != user["uuid"]:
-                try:
-                    await self.client.delete(settings.wazo_url + "/api/auth/0.1/token/" + token["token"])
-                except Exception:
-                    pass
-                fail("WAZO_IDENTITY_MISMATCH", "Token Wazo không thuộc tài khoản vừa liên kết.", 502)
-            # Chỉ cập nhật tài khoản cũ sau khi token đã được xác nhận đúng UUID đã liên kết.
-            try:
-                await self.synchronize_department_description(user, profile, admin["token"])
-            except Exception:
-                try:
-                    await self.revoke_session(dict(token, user_uuid=user["uuid"]), client_id)
-                except Exception:
-                    pass
-                raise
-            return dict(token=token["token"], refresh_token=token.get("refresh_token", ""),
-                        user_uuid=user["uuid"], host=settings.wazo_url, username=username, created=created,
-                        profile=profile)
+            async with self.admin_token_scope("smartcall-provision", expiration=3600) as admin_token:
+                identity = session["identity"]
+                profile = session["profile"]
+                digest = hashlib.sha256(identity.encode()).hexdigest()
+                marker = "smartcall:sso:" + digest
+                default_username = self.username_from_email(profile["email"])
+                user, mapping, stale_mapping = await self.find_provisioning_user(
+                    identity, profile["email"], admin_token,
+                )
+                # Tài khoản bị khóa hoặc thuộc tenant khác không được phép liên kết vào phiên hiện tại.
+                if user and (user.get("tenant_uuid") not in (None, settings.wazo_tenant_uuid) or user.get("enabled") is False):
+                    fail("WAZO_USER_UNAVAILABLE", "Tài khoản Wazo bị khóa hoặc không thuộc tenant cấu hình.", 403)
+                managed = bool(mapping and mapping["managed"]) or bool(user and user.get("userfield") == marker)
+                created = False
+                if not user:
+                    user, _ = await self._create_user_with_extension(
+                        profile, default_username, marker, admin_token, lock,
+                    )
+                    managed = True
+                    created = True
+                if not user.get("uuid"):
+                    fail("WAZO_RESPONSE_INVALID", "Wazo chưa trả UUID user sau cấp phát.", 502)
+                if not managed and not settings.wazo_existing_password_login:
+                    fail("WAZO_ACCOUNT_LINK_REQUIRED",
+                         "Email đã có tài khoản Wazo. Cần cơ chế SSO hoặc cho phép thử mật khẩu cấu hình; backend không đổi mật khẩu cũ.", 409)
+                if managed and not created:
+                    await self.repair_managed_sip_name(user["uuid"], admin_token)
+                username = await self.resolve_account_username(
+                    user, mapping, created, default_username, admin_token,
+                )
+                # Gia hạn khóa trước khi ghi mapping để tránh mất quyền giữ chỗ khi Wazo phản hồi chậm.
+                if not await lock.owned():
+                    fail("WAZO_PROVISION_BUSY", "Khóa cấp phát đã hết hạn; vui lòng thử lại.", 409)
+                await lock.extend(180, replace_ttl=True)
+                # Lưu ngay sau tạo, trước đăng nhập: retry không được tạo thêm một user khác.
+                mapping_value = dict(user_uuid=user["uuid"], username=username, managed=managed)
+                if stale_mapping:
+                    # Thay đúng binding đã xác nhận mất user; nếu công cụ khác sửa DB thì dừng.
+                    await self.store.replace_mapping(identity, settings.wazo_tenant_uuid,
+                                                     stale_mapping["user_uuid"], mapping_value)
+                elif not mapping:
+                    await self.store.mapping(identity, settings.wazo_tenant_uuid, mapping_value)
+                user_token = await self._login_verified_user(
+                    username, settings.wazo_default_password, client_id, user["uuid"],
+                )
+                # Chỉ cập nhật tài khoản cũ sau khi token đã được xác nhận đúng UUID đã liên kết.
+                await self._sync_description_or_rollback(
+                    user, profile, admin_token, user["uuid"], user_token["token"], client_id,
+                )
+                return dict(
+                    token=user_token["token"],
+                    refresh_token=user_token.get("refresh_token", ""),
+                    user_uuid=user["uuid"],
+                    host=settings.wazo_url,
+                    username=username,
+                    created=created,
+                    profile=profile,
+                )
         finally:
-            if admin:
-                try:
-                    await self.client.delete(settings.wazo_url + "/api/auth/0.1/token/" + admin["token"])
-                except Exception:
-                    pass  # Token admin có hạn ngắn; cleanup lỗi không được làm mất khóa.
             if await lock.owned():
                 await lock.release()

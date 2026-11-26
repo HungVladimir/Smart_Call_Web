@@ -36,7 +36,9 @@
       </select>
 
       <div class="user-profile">
-        <div class="avatar-sm">{{ userInitials }}</div>
+        <div class="avatar-sm" :style="{ backgroundColor: userAvatarColor }">
+          {{ userInitials }}
+        </div>
         <div class="user-info">
           <span class="user-name">{{ userDisplayName }}</span>
         </div>
@@ -126,36 +128,54 @@ import { useRouter } from 'vue-router'
 import { authService } from '@/services/index.js'
 import { callState } from '@/state/callState.js'
 import { userSessionState } from '@/state/sessionState.js'
+import { getAvatarInitials, getAvatarColor } from '@/utils/avatar.js'
 
 const router = useRouter()
 defineEmits(['logout', 'open-settings'])
 
 const presenceState = ref('available')
 
-// Lấy thông tin tài khoản đang đăng nhập đồng bộ từ callState (SSOT)
-const userName = computed(
-  () =>
-    userSessionState.displayName || localStorage.getItem('smartcall_username') || 'Quản trị viên',
-)
+/** Trích tên hiển thị của tài khoản đang đăng nhập từ userSessionState (SSOT) hoặc AuthService. */
+function resolveUserName() {
+  return (
+    userSessionState.displayName ||
+    authService.getCurrentDisplayName?.() ||
+    localStorage.getItem('smartcall_username') ||
+    'Quản trị viên'
+  )
+}
+
+/** Lấy tên hiển thị của tài khoản đang đăng nhập đồng bộ từ userSessionState (SSOT). */
+const userName = computed(resolveUserName)
+
+/** Trích số máy lẻ của phiên hiện tại từ userSessionState hoặc AuthService. */
+function resolveUserExtension() {
+  return (
+    userSessionState.extension ||
+    authService.getCurrentExtension?.() ||
+    localStorage.getItem('smartcall_extension') ||
+    ''
+  )
+}
+
 /** Đọc máy lẻ người đang đăng nhập để hiển thị trên Header. */
-const userExtension = computed(
-  () => userSessionState.extension || localStorage.getItem('smartcall_extension') || '',
-)
+const userExtension = computed(resolveUserExtension)
+
 /** Đọc phòng ban hiện tại để bổ sung thông tin người dùng trên Header. */
 const userDepartment = computed(
-  () =>
-    userSessionState.department ||
-    localStorage.getItem('smartcall_department') ||
-    localStorage.getItem('smartcall_user_department') ||
-    '',
+  () => userSessionState.department || localStorage.getItem('smartcall_department') || '',
 )
-/** Ghép thông tin tên/phòng ban thành nhãn người dùng trong Header. */
-const userDisplayName = computed(() => {
+
+/** Ghép tên hiển thị và phòng ban thành nhãn đầy đủ trên thanh Header. */
+function formatUserDisplayName() {
   if (userDepartment.value) {
     return `${userName.value} : ${userDepartment.value}`
   }
   return userName.value
-})
+}
+
+/** Ghép thông tin tên/phòng ban thành nhãn người dùng trong Header. */
+const userDisplayName = computed(formatUserDisplayName)
 /** Chỉ báo trực tuyến khi SDK đã đăng ký SIP, không suy trạng thái thoại từ việc có token. */
 const isSipOnline = computed(() => callState.isRegistered)
 const showSipInfoModal = ref(false)
@@ -165,16 +185,11 @@ const showSipHelp = () => {
   showSipInfoModal.value = true
 }
 
-/** Tính chữ viết tắt của tên người dùng cho avatar Header. */
-const userInitials = computed(() => {
-  if (!userName.value) return 'U'
-  return userName.value
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(-2)
-    .toUpperCase()
-})
+/** Tính chữ viết tắt của tên người dùng cho avatar Header bằng helper dùng chung. */
+const userInitials = computed(() => getAvatarInitials(userName.value))
+
+/** Chọn màu nền ổn định cho avatar Header theo tên người dùng hiện tại. */
+const userAvatarColor = computed(() => getAvatarColor(userName.value))
 
 /** Điều hướng từ Header về màn hình chính đang được ứng dụng sử dụng. */
 const goHome = () => {

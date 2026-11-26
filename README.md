@@ -1,6 +1,6 @@
 # SmartCall Web
 
-Ứng dụng Web dùng Vue và Wazo cho thoại, tin nhắn và danh bạ. Backend FastAPI xác thực Single ID, quản lý phiên qua Redis và lưu liên kết tài khoản Wazo trong SQLite. Nhánh phát triển của bản này là codex/refactor-architecture.
+Ứng dụng Web dùng Vue và Wazo cho thoại, gọi nhóm và danh bạ. Backend FastAPI xác thực Single ID, quản lý phiên qua Redis và lưu liên kết tài khoản Wazo trong SQLite. Nhánh phát triển của bản này là codex/refactor-architecture.
 
 ## Chạy frontend
 
@@ -110,7 +110,7 @@ Phép thử `GET /api/wrapper/contexts?limit=30&offset=0` vẫn tương thích v
 | --- | --- |
 | Màn hình và điều hướng | [router](frontend/src/router/index.js) và [views](frontend/src/views) |
 | Cách các dịch vụ frontend kết nối với nhau | [createServices.js](frontend/src/services/createServices.js) |
-| Danh bạ, cuộc gọi, tin nhắn | [contactService.js](frontend/src/services/data/contactService.js), [callService.js](frontend/src/services/calls/callService.js), [chatService.js](frontend/src/services/data/chatService.js) |
+| Danh bạ và cuộc gọi | [contactService.js](frontend/src/services/data/contactService.js), [callService.js](frontend/src/services/calls/callService.js), [groupCallService.js](frontend/src/services/calls/groupCallService.js) |
 | API và phiên Single ID | [main.py](backend/main.py), [oidc.py](backend/oidc.py), [store.py](backend/store.py) |
 | Cấp tài khoản và phiên tổng đài | [wazo.py](backend/wazo.py) |
 
@@ -118,9 +118,20 @@ Xem [mục lục tài liệu](doc/README.md), [sơ đồ và bảng tra API](doc
 
 ## Kiểm tra thay đổi
 
+Trên bản clone mới (cả `frontend/tests/` và `backend/tests/` đều nằm trong `.gitignore`), chạy các lệnh kiểm tra tĩnh, kiến trúc và build frontend:
+
 ~~~powershell
-npm run check
-.\backend\.venv\Scripts\python.exe -X utf8 -m unittest discover -s backend/tests
+npm --prefix frontend run lint
+npm --prefix frontend run check:architecture
+npm --prefix frontend run build
 ~~~
 
-Frontend kiểm tra lint, import, test và build. Bộ test backend dùng dữ liệu và dịch vụ mô phỏng. Khi kiểm tra triển khai, thử riêng callback Single ID, đăng ký SIP, thoại nhóm và ghi âm trên tổng đài.
+Khi máy đang phát triển có sẵn các thư mục test cục bộ (`backend/tests/`, `frontend/tests/` và `frontend/vitest.config.js`), chạy thêm bộ test backend, Vitest hoặc lệnh tổng hợp:
+
+~~~powershell
+.\backend\.venv\Scripts\python.exe -X utf8 -m unittest discover -s backend/tests
+npm --prefix frontend test
+npm run check
+~~~
+
+Frontend kiểm tra lint, import, build (và test Vitest nếu có tại máy). Bộ test backend dùng dữ liệu và dịch vụ mô phỏng. Khi kiểm tra triển khai, thử riêng callback Single ID, đăng ký SIP, thoại nhóm và ghi âm trên tổng đài.

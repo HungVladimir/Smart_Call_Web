@@ -1,13 +1,14 @@
 /** Cờ hiển thị các màn hình Web. Dữ liệu nghiệp vụ luôn lấy từ dịch vụ thật. */
 const STORAGE_KEY = 'smartcall_features_config'
-export const DEFAULT_FEATURES = Object.freeze({ calls: true, callGroups: true, history: true })
+const DEFAULT_FEATURES = Object.freeze({ calls: true, callGroups: true, history: true })
 /** Chỉ nhận các cờ còn hỗ trợ; cấu hình cũ không thể bật lại chế độ dữ liệu mẫu. */
 function normalizeFeatures(value = {}) {
+  /** Chuẩn hóa từng cặp khóa cờ sang boolean hợp lệ, fallback về cấu hình mặc định. */
+  function toNormalizedFeatureEntry([key, fallback]) {
+    return [key, typeof value?.[key] === 'boolean' ? value[key] : fallback]
+  }
   const normalized = Object.fromEntries(
-    Object.entries(DEFAULT_FEATURES).map(([key, fallback]) => [
-      key,
-      typeof value?.[key] === 'boolean' ? value[key] : fallback,
-    ]),
+    Object.entries(DEFAULT_FEATURES).map(toNormalizedFeatureEntry),
   )
   // Màn gọi chứa điều khiển nhận/kết thúc, nên menu nhóm phụ thuộc vào màn gọi.
   if (!normalized.calls) normalized.callGroups = false
@@ -21,6 +22,7 @@ export function getFeatures() {
   try {
     return normalizeFeatures(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'))
   } catch {
+    // Nếu JSON lưu cục bộ bị hỏng, trả bản sao mặc định để UI không lỗi khi khởi động.
     return { ...DEFAULT_FEATURES }
   }
 }

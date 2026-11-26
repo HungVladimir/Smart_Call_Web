@@ -250,10 +250,6 @@ const serverHost = ref(
   (authService.host || '107.126.11.126:9443').replace(/^https?:\/\//, '').replace(/\/+$/, ''),
 )
 
-/**
- * Gửi credential tới AuthService, lưu lựa chọn nhớ tên và điều hướng sau xác thực; không tự tạo
- * token/máy lẻ giả.
- */
 /** Chỉ gợi ý kiểm tra chứng chỉ khi request lỗi mạng/TLS; không suy diễn từ lỗi tài khoản hoặc HTTP. */
 const shouldShowCertificateHint = (error) => {
   const status = Number(error?.status || error?.response?.status || error?.statusCode)
@@ -262,6 +258,10 @@ const shouldShowCertificateHint = (error) => {
   return /failed to fetch|fetch failed|network|load failed|certificate|ssl|tls|cert_/i.test(message)
 }
 
+/**
+ * Gửi credential tới AuthService, lưu lựa chọn nhớ tên và điều hướng sau xác thực; không tự tạo
+ * token/máy lẻ giả.
+ */
 const handleLogin = async () => {
   const submittedUsername = username.value.trim()
   if (loading.value || !submittedUsername || !password.value) return
@@ -783,67 +783,6 @@ const handleLogin = async () => {
   to {
     transform: rotate(360deg);
   }
-}
-
-/* --- Dải phân cách --- */
-.auth-divider {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0;
-}
-
-.divider-line {
-  flex: 1;
-  height: 1px;
-  background-color: #e2e8f0;
-}
-
-.divider-text {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: #94a3b8;
-  letter-spacing: 0.5px;
-}
-
-/* --- Nút Chế độ thử nghiệm Offline --- */
-.btn-offline-mode {
-  width: 100%;
-  background-color: #f8fafc;
-  color: #475569;
-  border: 1.5px dashed #cbd5e1;
-  padding: 10px 14px;
-  font-size: 0.86rem;
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: 10px;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.btn-offline-mode:hover:not(:disabled) {
-  background-color: #eff6ff;
-  color: #2563eb;
-  border-color: #93c5fd;
-  transform: translateY(-1px);
-}
-
-.btn-offline-mode:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.btn-offline-mode:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.offline-icon {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
 }
 
 /* --- Gợi ý chứng chỉ SSL --- */

@@ -1,9 +1,7 @@
 import { captureSessionContext, isSessionContextCurrent } from '../auth/sessionScope.js'
-import { callState } from '../../state/callState.js'
+import { callState, createGroupCallState } from '../../state/callState.js'
 import { normalizeExtension } from '../../utils/callPolicy.js'
-
 import { logger } from '../common/loggerService.js'
-import { createGroupCallState } from '../../state/callState.js'
 
 const SKIPPABLE_PRIMARY_FAILURES = new Set([
   'TARGET_BUSY',
@@ -14,6 +12,16 @@ const SKIPPABLE_PRIMARY_FAILURES = new Set([
   'TARGET_NOT_FOUND',
   'TARGET_STATUS_UNKNOWN',
 ])
+
+/** Bỏ qua lỗi promise khi thu hồi nhánh mời bị hủy giữa chừng để không chặn dọn phiên gọi. */
+function ignoreLateInviteHangupError() {
+  /* Nhánh mời có thể chưa thiết lập xong hoặc đã đóng khi cuộc gọi bị hủy. */
+}
+
+/** Trả giá trị true sau khi lệnh dọn nhánh SDK hoàn tất thành công. */
+function markPhoneCleanupSucceeded() {
+  return true
+}
 
 /** Điều phối hội nghị và các nhánh gọi; dùng AuthService để lấy thông tin phiên. */
 export class GroupCallService {
@@ -102,24 +110,24 @@ export class GroupCallService {
   /** Hẹn đồng bộ lại hội nghị khi các server call ID chưa sẵn sàng. */
   scheduleConferenceRetry(epoch) {
     if (this._syncAdhocRetryTimer || this._adhocRetryCount >= 3) return
+    const groupService = this
     this._adhocRetryCount += 1
-    this._syncAdhocRetryTimer = setTimeout(() => {
-      this._syncAdhocRetryTimer = null
+
+    /** Thử đồng bộ lại hội nghị Ad-hoc nếu vẫn đang ở đúng thế hệ cuộc gọi đã lên lịch. */
+    function retryAdhocConferenceSync() {
+      groupService._syncAdhocRetryTimer = null
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
-      if (epoch === this.callService.callGeneration) this.syncActiveCallsToAdhocConference()
-    }, 500 * this._adhocRetryCount)
+      if (epoch === groupService.callService.callGeneration)
+        groupService.syncActiveCallsToAdhocConference()
+    }
+
+    this._syncAdhocRetryTimer = setTimeout(retryAdhocConferenceSync, 500 * this._adhocRetryCount)
   }
 
-  /**
-   * Khởi tạo cuộc gọi nhóm tức thời (Ad-hoc Group Call)
-   * Tương thích hoàn toàn với Android WazoSipCallManager.startGroupCall
-   * @param {string[]} targetExtensions - Danh sách số máy lẻ thành viên
-   * @param {object} meta - Thông tin bổ sung (groupTitle, roomId...)
-   */
-  async startGroupCall(targetExtensions = [], meta = {}) {
-    const sessionContext = captureSessionContext()
-    // BUG-08: Anti-collision check ngăn chặn xung đột khi đang trong cuộc gọi hoặc bấm nhanh liên tục
+  /** Kiểm tra chống xung đột trước khi bắt đầu một cuộc gọi nhóm mới. */
+  _hasConflictingCallForGroupStart() {
+    // BUG-08: Chặn xung đột khi đang có cuộc gọi, đang gọi nhóm hoặc đang trong lượt quay số trước.
     if (
       this.state.isGroupCall ||
       this.callService.hasActiveCall() ||
@@ -130,33 +138,38 @@ export class GroupCallService {
         'CALL',
         'Chặn bắt đầu gọi nhóm: Đã có cuộc gọi đang hoạt động hoặc cuộc gọi nhóm đang diễn ra (already_in_call).',
       )
-      return { success: false, reason: 'already_in_call' }
+      return true
     }
+    return false
+  }
 
-    if (!targetExtensions || targetExtensions.length === 0)
-      return { success: false, reason: 'EMPTY' }
-
-    const myExt = this.authService.getCurrentExtension()
+  /** Chuẩn hóa danh sách máy lẻ cần mời, loại bỏ chính người gọi và các số trùng lặp. */
+  _normalizeUniqueGroupTargets(targetExtensions, myExt) {
     const cleanList = []
     for (const ext of targetExtensions) {
-      const s = String(ext || '').trim()
-      if (s && s !== myExt && !cleanList.includes(s)) {
-        cleanList.push(s)
+      const normalized = String(ext || '').trim()
+      if (normalized && normalized !== myExt && !cleanList.includes(normalized)) {
+        cleanList.push(normalized)
       }
     }
+    return cleanList
+  }
 
-    if (cleanList.length === 0) {
-      logger.warn('CALL', 'Danh sách máy lẻ hợp lệ để gọi nhóm rỗng.')
-      return { success: false, reason: 'NO_VALID_TARGETS' }
+  /** Xác minh danh bạ/trạng thái thực tế của từng máy lẻ và loại bỏ người đang bận hoặc offline. */
+  async _resolveAndFilterGroupTargets(cleanList, sessionContext, generation) {
+    const groupService = this
+
+    /** Xác định máy lẻ còn cần tra Dird/Chatd trước khi đánh giá khả dụng. */
+    function isUnresolvedExtension(extension) {
+      return groupService.needsInviteTarget(extension)
     }
 
-    const generation = this.callService.callGeneration
-    const unresolved = cleanList.filter((extension) => this.needsInviteTarget(extension))
+    const unresolved = cleanList.filter(isUnresolvedExtension)
     const verified = new Set()
     if (unresolved.length) {
       const result = await this.contactService.prepareGroupTargets(unresolved)
       for (const extension of result.extensions) verified.add(extension)
-      // Trong lúc kiểm tra đích, người dùng có thể đã thực hiện một cuộc gọi khác.
+      // Trong lúc kiểm tra đích, người dùng có thể đã thực hiện cuộc gọi khác hoặc đăng xuất.
       if (
         !isSessionContextCurrent(sessionContext) ||
         generation !== this.callService.callGeneration ||
@@ -164,10 +177,10 @@ export class GroupCallService {
         this.callService.isDialing ||
         this.state.isGroupCall
       )
-        return { success: false, reason: 'CANCELED' }
+        return { canceled: true, availableTargets: [] }
     }
 
-    // Lọc loại bỏ các máy lẻ đang bận (talking/holding), đang đổ chuông (ringing/progressing), không làm phiền (dnd) hoặc offline
+    // Lọc loại bỏ máy lẻ đang bận (talking/holding), đang đổ chuông, DND hoặc offline.
     const availableTargets = []
     const busyTargets = []
     for (const ext of cleanList) {
@@ -177,8 +190,8 @@ export class GroupCallService {
       ) {
         availableTargets.push(ext)
       } else {
-        const c = this.contactService.findContactByExtension(ext)
-        busyTargets.push(c?.name ? `${c.name} (${ext})` : `Máy lẻ ${ext}`)
+        const contact = this.contactService.findContactByExtension(ext)
+        busyTargets.push(contact?.name ? `${contact.name} (${ext})` : `Máy lẻ ${ext}`)
       }
     }
 
@@ -197,29 +210,12 @@ export class GroupCallService {
       )
     }
 
-    if (availableTargets.length === 0) {
-      logger.warn('CALL', 'Không còn máy lẻ nào khả dụng để bắt đầu cuộc gọi nhóm.')
-      return { success: false, reason: 'NO_AVAILABLE_TARGETS' }
-    }
+    return { canceled: false, availableTargets }
+  }
 
-    if (availableTargets.length === 1) {
-      const extension = availableTargets[0]
-      const expectedUuid = this.contactService.findContactByExtension(extension)?.uuid
-      if (meta.requireGroupConfirmation && cleanList.length > 1)
-        return { success: false, reason: 'TARGET_AVAILABILITY_CHANGED', extension, expectedUuid }
-      logger.info(
-        'CALL',
-        `Chỉ còn 1 máy lẻ khả dụng [${availableTargets[0]}]. Chuyển sang cuộc gọi thoại 1-1.`,
-      )
-      return this.callService.startCall(extension, expectedUuid ? { ...meta, expectedUuid } : meta)
-    }
-
-    logger.info(
-      'CALL',
-      `👥 Bắt đầu gọi nhóm (Ad-hoc) tới ${availableTargets.length} thành viên khả dụng: ${availableTargets.join(', ')}`,
-    )
-
-    // Thiết lập trạng thái Host & Group
+  /** Khởi tạo trạng thái host cho cuộc gọi nhóm; người đang đổ chuông chưa tính là đã kết nối. */
+  _initializeHostGroupState(myExt, sessionContext, callEpoch) {
+    // Người gọi ban đầu luôn giữ vai trò host trong suốt vòng đời cuộc gọi nhóm.
     this.state.isGroupHost = true
     this.state.groupHostExtension = myExt
     this.state.isGroupCall = true
@@ -228,11 +224,15 @@ export class GroupCallService {
     this.state.mergedCallIds.clear()
     this.state.secondaryCallSessions.clear()
 
-    this.state.groupConnectedExtensions = [myExt] // Các máy đang đổ chuông chưa được tính đã vào nhóm.
-    const callEpoch = this.callService.callGeneration
+    // Chỉ bản thân host đã ở trong nhóm; các máy đang đổ chuông nằm ở danh sách pending.
+    this.state.groupConnectedExtensions = [myExt]
     const attempt = { timer: null, terminal: null, callEpoch, sessionContext }
     this.initialInvites = attempt
+    return attempt
+  }
 
+  /** Thử quay nhánh chính đầu tiên trong danh sách khả dụng; bỏ qua đích lỗi trước bước SIP. */
+  async _dialPrimaryGroupLeg(availableTargets, myExt, meta, sessionContext, callEpoch) {
     let firstTarget
     let callResult
     while (availableTargets.length > 1) {
@@ -251,66 +251,160 @@ export class GroupCallService {
         groupParticipants: this.state.groupParticipantExtensions,
       })
 
+      // Dừng ngay nếu phiên đăng nhập hoặc thế hệ cuộc gọi đã bị hủy trong lúc chờ quay nhánh đầu.
       if (!isSessionContextCurrent(sessionContext) || callEpoch !== this.callService.callGeneration)
-        return { success: false, reason: 'CANCELED' }
-      if (callResult?.success) break
+        return { status: 'canceled' }
+      if (callResult?.success) return { status: 'started', firstTarget }
       // Chỉ thử đích khác khi lỗi chắc chắn ở bước xác minh đích, trước khi gửi SIP.
       if (!SKIPPABLE_PRIMARY_FAILURES.has(callResult?.reason)) {
         this.resetGroupState()
-        return callResult
+        return { status: 'failed', result: callResult }
       }
       this.callService.cancelPendingDial()
     }
-    if (!callResult?.success) {
-      const extension = availableTargets[0]
-      this.resetGroupState()
-      return {
+
+    const extension = availableTargets[0]
+    this.resetGroupState()
+    return {
+      status: 'availability_changed',
+      result: {
         success: false,
         reason: 'TARGET_AVAILABILITY_CHANGED',
         extension,
         expectedUuid: this.contactService.findContactByExtension(extension)?.uuid,
-      }
+      },
     }
+  }
 
-    // Đặt bộ đếm Timeout 30 giây cho nhánh chính đầu tiên
-    this.startPrimaryInviteTimeout(firstTarget)
+  /** Gắn thông tin nhóm và người chủ phòng lên activeCall ngay khi nhánh chính bắt đầu đổ chuông. */
+  _applyHostGroupMetadataToActiveCall(myExt, groupTitle) {
+    if (!callState.activeCall) return
+    callState.activeCall.isGroupCall = true
+    callState.activeCall.isGroupHost = true
+    callState.activeCall.groupHostExtension = myExt
+    callState.activeCall.groupParticipantExtensions = [...this.state.groupParticipantExtensions]
+    callState.activeCall.savedGroupName = groupTitle || ''
+    callState.activeCall.groupTitle =
+      groupTitle || `Cuộc gọi nhóm (${this.state.groupParticipantExtensions.length} người)`
+  }
 
-    // Đánh dấu activeCall là groupCall
-    if (callState.activeCall) {
-      callState.activeCall.isGroupCall = true
-      callState.activeCall.isGroupHost = true
-      callState.activeCall.groupHostExtension = myExt
-      callState.activeCall.groupParticipantExtensions = [...this.state.groupParticipantExtensions]
-      callState.activeCall.savedGroupName = meta.groupTitle || ''
-      callState.activeCall.groupTitle =
-        meta.groupTitle || `Cuộc gọi nhóm (${this.state.groupParticipantExtensions.length} người)`
-    }
+  /** Lên lịch mời các thành viên còn lại sau nhánh đầu và phát lại lỗi nhánh đầu nếu xảy ra sớm. */
+  _scheduleRemainingGroupInvites(availableTargets, attempt, sessionContext, callEpoch) {
+    const groupService = this
 
     /** Mời các đích còn lại rồi phát lại kết thúc nhánh chính để dùng cơ chế chuyển nhánh sẵn có. */
-    const inviteRemaining = async () => {
+    async function inviteRemainingParticipants() {
+      // Bỏ qua nếu phiên/thế hệ cuộc gọi đã thay đổi hoặc lượt mời ban đầu đã bị hủy.
       if (
         !isSessionContextCurrent(sessionContext) ||
-        callEpoch !== this.callService.callGeneration ||
-        this.initialInvites !== attempt
+        callEpoch !== groupService.callService.callGeneration ||
+        groupService.initialInvites !== attempt
       )
         return
       try {
-        await this.dialGroupParticipants(availableTargets)
+        await groupService.dialGroupParticipants(availableTargets)
       } catch (error) {
         logger.warn('CALL', 'Không thể mời thành viên:', error.message)
       } finally {
-        if (this.initialInvites === attempt) {
-          this.initialInvites = null
+        if (groupService.initialInvites === attempt) {
+          groupService.initialInvites = null
           if (attempt.terminal)
-            this.callService.finalizeCallTermination(
+            groupService.callService.finalizeCallTermination(
               attempt.terminal.reason,
               attempt.terminal.session,
             )
         }
       }
     }
+
     // Giữ khoảng chờ SDP khi nhánh đầu đang rung. Nếu SIP đã xác nhận nhánh lỗi, mời tiếp ngay.
-    attempt.timer = setTimeout(inviteRemaining, attempt.terminal ? 0 : 700)
+    attempt.timer = setTimeout(inviteRemainingParticipants, attempt.terminal ? 0 : 700)
+  }
+
+  /**
+   * Khởi tạo cuộc gọi nhóm tức thời (Ad-hoc Group Call)
+   * @param {string[]} targetExtensions - Danh sách số máy lẻ thành viên
+   * @param {object} meta - Thông tin bổ sung (groupTitle, roomId...)
+   */
+  async startGroupCall(targetExtensions = [], meta = {}) {
+    const sessionContext = captureSessionContext()
+    if (this._hasConflictingCallForGroupStart())
+      return { success: false, reason: 'already_in_call' }
+    if (!targetExtensions || targetExtensions.length === 0)
+      return { success: false, reason: 'EMPTY' }
+
+    const myExt = this.authService.getCurrentExtension()
+    const cleanList = this._normalizeUniqueGroupTargets(targetExtensions, myExt)
+    if (cleanList.length === 0) {
+      logger.warn('CALL', 'Danh sách máy lẻ hợp lệ để gọi nhóm rỗng.')
+      return { success: false, reason: 'NO_VALID_TARGETS' }
+    }
+
+    const generation = this.callService.callGeneration
+    const targetCheck = await this._resolveAndFilterGroupTargets(
+      cleanList,
+      sessionContext,
+      generation,
+    )
+    // Sau await kiểm tra đích, xác minh lại phiên/thế hệ và xung đột để tránh 2 lượt gọi đè nhau.
+    if (
+      targetCheck.canceled ||
+      !isSessionContextCurrent(sessionContext) ||
+      generation !== this.callService.callGeneration
+    )
+      return { success: false, reason: 'CANCELED' }
+    if (this._hasConflictingCallForGroupStart())
+      return { success: false, reason: 'already_in_call' }
+
+    const { availableTargets } = targetCheck
+    if (availableTargets.length === 0) {
+      logger.warn('CALL', 'Không còn máy lẻ nào khả dụng để bắt đầu cuộc gọi nhóm.')
+      return { success: false, reason: 'NO_AVAILABLE_TARGETS' }
+    }
+
+    if (availableTargets.length === 1) {
+      const extension = availableTargets[0]
+      const expectedUuid = this.contactService.findContactByExtension(extension)?.uuid
+      if (meta.requireGroupConfirmation && cleanList.length > 1)
+        return { success: false, reason: 'TARGET_AVAILABILITY_CHANGED', extension, expectedUuid }
+      logger.info(
+        'CALL',
+        `Chỉ còn 1 máy lẻ khả dụng [${extension}]. Chuyển sang cuộc gọi thoại 1-1.`,
+      )
+      return this.callService.startCall(extension, expectedUuid ? { ...meta, expectedUuid } : meta)
+    }
+
+    logger.info(
+      'CALL',
+      `👥 Bắt đầu gọi nhóm (Ad-hoc) tới ${availableTargets.length} thành viên khả dụng: ${availableTargets.join(', ')}`,
+    )
+
+    const callEpoch = this.callService.callGeneration
+    const attempt = this._initializeHostGroupState(myExt, sessionContext, callEpoch)
+    const primaryOutcome = await this._dialPrimaryGroupLeg(
+      availableTargets,
+      myExt,
+      meta,
+      sessionContext,
+      callEpoch,
+    )
+    // Nếu lượt gọi vừa bị hủy hoặc thay thế trong lúc quay nhánh chính, tuyệt đối không đặt timer hay gắn metadata.
+    if (
+      primaryOutcome.status === 'canceled' ||
+      (primaryOutcome.status === 'started' &&
+        (this.initialInvites !== attempt ||
+          !isSessionContextCurrent(sessionContext) ||
+          callEpoch !== this.callService.callGeneration))
+    ) {
+      if (this.initialInvites === attempt) this.resetGroupState()
+      return { success: false, reason: 'CANCELED' }
+    }
+    if (primaryOutcome.status !== 'started') return primaryOutcome.result
+
+    // Đặt bộ đếm Timeout 30 giây cho nhánh chính đầu tiên
+    this.startPrimaryInviteTimeout(primaryOutcome.firstTarget)
+    this._applyHostGroupMetadataToActiveCall(myExt, meta.groupTitle)
+    this._scheduleRemainingGroupInvites(availableTargets, attempt, sessionContext, callEpoch)
 
     // Phát trạng thái nhóm lên Presence
     this.broadcastGroupStateViaPresence()
@@ -343,13 +437,21 @@ export class GroupCallService {
     // Modal có thể còn mở sau khi nhánh thoại kết thúc hoặc tổng đài chỉ phát thông báo.
     if (!this.canInviteParticipants())
       throw new Error('Chỉ thêm người sau khi đã xác nhận người đối thoại.')
-    const unresolved = extensions.filter((extension) => this.needsInviteTarget(extension))
+    const groupService = this
+
+    /** Xác định máy lẻ còn thiếu thông tin danh bạ hoặc presence trước khi quay nhánh mời. */
+    function isUnresolvedInviteTarget(extension) {
+      return groupService.needsInviteTarget(extension)
+    }
+
+    const unresolved = extensions.filter(isUnresolvedInviteTarget)
     let eligible = extensions
     if (unresolved.length) {
       const context = captureSessionContext()
       const generation = this.callService.callGeneration
       const callId = callState.activeCall?.callId
       const result = await this.contactService.prepareGroupTargets(unresolved)
+      // Không tiếp tục mời nếu cuộc gọi hoặc phiên đã đổi trong lúc tra danh bạ/trạng thái.
       if (
         !isSessionContextCurrent(context) ||
         generation !== this.callService.callGeneration ||
@@ -357,9 +459,13 @@ export class GroupCallService {
         !this.canInviteParticipants()
       )
         return
-      eligible = extensions.filter(
-        (extension) => !unresolved.includes(extension) || result.extensions.includes(extension),
-      )
+
+      /** Chỉ giữ lại máy lẻ đã sẵn sàng hoặc vừa vượt qua bước xác minh presence. */
+      function isEligibleAfterPrepare(extension) {
+        return !unresolved.includes(extension) || result.extensions.includes(extension)
+      }
+
+      eligible = extensions.filter(isEligibleAfterPrepare)
       if (result.rejected.length)
         window.dispatchEvent(
           new CustomEvent('app-toast', {
@@ -381,82 +487,100 @@ export class GroupCallService {
     return !contact && !this.contactService.isContactAvailableForCall(extension)
   }
 
-  /** Điều phối các nhánh đã yêu cầu, gồm lời mời ban đầu khi cả nhóm còn đang đổ chuông. */
-  async dialGroupParticipants(extensions) {
-    const sessionContext = captureSessionContext()
-    const callEpoch = this.callService.callGeneration
-    const callId = callState.activeCall?.callId
-    const current = () =>
-      isSessionContextCurrent(sessionContext) &&
-      callEpoch === this.callService.callGeneration &&
-      callState.activeCall?.callId === callId
-    if (!callState.activeCall) return
-    const myExt = this.authService.getCurrentExtension()
+  /** Nâng cuộc gọi 1-1 chiều gọi đi lên thành cuộc gọi nhóm và giữ quyền host cho người gọi ban đầu. */
+  _upgradeDirectCallToGroupHost(myExt, invitedCount) {
+    logger.info('CALL', '👥 Nâng cấp cuộc gọi 1-1 lên cuộc gọi nhóm Ad-hoc Conference...')
+    this.state.isGroupCall = true
+    this.state.isGroupHost = true
+    this.audibleGroupSipId = this.callService.getSipSessionId(this.callService.currentCallSession)
+    this.state.groupHostExtension = myExt
+    const peerExt = String(callState.activeCall?.number || '').trim()
+    this.state.groupParticipantExtensions = [myExt]
+    if (peerExt && !this.state.groupParticipantExtensions.includes(peerExt)) {
+      this.state.groupParticipantExtensions.push(peerExt)
+    }
+    this.state.groupConnectedExtensions = [...this.state.groupParticipantExtensions]
+    if (callState.activeCall) {
+      callState.activeCall.isGroupCall = true
+      callState.activeCall.isGroupHost = true
+      callState.activeCall.groupHostExtension = myExt
+      callState.activeCall.groupParticipantExtensions = [...this.state.groupParticipantExtensions]
+      callState.activeCall.groupTitle =
+        callState.activeCall.savedGroupName ||
+        `Cuộc gọi nhóm (${this.state.groupParticipantExtensions.length + invitedCount} người)`
+    }
+  }
 
+  /**
+   * Đảm bảo người gọi ban đầu luôn giữ host; máy nhận cuộc gọi chỉ gửi ADD_REQ tới host chứ không
+   * tự quay số hoặc tự tạo phòng.
+   */
+  _ensureHostOrDelegateInvite(extensions, myExt) {
     // A gọi B thì A luôn là host. B chỉ gửi ADD_REQ cho A, không tự gọi C hoặc tự tạo phòng.
     if (!this.state.isGroupCall && callState.activeCall.direction === 'inbound') {
       if (callState.activeCall.status !== 'connected')
         throw new Error('Chỉ thêm người sau khi cuộc gọi đã kết nối.')
-      return this.delegateAddParticipantsToHost(
-        normalizeExtension(callState.activeCall.number),
-        extensions,
-      )
+      return {
+        delegated: true,
+        promise: this.delegateAddParticipantsToHost(
+          normalizeExtension(callState.activeCall.number),
+          extensions,
+        ),
+      }
     }
 
     // Người gọi ban đầu nâng cuộc gọi 1-1 thành nhóm và tiếp tục giữ quyền host.
     if (!this.state.isGroupCall && this.callService.hasActiveCall()) {
       if (callState.activeCall.direction !== 'outbound')
         throw new Error('Chưa xác định được người gọi ban đầu để tạo nhóm.')
-      logger.info('CALL', '👥 Nâng cấp cuộc gọi 1-1 lên cuộc gọi nhóm Ad-hoc Conference...')
-      this.state.isGroupCall = true
-      this.state.isGroupHost = true
-      this.audibleGroupSipId = this.callService.getSipSessionId(this.callService.currentCallSession)
-      this.state.groupHostExtension = myExt
-      const peerExt = String(callState.activeCall?.number || '').trim()
-      this.state.groupParticipantExtensions = [myExt]
-      if (peerExt && !this.state.groupParticipantExtensions.includes(peerExt)) {
-        this.state.groupParticipantExtensions.push(peerExt)
-      }
-      this.state.groupConnectedExtensions = [...this.state.groupParticipantExtensions]
-      if (callState.activeCall) {
-        callState.activeCall.isGroupCall = true
-        callState.activeCall.isGroupHost = true
-        callState.activeCall.groupHostExtension = myExt
-        callState.activeCall.groupParticipantExtensions = [...this.state.groupParticipantExtensions]
-        callState.activeCall.groupTitle =
-          callState.activeCall.savedGroupName ||
-          `Cuộc gọi nhóm (${this.state.groupParticipantExtensions.length + extensions.length} người)`
-      }
-    } else if (!this.state.isGroupHost) {
+      this._upgradeDirectCallToGroupHost(myExt, extensions.length)
+      return { delegated: false }
+    }
+
+    if (!this.state.isGroupHost) {
       const hostExt = this.state.groupHostExtension || callState.activeCall?.number
       if (hostExt && hostExt !== myExt) {
-        return this.delegateAddParticipantsToHost(hostExt, extensions)
+        return {
+          delegated: true,
+          promise: this.delegateAddParticipantsToHost(hostExt, extensions),
+        }
       }
     }
 
+    return { delegated: false }
+  }
+
+  /** Lọc danh sách mời theo presence khả dụng hiện tại, cảnh báo các máy bận và cập nhật danh sách mời. */
+  _partitionGroupInviteTargets(extensions, myExt) {
     const toInvite = []
     const busyOrUnavailable = []
-    for (const ext of extensions) {
-      const s = String(ext || '').trim()
-      if (!s || s === myExt) continue
+    for (const rawExt of extensions) {
+      const ext = String(rawExt || '').trim()
+      if (!ext || ext === myExt) continue
 
-      if (!this.contactService.isContactAvailableForCall(s)) {
-        const c = this.contactService.findContactByExtension(s)
-        const nameOrExt = c?.name ? `${c.name} (${s})` : `Máy lẻ ${s}`
-        busyOrUnavailable.push({ ext: s, label: nameOrExt })
+      if (!this.contactService.isContactAvailableForCall(ext)) {
+        const contact = this.contactService.findContactByExtension(ext)
+        const label = contact?.name ? `${contact.name} (${ext})` : `Máy lẻ ${ext}`
+        busyOrUnavailable.push({ ext, label })
         continue
       }
 
-      if (!this.state.groupParticipantExtensions.includes(s)) {
-        this.state.groupParticipantExtensions.push(s)
+      if (!this.state.groupParticipantExtensions.includes(ext)) {
+        this.state.groupParticipantExtensions.push(ext)
       }
-      if (!toInvite.includes(s)) {
-        toInvite.push(s)
+      if (!toInvite.includes(ext)) {
+        toInvite.push(ext)
       }
     }
 
     if (busyOrUnavailable.length > 0) {
-      const busyNames = busyOrUnavailable.map((b) => b.label).join(', ')
+      const busyLabels = []
+      const busyExtensions = []
+      for (const entry of busyOrUnavailable) {
+        busyLabels.push(entry.label)
+        busyExtensions.push(entry.ext)
+      }
+      const busyNames = busyLabels.join(', ')
       logger.warn('CALL', `Không thể mời các máy lẻ bận/không khả dụng vào nhóm: ${busyNames}`)
       window.dispatchEvent(
         new CustomEvent('app-toast', {
@@ -466,11 +590,103 @@ export class GroupCallService {
           },
         }),
       )
-      this.broadcastNoticeToGroup(
-        `Máy lẻ ${busyOrUnavailable.map((b) => b.ext).join(', ')} đang bận`,
+      this.broadcastNoticeToGroup(`Máy lẻ ${busyExtensions.join(', ')} đang bận`)
+    }
+
+    return toInvite
+  }
+
+  /** Gỡ máy lẻ không quay được khỏi danh sách mời và thông báo cập nhật cho các thành viên khác. */
+  _rollbackFailedGroupInvite(ext) {
+    /** Loại máy lẻ vừa thất bại khỏi danh sách tham gia của host. */
+    function isOtherParticipant(member) {
+      return member !== ext
+    }
+
+    this.state.groupParticipantExtensions =
+      this.state.groupParticipantExtensions.filter(isOtherParticipant)
+    this.clearParticipantInviteTimeout(ext)
+    this.state.secondaryCallSessions.delete(ext)
+    this.broadcastGroupStateViaPresence()
+    this.broadcastNoticeToGroup(`Không thể kết nối máy lẻ ${ext}`)
+  }
+
+  /**
+   * Quay một nhánh phụ qua WebRTC mà không gửi hold lên nhánh đang hoạt động; trả false nếu cuộc
+   * gọi hiện tại đã kết thúc hoặc đổi phiên.
+   */
+  async _dialSecondaryGroupLeg(ext, isStillCurrentCall) {
+    if (!isStillCurrentCall()) return false
+    // Lời mời ban đầu và ADD_REQ có thể đến đồng thời; chỉ giữ một nhánh SIP cho cùng một đích.
+    if (
+      this.pendingInviteExtensions.has(ext) ||
+      this.state.secondaryCallSessions.has(ext) ||
+      this.state.groupConnectedExtensions.includes(ext) ||
+      normalizeExtension(callState.activeCall?.number) === ext
+    )
+      return true
+
+    const invite = Symbol()
+    this.pendingInviteExtensions.set(ext, invite)
+    const phoneInstance = this.sdk.Phone?.phone
+    const prevSipSession = phoneInstance?.currentSipSession
+    const prevCallSession = phoneInstance?.currentCallSession
+    try {
+      logger.info('CALL', `Đang gửi tín hiệu gọi nhánh thành viên: ${ext}...`)
+
+      // Bảo vệ nhánh đầu tiên: tạm tách currentSipSession để SDK không gửi lệnh hold sai lên nhánh đang rung.
+      if (phoneInstance && phoneInstance.currentSipSession) {
+        phoneInstance.currentSipSession = null
+      }
+
+      const session = await this.callService.requestSdkCall(ext)
+      // Nếu cuộc gọi gốc đã kết thúc trong lúc chờ SDK quay số thì thu hồi nhánh đến muộn.
+      if (!isStillCurrentCall()) {
+        if (session) await this.sdk.Phone.hangup(session).catch(ignoreLateInviteHangupError)
+        return false
+      }
+
+      if (!session) throw new Error('SDK chưa tạo được nhánh gọi tới thành viên.')
+      this.state.secondaryCallSessions.set(ext, session)
+      this.startParticipantInviteTimeout(ext, session)
+      this.callService.replayPendingCallEvents(session)
+    } catch (err) {
+      if (!isStillCurrentCall()) return false
+      logger.warn('CALL', `Không thể gọi nhánh ${ext}:`, err.message || err)
+      this._rollbackFailedGroupInvite(ext)
+    } finally {
+      if (this.pendingInviteExtensions.get(ext) === invite) this.pendingInviteExtensions.delete(ext)
+      if (isStillCurrentCall() && phoneInstance && prevSipSession) {
+        phoneInstance.currentSipSession = prevSipSession
+        phoneInstance.currentCallSession = prevCallSession
+      }
+    }
+    return true
+  }
+
+  /** Điều phối các nhánh đã yêu cầu, gồm lời mời ban đầu khi cả nhóm còn đang đổ chuông. */
+  async dialGroupParticipants(extensions) {
+    const groupService = this
+    const sessionContext = captureSessionContext()
+    const callEpoch = this.callService.callGeneration
+    const callId = callState.activeCall?.callId
+
+    /** Kiểm tra thao tác quay nhánh mời vẫn thuộc đúng phiên và đúng cuộc gọi ban đầu. */
+    function isStillCurrentCall() {
+      return (
+        isSessionContextCurrent(sessionContext) &&
+        callEpoch === groupService.callService.callGeneration &&
+        callState.activeCall?.callId === callId
       )
     }
 
+    if (!callState.activeCall) return
+    const myExt = this.authService.getCurrentExtension()
+
+    const roleCheck = this._ensureHostOrDelegateInvite(extensions, myExt)
+    if (roleCheck.delegated) return roleCheck.promise
+
+    const toInvite = this._partitionGroupInviteTargets(extensions, myExt)
     if (toInvite.length === 0) {
       this.broadcastGroupStateViaPresence()
       return
@@ -483,60 +699,10 @@ export class GroupCallService {
     }
     this.broadcastGroupStateViaPresence()
 
-    // Khởi tạo các nhánh gọi tới từng máy lẻ qua WebRTC Phone mà không hold nhánh trước
+    // Khởi tạo từng nhánh gọi thành viên mà không hold các nhánh trước đó.
     for (const ext of toInvite) {
-      if (!current()) return
-      // Lời mời ban đầu và ADD_REQ có thể đến đồng thời, chỉ gửi một SIP cho cùng đích.
-      if (
-        this.pendingInviteExtensions.has(ext) ||
-        this.state.secondaryCallSessions.has(ext) ||
-        this.state.groupConnectedExtensions.includes(ext) ||
-        normalizeExtension(callState.activeCall?.number) === ext
-      )
-        continue
-      const invite = Symbol()
-      this.pendingInviteExtensions.set(ext, invite)
-      const phoneInstance = this.sdk.Phone?.phone
-      const prevSipSession = phoneInstance?.currentSipSession
-      const prevCallSession = phoneInstance?.currentCallSession
-      try {
-        logger.info('CALL', `Đang gửi tín hiệu gọi nhánh thành viên: ${ext}...`)
-
-        // Bảo vệ nhánh đầu tiên: tạm thời tách currentSipSession để this.sdk.Phone không gửi lệnh hold sai quy cách lên nhánh đang đổ chuông
-        if (phoneInstance && phoneInstance.currentSipSession) {
-          phoneInstance.currentSipSession = null
-        }
-
-        const session = await this.callService.requestSdkCall(ext)
-        if (!current()) {
-          if (session) await this.sdk.Phone.hangup(session).catch(() => {})
-          return
-        }
-
-        if (!session) throw new Error('SDK chưa tạo được nhánh gọi tới thành viên.')
-        if (session) {
-          this.state.secondaryCallSessions.set(ext, session)
-          this.startParticipantInviteTimeout(ext, session)
-          this.callService.replayPendingCallEvents(session)
-        }
-      } catch (err) {
-        if (!current()) return
-        logger.warn('CALL', `Không thể gọi nhánh ${ext}:`, err.message || err)
-        this.state.groupParticipantExtensions = this.state.groupParticipantExtensions.filter(
-          (member) => member !== ext,
-        )
-        this.clearParticipantInviteTimeout(ext)
-        this.state.secondaryCallSessions.delete(ext)
-        this.broadcastGroupStateViaPresence()
-        this.broadcastNoticeToGroup(`Không thể kết nối máy lẻ ${ext}`)
-      } finally {
-        if (this.pendingInviteExtensions.get(ext) === invite)
-          this.pendingInviteExtensions.delete(ext)
-        if (current() && phoneInstance && prevSipSession) {
-          phoneInstance.currentSipSession = prevSipSession
-          phoneInstance.currentCallSession = prevCallSession
-        }
-      }
+      const shouldContinue = await this._dialSecondaryGroupLeg(ext, isStillCurrentCall)
+      if (!shouldContinue) return
     }
   }
 
@@ -548,10 +714,15 @@ export class GroupCallService {
       )
     )
       return
+    const groupService = this
     this.clearPrimaryInviteTimeout()
-    this._primaryInviteTimer = setTimeout(() => {
-      this.cancelPrimaryInvite(targetExt)
-    }, 30000)
+
+    /** Hủy lời mời nhánh chính khi quá 30 giây không nhận được phản hồi nghe máy. */
+    function handlePrimaryInviteTimeout() {
+      groupService.cancelPrimaryInvite(targetExt)
+    }
+
+    this._primaryInviteTimer = setTimeout(handlePrimaryInviteTimeout, 30000)
     logger.info('CALL', `⏱️ Đã đặt bộ đếm Timeout 30 giây cho nhánh chính [${targetExt}].`)
   }
 
@@ -576,19 +747,28 @@ export class GroupCallService {
         'CALL',
         `Nhánh chính [${targetExt}] quá 30 giây không nhấc máy. Tiến hành ngắt kết nối nhánh chính.`,
       )
+      const groupService = this
       const session = this.callService.currentCallSession
       if (session) {
+        /** Gửi lệnh hangup tới SDK cho nhánh chính đã quá thời gian chờ. */
+        function hangupTimedOutPrimarySession() {
+          return groupService.sdk.Phone.hangup(session)
+        }
+
         try {
-          this._runPhoneCleanup(() => this.sdk.Phone.hangup(session))
-        } catch (e) {
-          /* ignore */
+          this._runPhoneCleanup(hangupTimedOutPrimarySession)
+        } catch {
+          /* _runPhoneCleanup đã báo cảnh báo; tiếp tục gỡ nhánh chính quá hạn khỏi nhóm. */
         }
       }
 
-      // Gỡ targetExt khỏi groupParticipantExtensions
-      this.state.groupParticipantExtensions = this.state.groupParticipantExtensions.filter(
-        (e) => e !== targetExt,
-      )
+      /** Lọc bỏ máy lẻ nhánh chính vừa quá hạn khỏi danh sách tham gia. */
+      function isNotTimedOutPrimary(extension) {
+        return extension !== targetExt
+      }
+
+      this.state.groupParticipantExtensions =
+        this.state.groupParticipantExtensions.filter(isNotTimedOutPrimary)
       if (callState.activeCall) {
         callState.activeCall.groupParticipantExtensions = [...this.state.groupParticipantExtensions]
         callState.activeCall.groupTitle =
@@ -644,10 +824,15 @@ export class GroupCallService {
   /** Đặt thời hạn chờ trả lời cho một máy lẻ được mời. */
   startParticipantInviteTimeout(ext, session) {
     if (this.callService.answeredSipIds.has(this.callService.getSipSessionId(session))) return
+    const groupService = this
     this.clearParticipantInviteTimeout(ext)
-    const timer = setTimeout(() => {
-      this.cancelParticipantInvite(ext)
-    }, 30000)
+
+    /** Hủy lời mời nhánh phụ khi quá 30 giây không nghe máy. */
+    function handleParticipantInviteTimeout() {
+      groupService.cancelParticipantInvite(ext)
+    }
+
+    const timer = setTimeout(handleParticipantInviteTimeout, 30000)
     this._secondaryInviteTimers.set(ext, timer)
     logger.info('CALL', `⏱️ Đã đặt bộ đếm Timeout 30 giây cho nhánh phụ [${ext}].`)
   }
@@ -678,6 +863,7 @@ export class GroupCallService {
     )
       return
     if (session) {
+      const groupService = this
       const sipId = session.sipCallId || (session.getId && session.getId()) || session.id
       if (sipId) {
         this._terminatingSecondarySipIds.add(String(sipId))
@@ -686,12 +872,18 @@ export class GroupCallService {
         'CALL',
         `Nhánh phụ [${targetExt}] quá 30 giây không nhấc máy. Tiến hành ngắt kết nối nhánh phụ.`,
       )
-      try {
-        this._runPhoneCleanup(() => this.sdk.Phone.hangup(session))
-      } catch (e) {
-        /* ignore */
+
+      /** Gửi lệnh hangup tới SDK cho nhánh phụ đã quá thời gian chờ. */
+      function hangupTimedOutSecondarySession() {
+        return groupService.sdk.Phone.hangup(session)
       }
-      // Không delete khỏi this.state.secondaryCallSessions ngay để _finalizeCallTermination nhận diện được nhánh phụ!
+
+      try {
+        this._runPhoneCleanup(hangupTimedOutSecondarySession)
+      } catch {
+        /* _runPhoneCleanup đã báo cảnh báo; tiếp tục gỡ nhánh phụ quá hạn khỏi nhóm. */
+      }
+      // Không delete khỏi this.state.secondaryCallSessions ngay để finalizeCallTermination nhận diện được nhánh phụ!
     }
 
     // Gỡ khỏi groupParticipantExtensions nếu chưa bao giờ kết nối
@@ -717,7 +909,13 @@ export class GroupCallService {
 
     // Kiểm tra: Nếu tất cả thành viên khác đều không nghe máy và không còn ai đang kết nối
     const myExt = this.authService.getCurrentExtension()
-    const remainingOthers = this.state.groupParticipantExtensions.filter((e) => e !== myExt)
+
+    /** Xác định thành viên khác ngoài host hiện tại còn nằm trong danh sách nhóm. */
+    function isRemainingOtherMember(extension) {
+      return extension !== myExt
+    }
+
+    const remainingOthers = this.state.groupParticipantExtensions.filter(isRemainingOtherMember)
     if (
       remainingOthers.length === 0 &&
       !this.isAnyParticipantConnected() &&
@@ -750,13 +948,13 @@ export class GroupCallService {
     const dropped = []
 
     for (const rawExt of targetExtensions) {
-      const e = String(rawExt || '').trim()
-      if (!e || e === myExt || e === hostExt) continue
-      if (this.contactService.isContactAvailableForCall(e)) {
-        toInviteNow.push(e)
+      const ext = String(rawExt || '').trim()
+      if (!ext || ext === myExt || ext === hostExt) continue
+      if (this.contactService.isContactAvailableForCall(ext)) {
+        toInviteNow.push(ext)
       } else {
-        const c = this.contactService.findContactByExtension(e)
-        dropped.push(c?.name ? `${c.name} (${e})` : `Máy lẻ ${e}`)
+        const contact = this.contactService.findContactByExtension(ext)
+        dropped.push(contact?.name ? `${contact.name} (${ext})` : `Máy lẻ ${ext}`)
       }
     }
 
@@ -797,7 +995,7 @@ export class GroupCallService {
 
   /** Phát thông báo cuộc gọi tới các thành viên theo kênh presence. */
   broadcastNoticeToGroup(message) {
-    // Chọn đúng nhánh host/thành viên trước khi điều phối hội nghị hoặc gửi tín hiệu nhóm.
+    // Chỉ host mới được phát thẻ NOTICE lên presence để tránh thành viên tự phát thông báo giả.
     if (!this.state.isGroupCall || !this.state.isGroupHost) return
     const noticeId = Date.now()
     const myExt = this.authService.getCurrentExtension()
@@ -816,23 +1014,28 @@ export class GroupCallService {
       this._syncAdhocDebounceTimer = null
     }
 
-    this._syncAdhocDebounceTimer = setTimeout(async () => {
-      this._syncAdhocDebounceTimer = null
-      if (this._isSyncingAdhoc) return
-      const callEpoch = this.callService.callGeneration
-      this._isSyncingAdhoc = true
+    const groupService = this
+
+    /** Thực thi một lượt đồng bộ Ad-hoc Conference sau debounce và phát lại nhánh kết thúc chờ. */
+    async function runDebouncedConferenceSync() {
+      groupService._syncAdhocDebounceTimer = null
+      if (groupService._isSyncingAdhoc) return
+      const callEpoch = groupService.callService.callGeneration
+      groupService._isSyncingAdhoc = true
       try {
-        await this.synchronizeActiveCalls()
+        await groupService.synchronizeActiveCalls()
       } catch (err) {
         logger.warn('CALL', 'Lỗi trong quá trình đồng bộ Ad-hoc Conference:', err)
       } finally {
         // Callback của cuộc gọi cũ không được thay đổi hàng đợi/cuộc gọi mới.
-        if (callEpoch === this.callService.callGeneration) {
-          this._isSyncingAdhoc = false
-          this._flushPendingConferenceTerminations()
+        if (callEpoch === groupService.callService.callGeneration) {
+          groupService._isSyncingAdhoc = false
+          groupService._flushPendingConferenceTerminations()
         }
       }
-    }, 350)
+    }
+
+    this._syncAdhocDebounceTimer = setTimeout(runDebouncedConferenceSync, 350)
   }
 
   /** Phát lại kết thúc nhánh sau REST: ghép thành công thì giữ thành viên, thất bại thì dọn nhánh. */
@@ -845,18 +1048,24 @@ export class GroupCallService {
 
   /** Đối chiếu các nhánh tại tổng đài với hội nghị của host trước khi cập nhật trạng thái nhóm. */
   async synchronizeActiveCalls() {
+    const groupService = this
     const sessionContext = captureSessionContext()
     if (!this.callService.hasActiveCall() || !this.state.isGroupCall || !this.state.isGroupHost)
       return
 
     const callEpoch = this.callService.callGeneration
+
     /** Bỏ kết quả Calld đến muộn sau khi cuộc gọi hoặc phiên đã thay đổi. */
-    const current = () =>
-      callEpoch === this.callService.callGeneration &&
-      isSessionContextCurrent(sessionContext) &&
-      this.callService.hasActiveCall()
+    function isSyncStillCurrent() {
+      return (
+        callEpoch === groupService.callService.callGeneration &&
+        isSessionContextCurrent(sessionContext) &&
+        groupService.callService.hasActiveCall()
+      )
+    }
+
     const activeCalls = await this.callControlApi.listActiveCalls()
-    if (!current()) return
+    if (!isSyncStillCurrent()) return
     if (!activeCalls || activeCalls.length === 0) return
 
     const active = callState.activeCall
@@ -925,7 +1134,7 @@ export class GroupCallService {
             this.state.activeAdhocConferenceId,
             pId,
           )
-          if (!current()) return
+          if (!isSyncStillCurrent()) return
           if (added) {
             this.state.mergedCallIds.add(pId)
             this.markMergedParticipantConnected(pId)
@@ -940,7 +1149,7 @@ export class GroupCallService {
     const toMerge = participantCallIds.filter((id) => id !== hostCallId)
     if (toMerge.length >= 2 && hostCallId) {
       const confId = await this.callControlApi.createConference(hostCallId, toMerge)
-      if (!current()) {
+      if (!isSyncStillCurrent()) {
         if (confId && isSessionContextCurrent(sessionContext))
           await this.callControlApi.deleteConference(confId)
         return
@@ -1000,9 +1209,18 @@ export class GroupCallService {
     this.state.extensionToWazoCallIdMap.delete(leftExt)
     this.state.secondaryCallSessions.delete(leftExt)
 
-    this.state.groupParticipantExtensions = this.state.groupParticipantExtensions.filter(
-      (e) => e !== leftExt,
-    )
+    /** Loại thành viên vừa rời khỏi danh sách tham gia hiện tại. */
+    function isNotLeftParticipant(extension) {
+      return extension !== leftExt
+    }
+
+    /** Lọc danh sách các thành viên còn lại khác với máy hiện tại. */
+    function isOtherParticipant(extension) {
+      return extension !== myExt
+    }
+
+    this.state.groupParticipantExtensions =
+      this.state.groupParticipantExtensions.filter(isNotLeftParticipant)
     if (callState.activeCall) {
       callState.activeCall.groupParticipantExtensions = [...this.state.groupParticipantExtensions]
       callState.activeCall.groupTitle =
@@ -1011,7 +1229,7 @@ export class GroupCallService {
 
       // Khi một thành viên rời đi, nếu activeCall.number đang trỏ vào thành viên đó, chuyển sang thành viên tiếp theo còn lại
       if (callState.activeCall.number === leftExt) {
-        const remainingOthers = this.state.groupParticipantExtensions.filter((e) => e !== myExt)
+        const remainingOthers = this.state.groupParticipantExtensions.filter(isOtherParticipant)
         if (remainingOthers.length > 0) {
           callState.activeCall.number = remainingOthers[0]
           const contact = this.contactService.findContactByExtension(remainingOthers[0])
@@ -1042,7 +1260,7 @@ export class GroupCallService {
       this.broadcastGroupStateViaPresence()
 
       // Nếu trong nhóm chỉ còn lại đúng 1 người (chính là Host) và không còn nhánh phụ nào đang đổ chuông
-      const remainingOthers = this.state.groupParticipantExtensions.filter((e) => e !== myExt)
+      const remainingOthers = this.state.groupParticipantExtensions.filter(isOtherParticipant)
       if (remainingOthers.length === 0 && this.state.secondaryCallSessions.size === 0) {
         logger.info('CALL', 'Tất cả thành viên đã rời nhóm. Tự động kết thúc cuộc gọi.')
         this.callService.hangupCurrentCall()
@@ -1067,21 +1285,30 @@ export class GroupCallService {
   /** Một nguồn dữ liệu hiển thị: thành viên được mời, đã kết nối và còn đổ chuông là các tập riêng. */
   _syncGroupDisplayState() {
     if (!this.state.isGroupCall) return
+    const groupService = this
     this.state.groupParticipantExtensions = [
       ...new Set(this.state.groupParticipantExtensions.map(normalizeExtension)),
     ]
-    const connected = this.state.groupConnectedExtensions.filter((ext) =>
-      this.state.groupParticipantExtensions.includes(ext),
-    )
+
+    /** Chỉ giữ lại máy lẻ đã kết nối nằm trong danh sách thành viên hiện hành của nhóm. */
+    function isActiveParticipant(ext) {
+      return groupService.state.groupParticipantExtensions.includes(ext)
+    }
+
+    /** Tách riêng các máy lẻ đang được mời/đổ chuông nhưng chưa kết nối đàm thoại. */
+    function isPendingParticipant(ext) {
+      return !groupService.state.groupConnectedExtensions.includes(ext)
+    }
+
+    const connected = this.state.groupConnectedExtensions.filter(isActiveParticipant)
     if (
       this.state.isGroupHost &&
       this.state.groupParticipantExtensions.includes(this.authService.getCurrentExtension())
     )
       connected.unshift(this.authService.getCurrentExtension())
     this.state.groupConnectedExtensions = [...new Set(connected)]
-    this.state.groupPendingExtensions = this.state.groupParticipantExtensions.filter(
-      (ext) => !this.state.groupConnectedExtensions.includes(ext),
-    )
+    this.state.groupPendingExtensions =
+      this.state.groupParticipantExtensions.filter(isPendingParticipant)
     for (const call of [callState.activeCall, callState.incomingCall]) {
       if (!call) continue
       Object.assign(call, {
@@ -1140,6 +1367,7 @@ export class GroupCallService {
     let contact = this.contactService.findContactByExtension(host)
     if (!contact?.uuid && typeof this.contactService.getOrLookupContact === 'function')
       contact = await this.contactService.getOrLookupContact(host)
+    // Kiểm tra lại phiên, thế hệ gọi và session quản lý trước khi phát yêu cầu đồng bộ nhóm.
     if (
       !contact?.uuid ||
       !isSessionContextCurrent(context) ||
@@ -1164,14 +1392,17 @@ export class GroupCallService {
 
   /** Lệnh dọn nhánh có thể reject bất đồng bộ; try/catch bên ngoài không bắt được Promise. */
   _runPhoneCleanup(command) {
+    const groupService = this
     const context = captureSessionContext()
-    const failed = (error) => {
+
+    /** Ghi cảnh báo và thông báo cho người dùng nếu thao tác kết thúc nhánh thoại chưa được xác nhận. */
+    function handlePhoneCleanupFailure(error) {
       logger.warn(
         'SIP',
         'Chưa xác nhận được thao tác kết thúc nhánh thoại:',
         error?.message || 'Lỗi chưa xác định',
       )
-      if (isSessionContextCurrent(context) && this.authService.isAuthenticated()) {
+      if (isSessionContextCurrent(context) && groupService.authService.isAuthenticated()) {
         window.dispatchEvent(
           new CustomEvent('app-toast', {
             detail: {
@@ -1184,10 +1415,11 @@ export class GroupCallService {
       }
       return false
     }
+
     try {
-      return Promise.resolve(command()).then(() => true, failed)
+      return Promise.resolve(command()).then(markPhoneCleanupSucceeded, handlePhoneCleanupFailure)
     } catch (error) {
-      return Promise.resolve(failed(error))
+      return Promise.resolve(handlePhoneCleanupFailure(error))
     }
   }
 

@@ -9,6 +9,26 @@ import { logger } from '../common/loggerService.js'
 
 import { recordingState } from '../../state/callState.js'
 
+/** Đọc nội dung lỗi từ response khi lệnh ghi âm Calld thất bại, ưu tiên JSON rồi fallback text. */
+async function readRecordingErrorDetail(response) {
+  try {
+    const errJson = await response.json()
+    return errJson.message || JSON.stringify(errJson)
+  } catch {
+    try {
+      return await response.text()
+    } catch {
+      /* Bỏ qua lỗi đọc body text để vẫn giữ được mã HTTP báo lỗi cho người dùng. */
+      return ''
+    }
+  }
+}
+
+/** Tăng bộ đếm thời lượng ghi âm mỗi giây trên recordingState đang hiển thị. */
+function incrementRecordingDuration() {
+  recordingState.duration += 1
+}
+
 /**
  * RecordService - Module Quản lý Ghi âm Cuộc gọi Máy chủ Wazo (Pure Server-Side Recording)
  * Tuân thủ quy tắc bất biến: API Server First - Triệt tiêu Local Storage / IndexedDB nghiệp vụ (GEMINI.md)
@@ -83,6 +103,7 @@ export class RecordingService {
 
   /** Bắt đầu ghi âm trên cuộc gọi server, chỉ đổi state sau ACK và thu hồi kết quả nếu đã bị hủy. */
   async startRecording(callId = null, meta = {}) {
+    // Chặn bấm lặp khi một thao tác start hoặc stop trước đó vẫn đang chờ máy chủ phản hồi.
     if (recordingState.isStarting || recordingState.isStopping)
       throw new Error('Thao tác ghi âm đang được xử lý.')
     const recordingEpoch = this._recordingEpoch
@@ -122,6 +143,7 @@ export class RecordingService {
       }
 
       assertSessionContext(sessionContext)
+      // Kiểm tra lại thế hệ ghi âm để hủy kịp thời nếu cuộc gọi đã kết thúc trong lúc tìm call ID.
       if (recordingEpoch !== this._recordingEpoch) return false
       logger.info('RECORD', `Gửi yêu cầu Bắt đầu ghi âm tới máy chủ Wazo Calld: ${serverCallId}`)
 
@@ -148,13 +170,7 @@ export class RecordingService {
       // Chỉ sử dụng response HTTP thành công; mã lỗi đi qua nhánh xử lý thất bại thay vì báo thành
       // công giả.
       if (!res.ok && res.status !== 204) {
-        let errDetail = ''
-        try {
-          const errJson = await res.json()
-          errDetail = errJson.message || JSON.stringify(errJson)
-        } catch (e) {
-          errDetail = await res.text().catch(() => '')
-        }
+        const errDetail = await readRecordingErrorDetail(res)
 
         if (res.status === 403) {
           throw new Error(
@@ -167,8 +183,7 @@ export class RecordingService {
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (recordingEpoch !== this._recordingEpoch || !isSessionContextCurrent(sessionContext)) {
-        // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-        // đến muộn sau hủy/đổi phiên.
+        // Nếu vẫn thuộc cùng phiên nhưng lệnh start vừa bị hủy, phải gọi stop để máy chủ không ghi âm ngầm.
         if (isSessionContextCurrent(sessionContext)) {
           const stopped = await fetch(
             `${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/stop`,
@@ -189,21 +204,12 @@ export class RecordingService {
       recordingState.meta = { ...meta, startTime: Date.now() }
 
       if (this._durationTimer) clearInterval(this._durationTimer)
-      this._durationTimer = setInterval(() => {
-        recordingState.duration += 1
-      }, 1000)
+      this._durationTimer = setInterval(incrementRecordingDuration, 1000)
 
       logger.success(
         'RECORD',
         `🟢 Tổng đài Wazo đã kích hoạt ghi âm cuộc gọi trên máy chủ (Server Recording): ${serverCallId}`,
       )
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('smartcall-recording-started', {
-            detail: { serverCallId, meta },
-          }),
-        )
-      }
       return true
     } catch (err) {
       logger.error('RECORD', 'Lỗi khi kích hoạt ghi âm trên máy chủ Wazo:', err.message)
@@ -228,6 +234,7 @@ export class RecordingService {
     // song.
     if (this._stopPromise) return this._stopPromise
     if (!recordingState.isRecording) return Promise.resolve(null)
+    const recordingService = this
     const context = captureSessionContext()
     const fetch = createSessionFetch(context)
     const serverCallId = callId || recordingState.currentCallId
@@ -240,32 +247,32 @@ export class RecordingService {
     }
     recordingState.isStopping = true
     recordingState.error = ''
-    const promise = (async () => {
+
+    /** Gửi lệnh PUT record/stop tới Calld, chỉ hạ state ghi âm sau khi máy chủ xác nhận HTTP OK. */
+    async function executeStopRecording() {
       try {
         let res = await fetch(`${host}/api/calld/1.0/users/me/calls/${serverCallId}/record/stop`, {
           method: 'PUT',
           headers: { 'X-Auth-Token': token, Accept: 'application/json' },
           signal: AbortSignal.timeout(5000),
         })
-        if (res.status === 404)
+        if (res.status === 404) {
           res = await fetch(`${host}/api/calld/1.0/calls/${serverCallId}/record/stop`, {
             method: 'PUT',
             headers: { 'X-Auth-Token': token, Accept: 'application/json' },
             signal: AbortSignal.timeout(5000),
           })
+        }
         // Chỉ sử dụng response HTTP thành công; mã lỗi đi qua nhánh xử lý thất bại thay vì báo
         // thành công giả.
         if (!res.ok) throw new Error(`Tổng đài chưa xác nhận dừng ghi âm (HTTP ${res.status}).`)
         assertSessionContext(context)
-        clearInterval(this._durationTimer)
-        this._durationTimer = null
+        clearInterval(recordingService._durationTimer)
+        recordingService._durationTimer = null
         recordingState.isRecording = false
         recordingState.currentCallId = null
         recordingState.duration = 0
         recordingState.meta = null
-        window.dispatchEvent(
-          new CustomEvent('smartcall-recording-stopped', { detail: { serverCallId, duration } }),
-        )
         return { serverCallId, duration }
       } catch (err) {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
@@ -278,9 +285,11 @@ export class RecordingService {
         if (isSessionContextCurrent(context)) recordingState.isStopping = false
         // Dùng tác vụ đang chờ hoặc chặn thao tác trùng để tránh tạo nhiều request/SDK session
         // song song.
-        if (this._stopPromise === promise) this._stopPromise = null
+        if (recordingService._stopPromise === promise) recordingService._stopPromise = null
       }
-    })()
+    }
+
+    const promise = executeStopRecording()
     this._stopPromise = promise
     return promise
   }
@@ -304,6 +313,7 @@ export class RecordingService {
 
     const host = this.getHost(wazoHost)
     const authToken = token || this.authService.getToken()
+    // Thiếu token thì dừng trước khi tải media để tránh request thiếu xác thực.
     if (!authToken) return null
 
     const url = `${host}/api/call-logd/1.0/users/me/cdr/${cdrId}/recordings/${recordingUuid}/media`
@@ -377,11 +387,13 @@ export class RecordingService {
     this._stopPromise = null
     recordingState.isStopping = false
     recordingState.error = ''
-    this._blobUrls.forEach((url) => {
+    for (const objectUrl of this._blobUrls.values()) {
       try {
-        URL.revokeObjectURL(url)
-      } catch (e) {}
-    })
+        URL.revokeObjectURL(objectUrl)
+      } catch {
+        /* URL đối tượng có thể đã được thu hồi trước đó khi trình duyệt giải phóng bộ nhớ. */
+      }
+    }
     this._blobUrls.clear()
     recordingState.isRecording = false
     recordingState.duration = 0

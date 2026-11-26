@@ -36,13 +36,6 @@
         </button>
         <button
           class="st-tab-btn"
-          :class="{ active: activeTab === 'pref' }"
-          @click="activeTab = 'pref'"
-        >
-          <UiIcon name="globe" /> Ngôn ngữ & Tùy chọn
-        </button>
-        <button
-          class="st-tab-btn"
           :class="{ active: activeTab === 'features' }"
           @click="activeTab = 'features'"
         >
@@ -220,30 +213,7 @@
         </div>
       </div>
 
-      <!-- Tab 4: Ngôn ngữ & Tùy chọn -->
-      <div v-show="activeTab === 'pref'" class="st-panel">
-        <div class="st-field-group">
-          <label class="st-label">Ngôn ngữ giao diện (Language / 언어):</label>
-          <select v-model="selectedLang" disabled class="st-select">
-            <option value="vi">Tiếng Việt (Vietnamese)</option>
-            <option value="ko">한국어 (Korean - Dành cho chuyên gia Hàn Quốc)</option>
-            <option value="en">English (Tiếng Anh)</option>
-          </select>
-          <small class="hint-text">
-            Hiện giao diện chỉ hỗ trợ tiếng Việt. Các ngôn ngữ khác chưa được triển khai.
-          </small>
-        </div>
-
-        <div class="st-toggle-row">
-          <div class="st-toggle-info">
-            <strong>Thông báo nổi trên màn hình (Desktop Notifications)</strong>
-            <small>Chưa hỗ trợ thông báo ngoài trình duyệt.</small>
-          </div>
-          <input v-model="notifyDesktop" disabled type="checkbox" class="toggle-cb" />
-        </div>
-      </div>
-
-      <!-- Tab 5: Cấu hình Phân hệ tính năng -->
+      <!-- Tab 4: Cấu hình Phân hệ tính năng -->
       <div v-show="activeTab === 'features'" class="st-panel">
         <div class="features-intro">
           <strong>Cấu hình Bật / Tắt 3 phân hệ màn hình (Feature Flags):</strong>
@@ -293,6 +263,7 @@ import { useMicrophoneMeter } from '../../composables/useMicrophoneMeter.js'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getFeatures, saveFeatures, resetFeatures } from '@/config/features.js'
 import { authService, phoneAdapter, settingsService } from '@/services/index.js'
+import { logger } from '@/services/common/loggerService.js'
 import { userSessionState } from '@/state/sessionState.js'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
 
@@ -307,23 +278,23 @@ const emit = defineEmits(['close'])
  * identifier.
  */
 const currentUsername = computed(
-  () =>
-    authService.getCurrentDisplayName() ||
-    localStorage.getItem('smartcall_username') ||
-    'Người dùng',
+  () => userSessionState.displayName || authService.getCurrentDisplayName() || 'Người dùng',
 )
 /** Đọc máy lẻ của phiên hiện tại cho phần thông tin tài khoản/SIP. */
 const currentExt = computed(
   () => userSessionState.extension || authService.getCurrentExtension() || '',
 )
 /** Chuẩn hóa host tổng đài để người dùng kiểm tra đúng môi trường đang kết nối. */
-const sipHostInfo = computed(() => {
+function formatSipHostInfo() {
   const host = (authService.host || '')
     .trim()
     .replace(/^https?:\/\//, '')
     .split(':')[0]
   return `sip:${currentExt.value}@${host || 'smartcall'}`
-})
+}
+
+/** Chuỗi địa chỉ SIP dùng để hiển thị thông tin tài khoản trên máy chủ tổng đài. */
+const sipHostInfo = computed(formatSipHostInfo)
 
 const activeTab = ref('audio')
 const featureConfig = ref(getFeatures())
@@ -335,39 +306,70 @@ const selectedMic = ref(localStorage.getItem('smartcall_selected_mic') || 'defau
 const selectedSpeaker = ref(localStorage.getItem('smartcall_selected_speaker') || 'default')
 const ringtoneVol = ref(80)
 
+/** Chỉ cho phép VU Meter hoạt động khi modal Cài đặt đang mở ở tab Âm thanh. */
+function isAudioMeterActive() {
+  return props.isOpen && activeTab.value === 'audio'
+}
+
+/** Đọc ID micro đang được chọn trong form cài đặt để mở đúng thiết bị đo. */
+function getSelectedMicrophoneId() {
+  return selectedMic.value
+}
+
 const { micLevel, isVoiceActive, micStatusText, startMicMeter, stopMicMeter } = useMicrophoneMeter({
-  isActive: () => props.isOpen && activeTab.value === 'audio',
-  getMicrophoneId: () => selectedMic.value,
+  isActive: isAudioMeterActive,
+  getMicrophoneId: getSelectedMicrophoneId,
 })
 
-// Quản lý VU Meter đo tín hiệu Micro thật với cơ chế VAD Hangover 1000ms
+/** Dừng track micro tạm thời sau khi xin quyền đọc tên thiết bị âm thanh. */
+function stopMediaTrack(track) {
+  track.stop()
+}
+
+/** Kiểm tra thiết bị MediaDeviceInfo là micro đầu vào. */
+function isAudioInputDevice(device) {
+  return device.kind === 'audioinput'
+}
+
+/** Chuẩn hóa thiết bị micro đầu vào thành cặp deviceId/label để hiển thị trong dropdown. */
+function mapMicrophoneDevice(device, index) {
+  return {
+    deviceId: device.deviceId,
+    label: device.label || `Microphone ${index + 1} (${device.deviceId.slice(0, 8)}...)`,
+  }
+}
+
+/** Kiểm tra thiết bị MediaDeviceInfo là loa hoặc tai nghe đầu ra. */
+function isAudioOutputDevice(device) {
+  return device.kind === 'audiooutput'
+}
+
+/** Chuẩn hóa thiết bị đầu ra thành cặp deviceId/label để hiển thị trong dropdown. */
+function mapSpeakerDevice(device, index) {
+  return {
+    deviceId: device.deviceId,
+    label: device.label || `Loa / Tai nghe ${index + 1} (${device.deviceId.slice(0, 8)}...)`,
+  }
+}
+
+/** Quét danh sách thiết bị micro/loa thật của máy khách và chọn mặc định nếu chưa có cấu hình. */
 const loadAudioDevices = async () => {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return
 
   try {
-    // Xin quyền nhẹ để lấy tên đầy đủ của thiết bị (label)
+    // Xin quyền nhẹ để trình duyệt cung cấp nhãn thiết bị đầy đủ (label).
     if (navigator.mediaDevices.getUserMedia) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        stream.getTracks().forEach((t) => t.stop())
+        stream.getTracks().forEach(stopMediaTrack)
       } catch {
-        /* ignore nếu user đã cấp hoặc hủy */
+        // Bỏ qua nếu người dùng từ chối quyền mic; vẫn liệt kê danh sách deviceId hiện có.
       }
     }
 
     const devices = await navigator.mediaDevices.enumerateDevices()
-    const mics = devices
-      .filter((d) => d.kind === 'audioinput')
-      .map((d, i) => ({
-        deviceId: d.deviceId,
-        label: d.label || `Microphone ${i + 1} (${d.deviceId.slice(0, 8)}...)`,
-      }))
-    const speakers = devices
-      .filter((d) => d.kind === 'audiooutput')
-      .map((d, i) => ({
-        deviceId: d.deviceId,
-        label: d.label || `Loa / Tai nghe ${i + 1} (${d.deviceId.slice(0, 8)}...)`,
-      }))
+    const mics = devices.filter(isAudioInputDevice).map(mapMicrophoneDevice)
+    const speakers = devices.filter(isAudioOutputDevice).map(mapSpeakerDevice)
 
     availableMics.value = mics
     availableSpeakers.value = speakers
@@ -379,62 +381,59 @@ const loadAudioDevices = async () => {
       selectedSpeaker.value = speakers[0].deviceId
     }
   } catch (err) {
-    console.warn('Lỗi quét thiết bị âm thanh:', err)
+    logger.warn('AUDIO', 'Lỗi quét thiết bị âm thanh:', err)
   }
 }
 
-// Đổi lựa chọn chỉ khởi động lại phép đo; thiết bị được lưu khi người dùng bấm Lưu.
+/** Nạp lại danh sách thiết bị âm thanh rồi khởi động VU meter kiểm tra micro. */
+async function loadAudioDevicesAndStartMeter() {
+  await loadAudioDevices()
+  await startMicMeter()
+}
+
+/** Khởi động lại phép đo VU meter khi đổi thiết bị micro trong dropdown. */
 const restartMicMeter = () => startMicMeter()
 
-// Đồng bộ vòng đời mở/đóng modal: reset lựa chọn tạm hoặc dọn tài nguyên không còn dùng.
-watch(
-  () => props.isOpen,
-  (val) => {
-    if (val) {
-      featureConfig.value = getFeatures()
-      if (activeTab.value === 'audio') {
-        loadAudioDevices().then(() => startMicMeter())
-      } else if (activeTab.value === 'calls') {
-        loadCallServices()
-      }
-    } else {
-      stopMicMeter()
-    }
-  },
-)
-
-// Đồng bộ vòng đời mở/đóng modal: reset lựa chọn tạm hoặc dọn tài nguyên không còn dùng.
-watch(
-  () => activeTab.value,
-  (tab) => {
-    if (props.isOpen && tab === 'audio') {
-      loadAudioDevices().then(() => startMicMeter())
-    } else {
-      stopMicMeter()
-    }
-    if (props.isOpen && tab === 'calls') {
-      loadCallServices()
-    }
-  },
-)
-
-// Khi component được gắn vào DOM, nạp dữ liệu và đăng ký các listener/tài nguyên cần cho giao diện
-// này.
-onMounted(() => {
-  if (props.isOpen) {
+/** Đồng bộ tab và tài nguyên micro/dịch vụ mỗi khi modal Cài đặt được mở hoặc đóng. */
+function onModalVisibilityChange(isModalOpen) {
+  if (isModalOpen) {
+    featureConfig.value = getFeatures()
     if (activeTab.value === 'audio') {
-      loadAudioDevices().then(() => startMicMeter())
+      void loadAudioDevicesAndStartMeter()
     } else if (activeTab.value === 'calls') {
-      loadCallServices()
+      void loadCallServices()
     }
+  } else {
+    stopMicMeter()
   }
-})
+}
 
-// Khi component bị hủy, gỡ listener và dọn tài nguyên thuộc vòng đời này để callback cũ không tiếp
-// tục tác động UI.
-onUnmounted(() => {
-  stopMicMeter()
-})
+/** Bật/tắt VU meter hoặc nạp cấu hình PBX tương ứng khi người dùng chuyển tab trong Settings. */
+function onActiveTabChange(tab) {
+  if (props.isOpen && tab === 'audio') {
+    void loadAudioDevicesAndStartMeter()
+  } else {
+    stopMicMeter()
+  }
+  if (props.isOpen && tab === 'calls') {
+    void loadCallServices()
+  }
+}
+
+/** Khởi tạo dữ liệu thiết bị hoặc PBX nếu SettingsModal đang ở trạng thái mở ngay lúc mount. */
+function initSettingsOnMount() {
+  if (!props.isOpen) return
+  if (activeTab.value === 'audio') {
+    void loadAudioDevicesAndStartMeter()
+  } else if (activeTab.value === 'calls') {
+    void loadCallServices()
+  }
+}
+
+watch(() => props.isOpen, onModalVisibilityChange)
+watch(() => activeTab.value, onActiveTabChange)
+onMounted(initSettingsOnMount)
+onUnmounted(stopMicMeter)
 
 /** Khôi phục các cờ màn hình mặc định và cập nhật form Settings. */
 const handleResetFeatures = () => {
@@ -454,19 +453,18 @@ const forwardAll = ref('')
 const serviceBaseline = ref({ dnd: null, forwards: null })
 const saving = ref(false)
 let servicesLoadId = 0
-// Đồng bộ state hiển thị khi dữ liệu được theo dõi thay đổi; việc tải/ghi nghiệp vụ vẫn thuộc
-// service hoặc handler tương ứng.
-watch(
-  () => userSessionState.userUuid,
-  () => {
-    servicesLoadId += 1
-    serviceBaseline.value = { dnd: null, forwards: null }
-    dndEnabled.value = false
-    forwardBusy.value = forwardNoAnswer.value = forwardAll.value = ''
-    oldPassword.value = newPassword.value = confirmPassword.value = ''
-    stopMicMeter()
-  },
-)
+
+/** Xóa sạch state dịch vụ tổng đài và ô mật khẩu khi người dùng đổi tài khoản/phiên làm việc. */
+function resetSessionServicesState() {
+  servicesLoadId += 1
+  serviceBaseline.value = { dnd: null, forwards: null }
+  dndEnabled.value = false
+  forwardBusy.value = forwardNoAnswer.value = forwardAll.value = ''
+  oldPassword.value = newPassword.value = confirmPassword.value = ''
+  stopMicMeter()
+}
+
+watch(() => userSessionState.userUuid, resetSessionServicesState)
 
 /**
  * Lưu tùy chọn tự ghi âm của máy khách để luồng nghe máy biết có cần bắt đầu ghi âm server hay
@@ -529,9 +527,6 @@ const loadCallServices = async () => {
   }
 }
 
-const selectedLang = ref('vi')
-const notifyDesktop = ref(false)
-
 /** Phát âm thanh kiểm tra trên loa được chọn để người dùng xác nhận thiết bị đầu ra. */
 const testSound = () => {
   try {
@@ -540,9 +535,8 @@ const testSound = () => {
     const ctx = new AudioCtx()
     const now = ctx.currentTime
 
-    // Chuỗi 3 nốt nhạc du dương C5 - E5 - G5 để test loa thật
-    const notes = [523.25, 659.25, 783.99]
-    notes.forEach((freq, idx) => {
+    /** Phát một nốt nhạc kiểm tra theo tần số và thứ tự trễ để tạo hợp âm thử loa. */
+    function playTestToneNote(freq, idx) {
       const osc = ctx.createOscillator()
       const gain = ctx.createGain()
       osc.type = 'sine'
@@ -553,7 +547,11 @@ const testSound = () => {
       gain.connect(ctx.destination)
       osc.start(now + idx * 0.16)
       osc.stop(now + idx * 0.16 + 0.28)
-    })
+    }
+
+    // Chuỗi 3 nốt nhạc C5 - E5 - G5 để kiểm tra loa đầu ra thật.
+    const notes = [523.25, 659.25, 783.99]
+    notes.forEach(playTestToneNote)
 
     window.dispatchEvent(
       new CustomEvent('app-toast', {
@@ -564,7 +562,7 @@ const testSound = () => {
       }),
     )
   } catch (e) {
-    console.warn('Lỗi thử loa:', e)
+    logger.warn('AUDIO', 'Lỗi thử loa:', e)
   }
 }
 
@@ -1005,13 +1003,6 @@ const handleSave = async () => {
   font-size: 0.82rem;
   color: #3b82f6;
   font-family: monospace;
-  margin-top: 4px;
-}
-
-.hint-text {
-  color: #64748b;
-  font-size: 0.75rem;
-  display: block;
   margin-top: 4px;
 }
 

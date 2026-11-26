@@ -4,7 +4,7 @@ import { authService } from '@/services/index.js'
 
 import { isFeatureEnabled, getFeatures } from '../config/features.js'
 
-/** Chọn trang đầu tiên còn được bật theo thứ tự gọi, tin nhắn, lịch sử; login là đường lui an toàn. */
+/** Chọn trang đầu tiên còn được bật theo thứ tự gọi, gọi nhóm, lịch sử; login là đường lui an toàn. */
 const getFirstAvailableRoute = () => {
   const f = getFeatures()
   if (f.calls) return '/calls'
@@ -31,7 +31,7 @@ const router = createRouter({
     },
     {
       path: '/',
-      redirect: () => getFirstAvailableRoute(),
+      redirect: getFirstAvailableRoute,
     },
     {
       path: '/calls',
@@ -59,16 +59,24 @@ const router = createRouter({
   ],
 })
 
-// Navigation Guard
-router.beforeEach((to) => {
+/** Kiểm tra record route có yêu cầu người dùng đã xác thực hay không. */
+function isAuthRequiredRecord(record) {
+  return Boolean(record.meta.requiresAuth)
+}
+
+/**
+ * Kiểm tra trạng thái đăng nhập và cờ phân hệ trước mỗi lần điều hướng; chuyển hướng an toàn về
+ * trang đăng nhập hoặc route khả dụng đầu tiên khi route đích không hợp lệ.
+ */
+function guardRouteNavigation(to) {
   if (to.meta.title) {
     document.title = `${to.meta.title} - SmartCall Web`
   }
 
-  // Check login: kiểm tra cờ đăng nhập và token phiên làm việc Wazo
+  // Phải xác nhận cả cờ đăng nhập lẫn phiên SDK/token để tránh vào màn hình riêng tư khi phiên vừa bị thu hồi.
   const isLogged =
     localStorage.getItem('smartcall_logged_in') === 'true' && authService.isAuthenticated()
-  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
+  const requiresAuth = to.matched.some(isAuthRequiredRecord)
 
   if (requiresAuth && !isLogged) {
     return {
@@ -82,13 +90,15 @@ router.beforeEach((to) => {
     if (target !== to.path) return target
   }
 
-  // Kiểm tra cờ tính năng (Feature Flag)
+  // Chặn truy cập trực tiếp qua URL vào phân hệ đang tắt trong cấu hình người dùng.
   if (to.meta.featureKey && !isFeatureEnabled(to.meta.featureKey)) {
     const target = getFirstAvailableRoute()
     if (target !== to.path) {
       return target
     }
   }
-})
+}
+
+router.beforeEach(guardRouteNavigation)
 
 export default router

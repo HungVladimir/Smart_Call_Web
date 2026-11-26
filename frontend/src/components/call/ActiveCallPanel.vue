@@ -119,11 +119,6 @@ const props = defineProps({
   canAddParticipant: { type: Boolean, default: false },
 })
 defineEmits(['mute', 'record', 'hangup', 'add-participant'])
-/**
- * Đọc danh bạ hiện tại theo cơ chế phản ứng của Vue, không tạo bản sao dữ liệu riêng cho giao
- * diện.
- */
-const contacts = computed(() => props.contacts)
 /** Cho biết có cuộc gọi đang được quản lý để bật/tắt vùng đàm thoại và chặn thao tác gọi chồng. */
 const isCalling = computed(() => Boolean(props.call))
 /**
@@ -139,44 +134,49 @@ const isRecording = computed(() => props.recording.isRecording)
 const findContact = (ext) =>
   props.contacts.find((contact) => String(contact.number || '').trim() === String(ext || '').trim())
 /** Định dạng thời gian ghi âm thành phút:giây để đồng bộ chỉ báo và nút ghi âm. */
-const formattedRecordingDuration = computed(() => {
+function formatRecordingDuration() {
   const s = props.recording.duration || 0
   const m = Math.floor(s / 60)
   const rem = s % 60
   return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
-})
+}
+
+/** Giá trị thời lượng ghi âm đã định dạng cho huy hiệu trạng thái ghi âm. */
+const formattedRecordingDuration = computed(formatRecordingDuration)
 
 /** Tìm thông tin danh bạ của số đang gọi để bổ sung tên, phòng ban và avatar cho UI. */
-const activeCallContact = computed(() => {
+function resolveActiveCallContact() {
   const num = props.call?.number || ''
   if (!num) return null
-  return (
-    contacts.value.find((c) => String(c.number || '').trim() === String(num).trim()) ||
-    findContact(num) ||
-    null
-  )
-})
+  return findContact(num) || null
+}
+
+/** Liên hệ khớp với số đang gọi nếu có trong danh bạ đã tải. */
+const activeCallContact = computed(resolveActiveCallContact)
 
 /** Xác định cuộc gọi hiện tại là gọi nhóm từ state cuộc gọi và state hội nghị. */
 const isGroupCall = computed(() => Boolean(props.call?.isGroupCall || props.group.isGroupCall))
 
+/** Đổi một số máy lẻ trong nhóm sang nhãn hiển thị có tên người dùng hoặc "Bạn". */
+function formatGroupMemberLabel(ext) {
+  const myExt = props.myExtension || ''
+  if (ext === myExt) return 'Bạn'
+  const c = findContact(ext)
+  return c?.name ? `${c.name} (${ext})` : `Máy lẻ ${ext}`
+}
+
 /** Ghép tên/máy lẻ thành viên thành mô tả nhóm, đánh dấu người dùng hiện tại là Bạn. */
-const groupMembersSummary = computed(() => {
+function buildGroupMembersSummary() {
   const exts = props.call?.groupConnectedExtensions || props.group.groupConnectedExtensions || []
   if (!exts || exts.length === 0) return ''
-  const myExt = props.myExtension || ''
-  const names = exts.map((ext) => {
-    if (ext === myExt) return 'Bạn'
-    const c =
-      contacts.value.find((ct) => String(ct.number || '').trim() === String(ext).trim()) ||
-      findContact(ext)
-    return c?.name ? `${c.name} (${ext})` : `Máy lẻ ${ext}`
-  })
-  return names.join(', ')
-})
+  return exts.map(formatGroupMemberLabel).join(', ')
+}
+
+/** Chuỗi liệt kê các thành viên đã kết nối trong cuộc gọi nhóm. */
+const groupMembersSummary = computed(buildGroupMembersSummary)
 
 /** Liệt kê các nhánh phụ chưa nghe máy; bỏ nhánh answered để không báo đang kết nối sai. */
-const pendingRingingMembers = computed(() => {
+function buildPendingRingingMembers() {
   const list = []
   const pending = props.call?.groupPendingExtensions || props.group.groupPendingExtensions || []
   for (const secExt of pending) {
@@ -184,10 +184,13 @@ const pendingRingingMembers = computed(() => {
     list.push(contact?.name ? contact.name + ' (' + secExt + ')' : 'Máy lẻ ' + secExt)
   }
   return list
-})
+}
+
+/** Danh sách thành viên đang đổ chuông chờ nhận cuộc gọi nhóm. */
+const pendingRingingMembers = computed(buildPendingRingingMembers)
 
 /** Chọn tiêu đề cho cuộc gọi một người hoặc gọi nhóm, có xét trạng thái đang đổ chuông. */
-const activeCallTitle = computed(() => {
+function buildActiveCallTitle() {
   if (!props.call) return ''
   if (isGroupCall.value) {
     const count = (
@@ -197,34 +200,41 @@ const activeCallTitle = computed(() => {
     ).length
     return `${props.call.savedGroupName || 'Cuộc gọi nhóm'} (${count} người)`
   }
-  const ext = props.call.number || props.call?.number || ''
+  const ext = props.call.number || ''
   if (props.call.status === 'ringing') {
     return `Đang đổ chuông: ${props.call.name || activeCallContact.value?.name || `Máy lẻ ${ext}`}`
   }
   return props.call.name || activeCallContact.value?.name || `Máy lẻ ${ext}`
-})
+}
+
+/** Tiêu đề hiển thị ở phần trung tâm bảng trạng thái cuộc gọi. */
+const activeCallTitle = computed(buildActiveCallTitle)
 
 /** Ưu tiên phòng ban của cuộc gọi; dùng danh bạ làm nguồn bổ sung khi dữ liệu cuộc gọi chưa có. */
-const activeCallDept = computed(() => {
-  return props.call?.dept || activeCallContact.value?.dept || ''
-})
+const activeCallDept = computed(() => props.call?.dept || activeCallContact.value?.dept || '')
 
 /** Chọn ký hiệu nhóm hoặc chữ viết tắt của người đang gọi cho avatar. */
-const activeCallAvatarText = computed(() => {
+function buildActiveCallAvatarText() {
   if (isGroupCall.value) return ''
   const name = props.call?.name || activeCallContact.value?.name
   if (name) return getInitials(name)
   if (props.call?.number) return props.call.number.slice(-2)
   return ''
-})
+}
+
+/** Văn bản ký hiệu bên trong avatar cuộc gọi đang diễn ra. */
+const activeCallAvatarText = computed(buildActiveCallAvatarText)
 
 /** Chọn màu avatar theo nhóm/tên để nhận diện người đang gọi một cách ổn định. */
-const activeCallAvatarBg = computed(() => {
+function buildActiveCallAvatarBg() {
   if (isGroupCall.value) return '#059669'
   const name = props.call?.name || activeCallContact.value?.name
   if (name) return getAvatarColor(name)
   return '#2563eb'
-})
+}
+
+/** Màu nền avatar của khung đàm thoại hiện tại. */
+const activeCallAvatarBg = computed(buildActiveCallAvatarBg)
 </script>
 
 <style>
@@ -348,17 +358,6 @@ const activeCallAvatarBg = computed(() => {
   font-size: 0.75rem;
   font-weight: 600;
   margin-bottom: 12px;
-}
-
-.calls-view .status-dot-inline.ringing {
-  background: #3b82f6;
-  box-shadow: 0 0 6px rgba(59, 130, 246, 0.7);
-}
-
-.calls-view .call-avatar.idle-avatar {
-  background: rgba(30, 41, 59, 0.8);
-  border-color: #475569;
-  font-size: 2.2rem;
 }
 
 .calls-view .duration-text {
@@ -506,35 +505,6 @@ const activeCallAvatarBg = computed(() => {
   height: 24px;
 }
 
-.calls-view .panel-tab-btn.active {
-  color: #1e88e5;
-  border-color: #93c5fd;
-  background: #eff6ff;
-  font-weight: 700;
-}
-
-.calls-view .panel-tab-btn.active .tab-badge {
-  background: #2563eb;
-  color: #ffffff;
-}
-.calls-view .panel-tab-btn.active .tab-badge.badge-online {
-  background: #16a34a;
-  color: #ffffff;
-}
-.calls-view .panel-tab-btn.active .tab-badge.badge-dept,
-.calls-view .panel-tab-btn.active .tab-badge.badge-group {
-  background: #2563eb;
-  color: #ffffff;
-}
-
-.calls-view .dept-chip-btn.active {
-  background: #eff6ff;
-  color: #1d4ed8;
-  border-color: #3b82f6;
-  font-weight: 700;
-  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.15);
-}
-
 .calls-view .btn-star.active {
   color: #f59e0b;
 }
@@ -599,22 +569,10 @@ const activeCallAvatarBg = computed(() => {
     font-size: 1.6rem;
   }
 }
-.calls-view .panel-tab-btn.tab-group-call.active {
-  background: #ffffff;
-  border-bottom-color: #2563eb;
-  color: #2563eb;
-}
-
 .calls-view .custom-check-box.disabled {
   opacity: 0.4;
   cursor: not-allowed;
   background: #f1f5f9;
-}
-
-.calls-view .badge-status-pill.ringing {
-  background: #eff6ff;
-  color: #1d4ed8;
-  border-color: #bfdbfe;
 }
 
 .calls-view .group-call-badge-tag {
@@ -651,12 +609,6 @@ const activeCallAvatarBg = computed(() => {
 
 .calls-view .call-avatar.groupCallAvatar {
   background: #059669 !important;
-}
-
-.calls-view .tab-config-item.disabled {
-  cursor: default;
-  background: #f8fafc;
-  opacity: 0.85;
 }
 
 .calls-view .control-btn.btn-add-member {

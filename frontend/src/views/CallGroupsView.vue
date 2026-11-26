@@ -284,24 +284,38 @@ function closeEditor() {
   if (route.query.draft) void router.replace({ path: '/call-groups' })
 }
 
+/** Chuyển phần tử liên hệ sang cặp [uuid, contact] để tra cứu nhanh khi mở trình sửa nhóm. */
+function toContactMapEntry(contact) {
+  return [contact.uuid, contact]
+}
+
+/** Tải thông tin thành viên hiện tại của nhóm và dựng state cho trình sửa nhóm. */
+async function loadGroupForEditing(group, context, viewVersion) {
+  const contacts = await contactService.getSavedGroupMembers(group.members)
+  if (!stillActive(context, viewVersion)) return
+  const byId = new Map(contacts.map(toContactMapEntry))
+  /** Giữ cả UUID đã rời danh bạ để người dùng có thể chủ động gỡ khỏi nhóm. */
+  function resolveGroupMember(uuid) {
+    return byId.get(uuid) || { uuid, name: 'Liên hệ không còn trong danh bạ' }
+  }
+  editor.value = {
+    id: group.id,
+    name: group.name,
+    members: group.members.map(resolveGroupMember),
+  }
+}
+
 /** Tra lại thành viên qua UUID và giữ mục đã rời danh bạ để người dùng có thể bỏ. */
 async function editGroup(group) {
   if (props.embedded) {
     await router.push({ path: '/call-groups', query: { draft: group.id } })
     return
   }
-  await perform(async (context, viewVersion) => {
-    const contacts = await contactService.getSavedGroupMembers(group.members)
-    if (!stillActive(context, viewVersion)) return
-    const byId = new Map(contacts.map((contact) => [contact.uuid, contact]))
-    editor.value = {
-      id: group.id,
-      name: group.name,
-      members: group.members.map(
-        (uuid) => byId.get(uuid) || { uuid, name: 'Liên hệ không còn trong danh bạ' },
-      ),
-    }
-  })
+  /** Bọc tác vụ nạp dữ liệu sửa nhóm cho hàng đợi khóa thao tác. */
+  function runLoadGroupForEditing(context, viewVersion) {
+    return loadGroupForEditing(group, context, viewVersion)
+  }
+  await perform(runLoadGroupForEditing)
   if (editor.value?.id === group.id) void focusGroupName()
 }
 
@@ -332,81 +346,98 @@ async function perform(action) {
   }
 }
 
+/** Gửi nhóm đang chỉnh sửa lên backend và chỉ cập nhật danh sách khi đã có phản hồi lưu thành công. */
+async function saveDraftGroup(draft, context, viewVersion) {
+  const saved = await saveCallGroup(authService.getToken(), draft.id, draft.name, selectedIds.value)
+  if (!stillActive(context, viewVersion)) return
+  groups.value = [...groups.value.filter((group) => group.id !== saved.id), saved]
+  closeEditor()
+  notice.value = 'Đã lưu nhóm.'
+}
+
 /** Thêm hoặc cập nhật danh sách sau ACK từ backend. */
 async function submitGroup() {
   const draft = editor.value
   if (!draft) return
-  await perform(async (context, viewVersion) => {
-    const saved = await saveCallGroup(
-      authService.getToken(),
-      draft.id,
-      draft.name,
-      selectedIds.value,
-    )
-    if (!stillActive(context, viewVersion)) return
-    groups.value = [...groups.value.filter((group) => group.id !== saved.id), saved]
-    closeEditor()
-    notice.value = 'Đã lưu nhóm.'
-  })
+  /** Bọc tác vụ lưu bản nháp nhóm cho hàng đợi khóa thao tác. */
+  function runSaveDraftGroup(context, viewVersion) {
+    return saveDraftGroup(draft, context, viewVersion)
+  }
+  await perform(runSaveDraftGroup)
+}
+
+/** Gửi lệnh xóa nhóm lên backend rồi cập nhật lại danh sách nhóm đang mở. */
+async function deleteSelectedGroup(group, context, viewVersion) {
+  await deleteCallGroup(authService.getToken(), group.id)
+  if (!stillActive(context, viewVersion)) return
+  groups.value = groups.value.filter((item) => item.id !== group.id)
+  if (editor.value?.id === group.id) editor.value = null
+  notice.value = 'Đã xóa nhóm.'
 }
 
 /** Xóa sau khi người dùng xác nhận đúng nhóm. */
 async function removeGroup(group) {
   if (!confirm('Xóa nhóm ' + group.name + '?')) return
-  await perform(async (context, viewVersion) => {
-    await deleteCallGroup(authService.getToken(), group.id)
-    if (!stillActive(context, viewVersion)) return
-    groups.value = groups.value.filter((item) => item.id !== group.id)
-    if (editor.value?.id === group.id) editor.value = null
-    notice.value = 'Đã xóa nhóm.'
+  /** Bọc tác vụ xóa nhóm được chọn cho hàng đợi khóa thao tác. */
+  function runDeleteSelectedGroup(context, viewVersion) {
+    return deleteSelectedGroup(group, context, viewVersion)
+  }
+  await perform(runDeleteSelectedGroup)
+}
+
+/** Kiểm tra danh sách thành viên hiện hành, xác nhận các trường hợp rút gọn và khởi tạo cuộc gọi nhóm. */
+async function executeGroupCall(group, context, viewVersion) {
+  const members = await contactService.getSavedGroupMembers(group.members)
+  const result = await contactService.prepareGroupTargets(members)
+  // Chặn mở cuộc gọi mới nếu màn đã rời đi hoặc đã phát sinh cuộc gọi khác trong lúc tra cứu.
+  if (!stillActive(context, viewVersion) || callState.activeCall || callService.isDialing) return
+  const missing = group.members.length - members.length
+  const rejected = [...result.rejected]
+  if (missing) rejected.push(missing + ' liên hệ không còn trong danh bạ')
+  if (!result.extensions.length) {
+    notice.value = ['Không có thành viên khả dụng.', ...rejected].join(' ')
+    return
+  }
+  if (rejected.length) notice.value = 'Không thể mời ' + rejected.join(', ')
+  if (
+    result.extensions.length === 1 &&
+    !confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')
+  )
+    return
+  if (
+    rejected.length &&
+    result.extensions.length > 1 &&
+    !confirm(notice.value + '. Tiếp tục gọi ' + result.extensions.length + ' người còn lại?')
+  )
+    return
+  let started = await groupCallService.startGroupCall(result.extensions, {
+    groupTitle: group.name,
+    requireGroupConfirmation: true,
   })
+  if (!stillActive(context, viewVersion)) return
+  if (started?.reason === 'TARGET_AVAILABILITY_CHANGED' && started.extension) {
+    if (!confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')) return
+    started = await callService.startCall(started.extension, {
+      expectedUuid: started.expectedUuid,
+    })
+    if (!stillActive(context, viewVersion)) return
+  }
+  if (!started?.success) {
+    error.value = 'Chưa bắt đầu được cuộc gọi. Kiểm tra trạng thái rồi thử lại.'
+    return
+  }
+  if (props.embedded) emit('called')
+  await router.push({ path: '/calls', query: { active: 'true' } })
 }
 
 /** Lấy máy lẻ mới nhất, kiểm tra presence và gọi nhóm qua luồng host hiện có. */
 async function callGroup(group) {
   if (callState.activeCall || callService.isDialing) return
-  await perform(async (context, viewVersion) => {
-    const members = await contactService.getSavedGroupMembers(group.members)
-    const result = await contactService.prepareGroupTargets(members)
-    if (!stillActive(context, viewVersion) || callState.activeCall || callService.isDialing) return
-    const missing = group.members.length - members.length
-    const rejected = [...result.rejected]
-    if (missing) rejected.push(missing + ' liên hệ không còn trong danh bạ')
-    if (!result.extensions.length) {
-      notice.value = ['Không có thành viên khả dụng.', ...rejected].join(' ')
-      return
-    }
-    if (rejected.length) notice.value = 'Không thể mời ' + rejected.join(', ')
-    if (
-      result.extensions.length === 1 &&
-      !confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')
-    )
-      return
-    if (
-      rejected.length &&
-      result.extensions.length > 1 &&
-      !confirm(notice.value + '. Tiếp tục gọi ' + result.extensions.length + ' người còn lại?')
-    )
-      return
-    let started = await groupCallService.startGroupCall(result.extensions, {
-      groupTitle: group.name,
-      requireGroupConfirmation: true,
-    })
-    if (!stillActive(context, viewVersion)) return
-    if (started?.reason === 'TARGET_AVAILABILITY_CHANGED' && started.extension) {
-      if (!confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')) return
-      started = await callService.startCall(started.extension, {
-        expectedUuid: started.expectedUuid,
-      })
-      if (!stillActive(context, viewVersion)) return
-    }
-    if (!started?.success) {
-      error.value = 'Chưa bắt đầu được cuộc gọi. Kiểm tra trạng thái rồi thử lại.'
-      return
-    }
-    if (props.embedded) emit('called')
-    await router.push({ path: '/calls', query: { active: 'true' } })
-  })
+  /** Bọc tác vụ quay số nhóm cho hàng đợi khóa thao tác. */
+  function runExecuteGroupCall(context, viewVersion) {
+    return executeGroupCall(group, context, viewVersion)
+  }
+  await perform(runExecuteGroupCall)
 }
 
 /** Đọc kết quả chọn thành viên từ dịch vụ danh bạ. */

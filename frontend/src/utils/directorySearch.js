@@ -1,5 +1,5 @@
-export const DIRECTORY_EXTENSION_DIGITS =
-  import.meta.env.VITE_DIRECTORY_EXTENSION_DIGITS === '5' ? 5 : 4
+/** Số chữ số máy lẻ chuẩn theo biến môi trường cấu hình danh bạ (4 hoặc 5). */
+const DIRECTORY_EXTENSION_DIGITS = import.meta.env.VITE_DIRECTORY_EXTENSION_DIGITS === '5' ? 5 : 4
 
 /** Kiểm tra điều kiện tìm trước khi tạo request từ danh bạ hoặc modal mời. */
 export function directorySearchHint(field, term) {

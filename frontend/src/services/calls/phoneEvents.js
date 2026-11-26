@@ -3,6 +3,52 @@ import { userSessionState } from '../../state/sessionState.js'
 import { captureSessionContext, isSessionContextCurrent } from '../auth/sessionScope.js'
 import { logger } from '../common/loggerService.js'
 
+/** Bỏ qua lỗi khi xin đồng bộ snapshot nhóm ở bước phụ trợ, không chặn luồng nhận cuộc gọi. */
+function ignoreGroupStateSyncError() {
+  /* Yêu cầu đồng bộ nhóm qua presence có thể thất bại tạm thời mà không làm hỏng cuộc gọi đến. */
+}
+
+/** Kiểm tra phần tử audio của SDK đã có srcObject và đang tự phát để tránh mở thêm loa dự phòng. */
+function isActiveSdkAudioElement(audioElement) {
+  return (
+    audioElement.id !== 'wazo-remote-audio' &&
+    Boolean(audioElement.srcObject) &&
+    !audioElement.paused
+  )
+}
+
+/** Từ chối nhánh gọi đến bị trùng khi máy hiện tại đang bận đàm thoại và ghi nhận cuộc gọi nhỡ. */
+function rejectBusyIncomingCall(callService, callSession, extension) {
+  logger.warn('CALL', `Đang bận đàm thoại. Tự động từ chối cuộc gọi đến từ máy lẻ ${extension}`)
+  try {
+    if (callSession && typeof callSession.reject === 'function') {
+      callSession.reject()
+    } else {
+      callService.rejectSdkCall(callSession)
+    }
+  } catch (error) {
+    logger.warn('CALL', 'Không thể từ chối nhanh cuộc gọi đến khi đang bận:', error)
+  }
+
+  const contact = callService.contactService.findContactByExtension(extension)
+  const name = contact?.name || (extension ? `Máy lẻ ${extension}` : 'Đồng nghiệp')
+  const dept = contact?.dept || 'Nội bộ công ty'
+  callService.historyService.addRecord({
+    name,
+    extension,
+    dept,
+    duration: 0,
+    direction: 'inbound',
+    status: 'missed',
+    answered: false,
+  })
+  window.dispatchEvent(
+    new CustomEvent('app-toast', {
+      detail: { message: `📞 Cuộc gọi nhỡ từ ${name} (Máy bận)`, type: 'warning' },
+    }),
+  )
+}
+
 /** Tạo callback có tên; CallService sở hữu đăng ký/gỡ để không nhân đôi listeners. */
 export function createPhoneEventHandlers(callService) {
   const context = captureSessionContext()
@@ -18,47 +64,56 @@ export function createPhoneEventHandlers(callService) {
     _onCallRejectedHandler: createCallRejectedHandler(callService),
     _onCallCanceledHandler: createCallCanceledHandler(callService),
   }
-  // Kể cả khi SDK đã đưa callback vào hàng đợi, phiên cũ không được sửa state của phiên mới.
-  return Object.fromEntries(
-    Object.entries(handlers).map(([name, handler]) => [
-      name,
-      (...args) => {
-        // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-        // đến muộn sau hủy/đổi phiên.
-        if (generation === callService.listenerGeneration && isSessionContextCurrent(context))
-          return handler(...args)
-      },
-    ]),
-  )
+
+  /** Bọc handler SDK để callback xếp hàng của phiên/thế hệ cũ không sửa state của phiên mới. */
+  function wrapHandlerWithSessionGuard(handler) {
+    /** Chỉ chuyển tiếp sự kiện khi listener vẫn đúng thế hệ đăng ký và phiên xác thực. */
+    function invokeScopedHandler(...args) {
+      // Kể cả khi SDK đã đưa callback vào hàng đợi, phiên cũ không được sửa state của phiên mới.
+      if (generation === callService.listenerGeneration && isSessionContextCurrent(context))
+        return handler(...args)
+    }
+    return invokeScopedHandler
+  }
+
+  const scopedHandlers = {}
+  for (const [name, handler] of Object.entries(handlers)) {
+    scopedHandlers[name] = wrapHandlerWithSessionGuard(handler)
+  }
+  return scopedHandlers
 }
 
-/** Cập nhật SIP registered và hồ sơ đang dùng. */
+/** Tạo handler đánh dấu SIP đã đăng ký và cập nhật hồ sơ người dùng hiện tại. */
 function createRegisteredHandler(callService) {
-  return () => {
+  /** Cập nhật SIP registered và hồ sơ đang dùng sau khi SDK xác nhận đăng ký thành công. */
+  function onPhoneRegistered() {
     callService.cancelPhoneReconnect()
     callState.isRegistered = true
     userSessionState.extension = callService.authService.getCurrentExtension()
     userSessionState.userUuid = callService.authService.getCurrentUserUuid()
     userSessionState.displayName = callService.authService.getCurrentDisplayName()
     logger.success('SIP', '🟢 Wazo WebRTC SIP Phone: Registered thành công!')
-    window.dispatchEvent(new CustomEvent('wazo-registered'))
   }
+
+  return onPhoneRegistered
 }
 
-/** Đánh dấu mất đăng ký và kiểm chứng phiên trước khi kết nối lại. */
+/** Tạo handler đánh dấu mất đăng ký SIP và lên lịch kết nối lại có kiểm chứng phiên. */
 function createUnregisteredHandler(callService) {
-  return () => {
+  /** Đánh dấu mất đăng ký và kiểm chứng phiên trước khi kết nối lại WebRTC Phone. */
+  function onPhoneUnregistered() {
     callState.isRegistered = false
     logger.warn('SIP', '🔴 Wazo WebRTC SIP Phone: Unregistered!')
-    window.dispatchEvent(new CustomEvent('wazo-unregistered'))
-
     callService.schedulePhoneReconnect()
   }
+
+  return onPhoneUnregistered
 }
 
-/** Cập nhật đổ chuông nhưng không hạ cuộc gọi đã kết nối. */
+/** Tạo handler xử lý sự kiện đổ chuông (180 Ringing / ON_PROGRESS) cho nhánh đang quản lý. */
 function createProgressHandler(callService) {
-  return (callSession) => {
+  /** Cập nhật đổ chuông và phát ringback, nhưng không hạ cuộc gọi đã kết nối trước đó. */
+  function onCallProgress(callSession) {
     // Chỉ xử lý event đã khớp nhánh SIP đang quản lý; event tới sớm được giữ tạm, event của nhánh
     // khác bị bỏ qua.
     if (!callService.acceptManagedCallEvent('progress', callSession)) return
@@ -67,47 +122,24 @@ function createProgressHandler(callService) {
       callState.activeCall.status = 'ringing'
       callService.callToneService.startRingbackTone()
     }
-    window.dispatchEvent(new CustomEvent('wazo-progress', { detail: callSession }))
   }
+
+  return onCallProgress
 }
 
-/** Chuẩn hóa cuộc gọi đến và từ chối nhánh xung đột. */
+/** Tạo handler chuẩn hóa cuộc gọi đến, chống đụng cuộc gọi đang hoạt động và tra tên người gọi. */
 function createCallIncomingHandler(callService) {
-  return (callSession) => {
+  /** Chuẩn hóa cuộc gọi đến vào incomingCall hoặc từ chối ngay nếu thiết bị đang bận. */
+  function onCallIncoming(callSession) {
     const ext = callSession?.number || callSession?.callerNumber || callSession?.extension || ''
     logger.info('CALL', `🔔 Cuộc gọi đến từ máy lẻ: ${ext || 'N/A'}`, callSession)
 
-    // Kiểm tra nếu đang có cuộc gọi hoạt động (bận)
+    // Chặn cuộc gọi đến thứ hai khi đang có activeCall hoặc incomingCall khác để tránh ghi đè nhánh hiện tại.
     if (
       callState.activeCall ||
       (callState.incomingCall && callState.incomingCall.rawSession !== callSession)
     ) {
-      logger.warn('CALL', `Đang bận đàm thoại. Tự động từ chối cuộc gọi đến từ máy lẻ ${ext}`)
-      try {
-        if (callSession && typeof callSession.reject === 'function') {
-          callSession.reject()
-        } else {
-          callService.rejectSdkCall(callSession)
-        }
-      } catch (e) {}
-
-      const contact = callService.contactService.findContactByExtension(ext)
-      const name = contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp')
-      const dept = contact?.dept || 'Nội bộ công ty'
-      callService.historyService.addRecord({
-        name,
-        extension: ext,
-        dept,
-        duration: 0,
-        direction: 'inbound',
-        status: 'missed',
-        answered: false,
-      })
-      window.dispatchEvent(
-        new CustomEvent('app-toast', {
-          detail: { message: `📞 Cuộc gọi nhỡ từ ${name} (Máy bận)`, type: 'warning' },
-        }),
-      )
+      rejectBusyIncomingCall(callService, callSession, ext)
       return
     }
 
@@ -135,17 +167,18 @@ function createCallIncomingHandler(callService) {
       sipUri,
     }
 
-    window.dispatchEvent(new CustomEvent('wazo-incoming', { detail: callSession }))
-    callService.groupCallService._requestGroupStateSync('incoming').catch(() => {})
+    callService.groupCallService._requestGroupStateSync('incoming').catch(ignoreGroupStateSyncError)
     if (!contact && ext) {
       const context = captureSessionContext()
       const generation = callService.callGeneration
       const sipId = callService.getSipSessionId(callSession)
-      /** Bổ sung tên nếu vẫn đúng nhánh đang đổ chuông hoặc đã được nhận. */
+
+      /** Bổ sung tên và UUID người gọi từ Dird nếu vẫn đúng nhánh đang đổ chuông hoặc đã nhận. */
       async function resolveCallerName() {
         try {
           const found = await callService.contactService.getOrLookupContact(ext)
           const current = callState.incomingCall || callState.activeCall
+          // Đối chiếu phiên, thế hệ gọi và SIP ID để response Dird đến muộn không đè lên cuộc gọi khác.
           if (
             !found ||
             !current ||
@@ -162,14 +195,18 @@ function createCallIncomingHandler(callService) {
           // Caller ID SIP vẫn cho phép nghe hoặc từ chối khi Dird không phản hồi.
         }
       }
+
       void resolveCallerName()
     }
   }
+
+  return onCallIncoming
 }
 
-/** Nhận ACK SDK, bắt đầu đồng hồ và gắn media đúng thế hệ. */
+/** Tạo handler xử lý ACK SIP khi đầu dây nhận máy, bắt đầu đồng hồ và gắn audio an toàn. */
 function createCallAcceptedHandler(callService) {
-  return (callSession) => {
+  /** Nhận ACK SDK, bắt đầu đồng hồ đàm thoại và gắn luồng âm thanh đúng thế hệ cuộc gọi. */
+  function onCallAccepted(callSession) {
     // Chỉ xử lý event đã khớp nhánh SIP đang quản lý; event tới sớm được giữ tạm, event của nhánh
     // khác bị bỏ qua.
     if (!callService.acceptManagedCallEvent('accepted', callSession)) return
@@ -229,22 +266,27 @@ function createCallAcceptedHandler(callService) {
     // Người nhận đã bấm nghe trên Web; phía gọi đi phải đợi đúng người đối thoại từ Calld.
     if (callState.activeCall.direction === 'inbound') {
       callState.activeCall.peerConfirmed = true
-      callService.groupCallService._requestGroupStateSync('accepted').catch(() => {})
+      callService.groupCallService
+        ._requestGroupStateSync('accepted')
+        .catch(ignoreGroupStateSyncError)
     } else {
       void callService.confirmDirectCallPeer()
     }
 
     callService.scheduleAutomaticRecording()
 
-    // Gắn luồng âm thanh đàm thoại WebRTC
+    // Gắn luồng âm thanh đàm thoại WebRTC ngay khi nhận ACK nếu SDK đã có sẵn stream.
     try {
       const immediateStream = callService.sdk.Phone.getRemoteStream(callSession)
       if (immediateStream) {
         callService.phoneAdapter.playCallAudio(immediateStream)
       }
-    } catch (err) {}
+    } catch {
+      /* Luồng audio có thể chưa gắn kịp lúc ACK; kiểm tra dự phòng sau 600ms sẽ đồng bộ lại. */
+    }
 
-    setTimeout(() => {
+    /** Kiểm tra sau 600ms xem SDK đã tự phát audio chưa; nếu chưa thì kích hoạt thẻ loa dự phòng. */
+    function syncFallbackRemoteAudio() {
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (
@@ -254,9 +296,7 @@ function createCallAcceptedHandler(callService) {
       )
         return
       try {
-        const sdkAudios = [...document.querySelectorAll('audio')].filter(
-          (a) => a.id !== 'wazo-remote-audio' && a.srcObject && !a.paused,
-        )
+        const sdkAudios = [...document.querySelectorAll('audio')].filter(isActiveSdkAudioElement)
         if (sdkAudios.length > 0) {
           logger.info('AUDIO', 'Luồng âm thanh WebRTC đã được phát tự động bởi Wazo SDK.')
           return
@@ -266,29 +306,35 @@ function createCallAcceptedHandler(callService) {
           callService.phoneAdapter.playCallAudio(stream)
           logger.info('AUDIO', 'Đã kích hoạt luồng âm thanh đàm thoại 2 chiều dự phòng.')
         }
-      } catch (err) {
-        logger.warn('AUDIO', 'Cảnh báo đồng bộ luồng âm thanh:', err)
+      } catch (error) {
+        logger.warn('AUDIO', 'Cảnh báo đồng bộ luồng âm thanh:', error)
       }
-    }, 600)
+    }
 
-    window.dispatchEvent(new CustomEvent('wazo-accepted', { detail: callSession }))
+    setTimeout(syncFallbackRemoteAudio, 600)
   }
+
+  return onCallAccepted
 }
 
-/** Chuyển sự kiện kết thúc về lifecycle dùng chung. */
+/** Tạo handler chuyển sự kiện kết thúc cuộc gọi về vòng đời cleanup chung của CallService. */
 function createCallEndedHandler(callService) {
-  return (callSession) => {
+  /** Chuyển sự kiện kết thúc từ SDK về lifecycle cleanup dùng chung. */
+  function onCallEnded(callSession) {
     // Chỉ xử lý event đã khớp nhánh SIP đang quản lý; event tới sớm được giữ tạm, event của nhánh
     // khác bị bỏ qua.
     if (!callService.acceptManagedCallEvent('ended', callSession)) return
     logger.info('CALL', '⏹️ Sự kiện Wazo: Cuộc gọi đã kết thúc (ON_CALL_ENDED)')
     callService.finalizeCallTermination('ended', callSession)
   }
+
+  return onCallEnded
 }
 
-/** Kết thúc nhánh hoặc cuộc gọi khi SDK báo thất bại. */
+/** Tạo handler xử lý sự kiện thất bại (máy bận, offline, từ chối) cho nhánh đang quản lý. */
 function createCallFailedHandler(callService) {
-  return (callSession) => {
+  /** Kết thúc nhánh hoặc toàn cuộc gọi khi SDK báo cuộc gọi thất bại. */
+  function onCallFailed(callSession) {
     // Chỉ xử lý event đã khớp nhánh SIP đang quản lý; event tới sớm được giữ tạm, event của nhánh
     // khác bị bỏ qua.
     if (!callService.acceptManagedCallEvent('failed', callSession)) return
@@ -297,31 +343,35 @@ function createCallFailedHandler(callService) {
       '❌ Sự kiện Wazo: Cuộc gọi thất bại (ON_CALL_FAILED - Máy bận, offline hoặc từ chối)',
     )
     callService.finalizeCallTermination('failed', callSession)
-    window.dispatchEvent(new CustomEvent('wazo-failed', { detail: callSession }))
   }
+
+  return onCallFailed
 }
 
-/** Xử lý từ chối qua cùng đường cleanup. */
+/** Tạo handler xử lý sự kiện từ chối cuộc gọi qua cùng đường cleanup. */
 function createCallRejectedHandler(callService) {
-  return (callSession) => {
+  /** Dọn nhánh hoặc cuộc gọi khi tổng đài hoặc đầu dây từ chối lời mời. */
+  function onCallRejected(callSession) {
     // Chỉ xử lý event đã khớp nhánh SIP đang quản lý; event tới sớm được giữ tạm, event của nhánh
     // khác bị bỏ qua.
     if (!callService.acceptManagedCallEvent('rejected', callSession)) return
     logger.warn('CALL', '🚫 Sự kiện Wazo: Cuộc gọi bị từ chối (ON_CALL_REJECTED)')
     callService.finalizeCallTermination('rejected', callSession)
   }
+
+  return onCallRejected
 }
 
-/** Phân biệt hủy thông thường và đã trả lời ở thiết bị khác. */
+/** Tạo handler phân biệt hủy cuộc gọi thông thường với chuyển kênh ConfBridge / thiết bị khác. */
 function createCallCanceledHandler(callService) {
-  return (callSession, elsewhere) => {
+  /** Phân biệt hủy thông thường và tín hiệu completed elsewhere để không ngắt nhầm cuộc đã nối. */
+  function onCallCanceled(callSession, elsewhere) {
     // Chỉ xử lý event đã khớp nhánh SIP đang quản lý; event tới sớm được giữ tạm, event của nhánh
     // khác bị bỏ qua.
     if (!callService.acceptManagedCallEvent('canceled', callSession)) return
     logger.warn('CALL', '⚠️ Sự kiện Wazo: Cuộc gọi bị hủy (ON_CALL_CANCELED)', { elsewhere })
-    // Nếu thiết bị đã nhấc máy và có cờ elsewhere (cause=26 completed elsewhere do chuyển kênh /
-    // ConfBridge)
-    // -> Bỏ qua không ngắt cuộc gọi (Đối chiếu WazoSipCallManager.py line 1168)
+    // Nếu thiết bị đã nhấc máy và có cờ elsewhere (cause=26 completed elsewhere do chuyển kênh
+    // sang ConfBridge hoặc thiết bị khác đã nhận cuộc), bỏ qua để không ngắt nhầm cuộc gọi.
     if (elsewhere && callState.activeCall && callState.activeCall.status === 'connected') {
       logger.info(
         'CALL',
@@ -331,4 +381,6 @@ function createCallCanceledHandler(callService) {
     }
     callService.finalizeCallTermination('canceled', callSession)
   }
+
+  return onCallCanceled
 }

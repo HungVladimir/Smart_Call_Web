@@ -12,6 +12,56 @@ import { callState } from '../../state/callState.js'
 import { userSessionState } from '../../state/sessionState.js'
 import { logger } from '../common/loggerService.js'
 
+const DEFAULT_WAZO_HOST = '107.126.11.126:9443'
+
+const SESSION_STORAGE_KEYS = {
+  authMethod: 'smartcall_auth_method',
+  token: 'smartcall_wazo_token',
+  refreshToken: 'smartcall_wazo_refreshToken',
+  host: 'smartcall_wazo_host',
+  sessionUuid: 'smartcall_session_uuid',
+  userUuid: 'smartcall_user_uuid',
+  extension: 'smartcall_extension',
+  username: 'smartcall_username',
+  loginUsername: 'smartcall_login_username',
+  department: 'smartcall_department',
+  loggedIn: 'smartcall_logged_in',
+}
+
+const TAB_STORAGE_KEYS = {
+  tabClientId: 'smartcall_tab_client_id',
+  clientId: 'smartcall_client_id',
+  sessionId: 'smartcall_session_id',
+}
+
+// Danh sách khóa phiên cần xóa khi đăng xuất; giữ smartcall_wazo_host để nhớ cấu hình tổng đài
+// và vẫn dọn các khóa danh tính cũ (user_exten, user_department, sip_user) nếu còn sót từ bản trước.
+const CLEARABLE_SESSION_KEYS = [
+  SESSION_STORAGE_KEYS.authMethod,
+  SESSION_STORAGE_KEYS.token,
+  SESSION_STORAGE_KEYS.refreshToken,
+  SESSION_STORAGE_KEYS.sessionUuid,
+  SESSION_STORAGE_KEYS.userUuid,
+  SESSION_STORAGE_KEYS.extension,
+  SESSION_STORAGE_KEYS.username,
+  SESSION_STORAGE_KEYS.loginUsername,
+  SESSION_STORAGE_KEYS.department,
+  SESSION_STORAGE_KEYS.loggedIn,
+  'smartcall_user_exten',
+  'smartcall_user_department',
+  'smartcall_sip_user',
+]
+
+/** Kiểm tra một phần tử session từ Wazo Auth có thuộc thiết bị/tab khác với phiên hiện tại hay không. */
+function isOtherDeviceSession(sessionItem, currentSessionUuid) {
+  return Boolean(sessionItem?.uuid && sessionItem.uuid !== currentSessionUuid)
+}
+
+/** Tạo mã phiên presence ngắn gọn cho tab Web đang hoạt động. */
+function createPresenceSessionId() {
+  return 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+}
+
 /** Quản lý xác thực Wazo, hồ sơ và vòng đời token; điều phối cleanup qua các dependency. */
 export class AuthService {
   /**
@@ -28,8 +78,8 @@ export class AuthService {
     this.sdkCleanupPromise = Promise.resolve()
     this.host =
       import.meta.env?.VITE_WAZO_HOST ||
-      localStorage.getItem('smartcall_wazo_host') ||
-      '107.126.11.126:9443'
+      localStorage.getItem(SESSION_STORAGE_KEYS.host) ||
+      DEFAULT_WAZO_HOST
     this.clientId = ''
     this.mySessionId = ''
     this.currentSessionUuid = ''
@@ -63,21 +113,105 @@ export class AuthService {
     return this.host.startsWith('http') ? this.host : `https://${this.host}`
   }
 
+  /** Đọc an toàn giá trị từ sessionStorage; trả chuỗi rỗng nếu trình duyệt hạn chế storage theo tab. */
+  _readSessionStorage(key) {
+    try {
+      return sessionStorage.getItem(key) || ''
+    } catch {
+      /* Trình duyệt có thể chặn sessionStorage trong ngữ cảnh ẩn danh hoặc sandbox. */
+      return ''
+    }
+  }
+
+  /** Ghi an toàn giá trị vào sessionStorage mà không làm gián đoạn luồng đăng nhập khi storage bị khóa. */
+  _writeSessionStorage(key, value) {
+    try {
+      sessionStorage.setItem(key, value)
+    } catch {
+      /* Bỏ qua nếu trình duyệt không cho phép ghi sessionStorage. */
+    }
+  }
+
+  /** Xóa các khóa nhận diện riêng của tab trong sessionStorage khi đăng xuất hoặc thu hồi phiên. */
+  _clearTabSessionStorage() {
+    try {
+      for (const key of Object.values(TAB_STORAGE_KEYS)) {
+        sessionStorage.removeItem(key)
+      }
+    } catch {
+      /* Bỏ qua nếu trình duyệt hạn chế quyền truy cập sessionStorage. */
+    }
+  }
+
+  /** Đọc số máy lẻ từ đối tượng session của SDK một cách an toàn khi tài khoản chưa có SIP line. */
+  _readSessionPrimaryNumber(session) {
+    try {
+      const ext = session?.primaryNumber?.()
+      return ext ? String(ext).trim() : ''
+    } catch {
+      /* SDK có thể chưa gán line hoặc ném lỗi khi gọi primaryNumber(). */
+      return ''
+    }
+  }
+
+  /**
+   * Đồng bộ các trường nhận diện cơ bản từ session SDK vào localStorage và userSessionState làm
+   * nguồn dữ liệu tức thời trước khi nạp đầy đủ hồ sơ Confd.
+   */
+  _syncSessionIdentityFromSession(session) {
+    this.currentSessionUuid =
+      session.sessionUuid || localStorage.getItem(SESSION_STORAGE_KEYS.sessionUuid) || ''
+    if (this.currentSessionUuid) {
+      localStorage.setItem(SESSION_STORAGE_KEYS.sessionUuid, this.currentSessionUuid)
+    }
+    if (session.uuid) {
+      localStorage.setItem(SESSION_STORAGE_KEYS.userUuid, session.uuid)
+      userSessionState.userUuid = session.uuid
+    }
+    const exten = this._readSessionPrimaryNumber(session)
+    if (exten) {
+      localStorage.setItem(SESSION_STORAGE_KEYS.extension, exten)
+      userSessionState.extension = exten
+    }
+    if (session.profile?.department) {
+      const dept = session.profile.department
+      localStorage.setItem(SESSION_STORAGE_KEYS.department, dept)
+      userSessionState.department = dept
+    }
+    userSessionState.displayName = this.getCurrentDisplayName()
+  }
+
+  /** Lưu hồ sơ người dùng đã chuẩn hóa vào SSOT reactive và các khóa localStorage chuẩn. */
+  _persistUserProfile(profile) {
+    Object.assign(userSessionState, profile)
+    localStorage.setItem(SESSION_STORAGE_KEYS.userUuid, profile.userUuid)
+    localStorage.setItem(SESSION_STORAGE_KEYS.extension, profile.extension)
+    localStorage.setItem(SESSION_STORAGE_KEYS.username, profile.displayName)
+    localStorage.setItem(SESSION_STORAGE_KEYS.department, profile.department)
+  }
+
+  /** Xóa toàn bộ khóa phiên trong storage và đưa userSessionState về trạng thái rỗng sạch. */
+  _clearPersistedSessionData() {
+    for (const key of CLEARABLE_SESSION_KEYS) {
+      localStorage.removeItem(key)
+    }
+    this._clearTabSessionStorage()
+    userSessionState.extension = ''
+    userSessionState.userUuid = ''
+    userSessionState.displayName = ''
+    userSessionState.department = ''
+  }
+
   /** Lấy hoặc tạo mã client riêng cho tab để nhận diện phiên Web. */
   getOrCreateBrowserClientId() {
-    let storedClientId = ''
-    try {
-      storedClientId = sessionStorage.getItem('smartcall_tab_client_id') || ''
-    } catch (e) {}
+    let storedClientId = this._readSessionStorage(TAB_STORAGE_KEYS.tabClientId)
     if (!storedClientId) {
       const rand =
         typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID().slice(0, 8)
           : Math.random().toString(36).slice(2, 10)
       storedClientId = `web_${rand}`
-      try {
-        sessionStorage.setItem('smartcall_tab_client_id', storedClientId)
-      } catch (e) {}
+      this._writeSessionStorage(TAB_STORAGE_KEYS.tabClientId, storedClientId)
     }
     this.clientId = storedClientId
     return storedClientId
@@ -85,7 +219,7 @@ export class AuthService {
 
   /** Cấu hình SDK bằng host và client ID trước khi đăng nhập hoặc khôi phục. */
   initializeAuthentication() {
-    const cleanHost = (this.host || '107.126.11.126:9443')
+    const cleanHost = (this.host || DEFAULT_WAZO_HOST)
       .trim()
       .replace(/^https?:\/\//, '')
       .replace(/\/+$/, '')
@@ -116,65 +250,82 @@ export class AuthService {
     }
   }
 
+  /**
+   * Kết nối WebRTC Phone sau khi phiên Wazo đã sẵn sàng; chỉ ghi cảnh báo nếu SIP chưa kết nối
+   * được để không làm mất phiên đăng nhập chính.
+   */
+  async _connectPhoneDuringBootstrap() {
+    try {
+      await this.callService.connect()
+    } catch (phoneError) {
+      logger.warn(
+        'SIP',
+        'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)',
+        phoneError.message,
+      )
+    }
+  }
+
+  /**
+   * Đồng bộ trạng thái Trực tuyến kèm Session ID lên dịch vụ Presence tổng đài và bật lịch kiểm
+   * tra tính hợp lệ định kỳ của phiên.
+   */
+  async _activateSessionPresence(sessionContext, { reuseExistingSessionId = false } = {}) {
+    this.mySessionId =
+      (reuseExistingSessionId && this._readSessionStorage(TAB_STORAGE_KEYS.sessionId)) ||
+      createPresenceSessionId()
+    this._writeSessionStorage(TAB_STORAGE_KEYS.sessionId, this.mySessionId)
+    this.isSessionRevoked = false
+    try {
+      await this.updatePresence('available', this.mySessionId)
+    } catch (presenceError) {
+      if (presenceError?.name !== 'StaleSessionError') {
+        logger.warn(
+          'API',
+          'Không đồng bộ được presence sau xác thực:',
+          presenceError?.message || presenceError,
+        )
+      }
+    }
+    assertSessionContext(sessionContext)
+    this.startSessionHealthCheck()
+  }
+
   /** Dùng chung bước gắn session, profile, WebSocket và SIP cho mật khẩu và Single ID. */
   async completeAuthenticatedSession(authenticatedSession, username, context) {
     assertSessionContext(context)
+    // Bảo vệ ranh giới xác thực: không lưu credential hoặc khởi chạy WebSocket/SIP khi không có token.
     if (!authenticatedSession?.token) throw new Error('Máy chủ chưa trả về phiên xác thực hợp lệ.')
     this.session = authenticatedSession
-    localStorage.setItem('smartcall_login_username', username)
-    if (this.session && this.session.token) {
-      localStorage.setItem('smartcall_wazo_token', this.session.token)
-      localStorage.setItem('smartcall_wazo_refreshToken', this.session.refreshToken || '')
-      this.currentSessionUuid = this.session.sessionUuid || ''
-      if (this.currentSessionUuid) {
-        localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
-      }
-      if (this.clientId) {
-        try {
-          sessionStorage.setItem('smartcall_client_id', this.clientId)
-        } catch (e) {}
-      }
-      if (this.session.uuid) {
-        localStorage.setItem('smartcall_user_uuid', this.session.uuid)
-        userSessionState.userUuid = this.session.uuid
-      }
-      let exten = ''
-      try {
-        exten = this.session.primaryNumber?.() || ''
-      } catch (e) {}
-      if (exten) {
-        localStorage.setItem('smartcall_user_exten', exten)
-        localStorage.setItem('smartcall_extension', exten)
-        userSessionState.extension = exten
-      }
-      if (this.session.profile?.department) {
-        const dept = this.session.profile.department
-        localStorage.setItem('smartcall_department', dept)
-        localStorage.setItem('smartcall_user_department', dept)
-        userSessionState.department = dept
-      }
-      userSessionState.displayName = this.getCurrentDisplayName()
-      await this.synchronizeUserProfile(this.session, username)
-      this.historyService.reload()
-      logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
+    localStorage.setItem(SESSION_STORAGE_KEYS.loginUsername, username)
 
-      // Thu hồi phiên và refresh token cũ để giữ một phiên đang hoạt động.
-      // mẫu
-      // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ
-      if (this.session.uuid && this.currentSessionUuid && this.clientId) {
+    localStorage.setItem(SESSION_STORAGE_KEYS.token, this.session.token)
+    localStorage.setItem(SESSION_STORAGE_KEYS.refreshToken, this.session.refreshToken || '')
+    if (this.clientId) {
+      this._writeSessionStorage(TAB_STORAGE_KEYS.clientId, this.clientId)
+    }
+    this._syncSessionIdentityFromSession(this.session)
+    await this.synchronizeUserProfile(this.session, username)
+    this.historyService.reload()
+    logger.success('AUTH', `Đăng nhập Wazo thành công! UUID: ${this.session.uuid || 'N/A'}`)
+
+    // Thu hồi phiên và refresh token cũ để giữ một phiên đang hoạt động.
+    // Chốt chặn an toàn: Chỉ thực hiện khi có đầy đủ sessionUuid và clientId hợp lệ.
+    if (this.session.uuid && this.currentSessionUuid && this.clientId) {
+      try {
         await this.revokeOtherDeviceSessions(
           this.session.uuid,
           this.currentSessionUuid,
           this.clientId,
-        ).catch((err) => {
-          logger.warn('AUTH', 'Lỗi khi thu hồi phiên thiết bị khác:', err.message)
-        })
-      } else {
-        logger.warn(
-          'AUTH',
-          'Chốt chặn an toàn: Bỏ qua thu hồi phiên khác do thiếu sessionUuid hoặc clientId hợp lệ.',
         )
+      } catch (error) {
+        logger.warn('AUTH', 'Lỗi khi thu hồi phiên thiết bị khác:', error.message)
       }
+    } else {
+      logger.warn(
+        'AUTH',
+        'Chốt chặn an toàn: Bỏ qua thu hồi phiên khác do thiếu sessionUuid hoặc clientId hợp lệ.',
+      )
     }
 
     // Không để login đã bị hủy kết nối SIP sau khi chờ cleanup các phiên cũ.
@@ -182,31 +333,12 @@ export class AuthService {
     const authenticatedContext = captureSessionContext()
     this.eventConnection.connect()
 
-    // Tự động kết nối WebRTC Phone sau khi login thành công
-    try {
-      await this.callService.connect()
-    } catch (phoneErr) {
-      logger.warn(
-        'SIP',
-        'Kết nối WebRTC Phone cảnh báo (vẫn duy trì phiên login)',
-        phoneErr.message,
-      )
-    }
+    // Tự động kết nối WebRTC Phone sau khi login thành công.
+    await this._connectPhoneDuringBootstrap()
     assertSessionContext(authenticatedContext)
 
-    // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên máy chủ Chatd
-    this.mySessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
-    try {
-      sessionStorage.setItem('smartcall_session_id', this.mySessionId)
-    } catch (e) {}
-    this.isSessionRevoked = false
-    try {
-      await this.updatePresence('available', this.mySessionId)
-    } catch (presErr) {
-      /* ignore */
-    }
-    assertSessionContext(authenticatedContext)
-    this.startSessionHealthCheck()
+    // Tự động đồng bộ trạng thái Trực tuyến kèm Session ID lên dịch vụ Presence tổng đài.
+    await this._activateSessionPresence(authenticatedContext)
 
     return this.session
   }
@@ -232,6 +364,7 @@ export class AuthService {
       method: 'POST',
       headers: { 'X-CSRF-Token': csrf },
     })
+    // Chỉ cho phép chuyển hướng tới endpoint handoff nội bộ cố định, tránh open redirect.
     if (data.redirect_url !== '/api/auth/idp-logout/continue')
       throw new Error('Đường dẫn logout không hợp lệ.')
     await this.logout({ preserveSingleId: true })
@@ -250,9 +383,23 @@ export class AuthService {
     }
   }
 
+  /**
+   * Thu hồi cookie phiên Single ID ở nền khi rời trang hoặc đăng xuất; lỗi mạng chỉ ghi cảnh báo
+   * để không chặn cleanup cục bộ.
+   */
+  _endSingleIdSessionInBackground(contextLabel) {
+    /** Ghi nhận lỗi thu hồi phiên Single ID ở nền mà không phát sinh unhandled rejection. */
+    const handleEndSessionError = (error) => {
+      if (error?.name !== 'StaleSessionError') {
+        logger.warn('AUTH', `${contextLabel}:`, error?.message || error)
+      }
+    }
+    this.endSingleIdSession().catch(handleEndSessionError)
+  }
+
   /** Hủy giao dịch đang chờ khi rời callback; thu hồi cookie backend và vô hiệu scope SDK. */
   cancelSingleIdLogin() {
-    this.endSingleIdSession().catch(() => {})
+    this._endSingleIdSessionInBackground('Không thu hồi được phiên Single ID tạm khi hủy')
     this.logout({ preserveSingleId: true })
   }
 
@@ -277,16 +424,18 @@ export class AuthService {
         context,
       )
       assertSessionContext(context)
+      // Chỉ tiếp tục xác minh SDK khi backend cấp đủ token, user_uuid và host HTTPS hợp lệ.
       if (!data.token || !data.user_uuid || !String(data.host || '').startsWith('https://'))
         throw new Error('Backend chưa trả phiên Wazo hợp lệ.')
       this.singleIdProfile = data.profile || profile
       this.host = data.host
       const session = await this.validateSdkSession(data.token, data.refresh_token, context)
       assertSessionContext(context)
+      // Không chấp nhận session SDK nếu UUID trả về lệch với user được Single ID liên kết.
       if (!session || session.uuid !== data.user_uuid)
         throw new Error('Danh tính phiên SDK không khớp tài khoản Wazo được liên kết.')
-      localStorage.setItem('smartcall_wazo_host', data.host)
-      localStorage.setItem('smartcall_auth_method', 'singleid')
+      localStorage.setItem(SESSION_STORAGE_KEYS.host, data.host)
+      localStorage.setItem(SESSION_STORAGE_KEYS.authMethod, 'singleid')
       return await this.completeAuthenticatedSession(session, data.username, context)
     } catch (error) {
       if (captureSessionContext().epoch === context.epoch) this.logout({ preserveSingleId: true })
@@ -294,11 +443,35 @@ export class AuthService {
     }
   }
 
+  /**
+   * Thử cứu phiên khi access token cũ hết hạn tự nhiên bằng cách gọi refresh token và xác nhận
+   * lại qua SDK trong cùng context khôi phục.
+   */
+  async _recoverSessionWithRefreshToken(refreshToken, restoreContext) {
+    logger.info(
+      'AUTH',
+      'Auth Token cũ đã hết hạn (1 giờ), đang tự động khôi phục phiên bằng Refresh Token...',
+    )
+    const refreshed = await this.refreshAccessToken()
+    assertSessionContext(restoreContext)
+    if (!refreshed) return null
+    const newToken = this.getToken()
+    const refreshedSession = await this.validateSdkSession(newToken, refreshToken, restoreContext)
+    assertSessionContext(restoreContext)
+    if (refreshedSession) return refreshedSession
+    return {
+      token: newToken,
+      refreshToken: localStorage.getItem(SESSION_STORAGE_KEYS.refreshToken) || refreshToken,
+      sessionUuid: localStorage.getItem(SESSION_STORAGE_KEYS.sessionUuid) || '',
+      uuid: localStorage.getItem(SESSION_STORAGE_KEYS.userUuid) || '',
+    }
+  }
+
   /** Khôi phục token đã lưu; phản hồi muộn không được ghi đè phiên mới. */
   async restoreSession() {
     const restoreContext = captureSessionContext()
-    const token = localStorage.getItem('smartcall_wazo_token')
-    const refreshToken = localStorage.getItem('smartcall_wazo_refreshToken')
+    const token = localStorage.getItem(SESSION_STORAGE_KEYS.token)
+    const refreshToken = localStorage.getItem(SESSION_STORAGE_KEYS.refreshToken)
     if (token) {
       try {
         logger.info('AUTH', 'Đang khôi phục phiên làm việc Wazo từ Token lưu trữ...')
@@ -307,65 +480,18 @@ export class AuthService {
         this.session = restoredSession
 
         // Nếu token 1 giờ đã hết hạn tự nhiên trong lúc đóng tab/trình duyệt, tự động cứu phiên
-        // bằng Refresh Token
+        // bằng Refresh Token.
         if (!this.session && refreshToken) {
-          logger.info(
-            'AUTH',
-            'Auth Token cũ đã hết hạn (1 giờ), đang tự động khôi phục phiên bằng Refresh Token...',
-          )
-          const refreshed = await this.refreshAccessToken()
-          assertSessionContext(restoreContext)
-          if (refreshed) {
-            const newToken = this.getToken()
-            const refreshedSession = await this.validateSdkSession(
-              newToken,
-              refreshToken,
-              restoreContext,
-            )
-            assertSessionContext(restoreContext)
-            this.session = refreshedSession
-            if (!this.session) {
-              this.session = {
-                token: newToken,
-                refreshToken: localStorage.getItem('smartcall_wazo_refreshToken') || refreshToken,
-                sessionUuid: localStorage.getItem('smartcall_session_uuid') || '',
-                uuid: localStorage.getItem('smartcall_user_uuid') || '',
-              }
-            }
-          }
+          this.session = await this._recoverSessionWithRefreshToken(refreshToken, restoreContext)
         }
 
         if (this.session) {
-          this.currentSessionUuid =
-            this.session.sessionUuid || localStorage.getItem('smartcall_session_uuid') || ''
-          if (this.currentSessionUuid) {
-            localStorage.setItem('smartcall_session_uuid', this.currentSessionUuid)
-          }
-          if (this.session.uuid) {
-            localStorage.setItem('smartcall_user_uuid', this.session.uuid)
-            userSessionState.userUuid = this.session.uuid
-          }
-          let exten = ''
-          try {
-            exten = this.session.primaryNumber?.() || ''
-          } catch (e) {}
-          if (exten) {
-            localStorage.setItem('smartcall_user_exten', exten)
-            localStorage.setItem('smartcall_extension', exten)
-            userSessionState.extension = exten
-          }
-          if (this.session.profile?.department) {
-            const dept = this.session.profile.department
-            localStorage.setItem('smartcall_department', dept)
-            localStorage.setItem('smartcall_user_department', dept)
-            userSessionState.department = dept
-          }
-          userSessionState.displayName = this.getCurrentDisplayName()
-          if (localStorage.getItem('smartcall_auth_method') === 'singleid') {
+          this._syncSessionIdentityFromSession(this.session)
+          if (localStorage.getItem(SESSION_STORAGE_KEYS.authMethod) === 'singleid') {
             try {
               await this.getSingleIdProfile(this.session.uuid)
             } catch {
-              /* Phiên Wazo độc lập vẫn được SDK xác minh. */
+              /* Phiên Wazo độc lập vẫn được SDK xác minh dù backend Single ID tạm không phản hồi. */
             }
             assertSessionContext(restoreContext)
           }
@@ -373,32 +499,16 @@ export class AuthService {
           this.historyService.reload()
           logger.success('AUTH', 'Đã khôi phục phiên đăng nhập Wazo từ Token thành công!')
           this.eventConnection.connect()
-          try {
-            await this.callService.connect()
-          } catch (phoneErr) {
-            logger.warn('SIP', 'Khôi phục WebRTC phone cảnh báo', phoneErr.message)
-          }
+          await this._connectPhoneDuringBootstrap()
           const connectedContext = captureSessionContext()
+          // Không tiếp tục cập nhật presence nếu người dùng đã đăng xuất/đổi phiên trong lúc chờ SIP.
           if (connectedContext.epoch !== restoreContext.epoch)
             throw new Error('Phiên khôi phục đã kết thúc.')
-          this.mySessionId =
-            sessionStorage.getItem('smartcall_session_id') ||
-            'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
-          try {
-            sessionStorage.setItem('smartcall_session_id', this.mySessionId)
-          } catch (e) {}
-          this.isSessionRevoked = false
-          try {
-            await this.updatePresence('available', this.mySessionId)
-          } catch (presErr) {
-            /* ignore */
-          }
-          assertSessionContext(connectedContext)
-          this.startSessionHealthCheck()
+          await this._activateSessionPresence(connectedContext, { reuseExistingSessionId: true })
           return true
         }
-      } catch (e) {
-        logger.warn('AUTH', 'Không thể khôi phục phiên Wazo từ Token cũ', e.message)
+      } catch (error) {
+        logger.warn('AUTH', 'Không thể khôi phục phiên Wazo từ Token cũ', error.message)
       }
     }
     // Không giữ token bị từ chối làm bằng chứng đăng nhập. Phản hồi phiên cũ không được logout
@@ -407,10 +517,53 @@ export class AuthService {
     return false
   }
 
+  /**
+   * Gửi lệnh giải tán hội nghị do mình làm host trước khi xóa credential; ghi cảnh báo nếu server
+   * chưa xác nhận để phiên mới tiếp tục dọn dẹp.
+   */
+  async _cleanupHostedGroupSession(cleanupSnapshot) {
+    const confirmed = await this.callService.callControlApi.cleanupSessionCalls(cleanupSnapshot)
+    if (!confirmed) {
+      logger.warn(
+        'CALL',
+        'Cleanup phiên cũ chưa được server xác nhận; phiên mới cần dọn bằng token hợp lệ.',
+      )
+    }
+  }
+
+  /** Cập nhật trạng thái ngoại tuyến an toàn khi logout; bỏ qua nếu hàm đồng bộ từ chối trong lúc dọn phiên. */
+  _clearPresenceSafely() {
+    /** Bỏ qua lỗi cập nhật presence khi phiên đang được thu hồi/đăng xuất. */
+    const ignorePresenceLogoutError = () => {}
+    try {
+      Promise.resolve(this.updatePresence('unavailable', 'Ngoại tuyến')).catch(
+        ignorePresenceLogoutError,
+      )
+    } catch {
+      /* Bỏ qua nếu hàm đồng bộ presence ném lỗi trong lúc dọn phiên. */
+    }
+  }
+
+  /** Cúp nhánh gọi chính an toàn khi đăng xuất mà không làm gián đoạn chuỗi cleanup còn lại. */
+  _hangupPrimarySessionSafely(primarySession) {
+    /** Bỏ qua lỗi hangup vì nhánh SIP hoặc SDK có thể đã ngắt trước đó. */
+    const ignoreHangupError = () => {}
+    try {
+      Promise.resolve(this.sdk.Phone.hangup(primarySession)).catch(ignoreHangupError)
+    } catch {
+      /* SDK đã ngắt kết nối SIP. */
+    }
+  }
+
+  /** Ghi cảnh báo khi SDK Auth không hoàn tất logout từ xa để không làm treo quy trình đăng xuất cục bộ. */
+  _handleSdkLogoutError(error) {
+    logger.warn('AUTH', 'SDK chưa hoàn tất logout từ xa:', error.message)
+  }
+
   /** Kết thúc phiên, ngắt kết nối và yêu cầu các dịch vụ dọn state. */
   logout({ revoked = false, preserveSingleId = false } = {}) {
-    if (!preserveSingleId && localStorage.getItem('smartcall_auth_method') === 'singleid') {
-      this.endSingleIdSession().catch(() => {})
+    if (!preserveSingleId && localStorage.getItem(SESSION_STORAGE_KEYS.authMethod) === 'singleid') {
+      this._endSingleIdSessionInBackground('Không thu hồi được phiên Single ID khi đăng xuất')
     }
     // Snapshot chỉ dùng để kết thúc tài nguyên cũ, không tái công bố trạng thái đã đăng xuất.
     const group = this.callService.groupCallService.state
@@ -434,94 +587,44 @@ export class AuthService {
     logger.clearLogs()
     this.recordingService.clearSessionCache()
     logger.info('AUTH', 'Thực hiện đăng xuất khỏi hệ thống Wazo...')
-    try {
-      this.updatePresence('unavailable', 'Ngoại tuyến')
-    } catch (e) {
-      /* ignore */
+    this._clearPresenceSafely()
+    if (cleanupSnapshot) {
+      this._cleanupHostedGroupSession(cleanupSnapshot)
     }
-    if (cleanupSnapshot)
-      this.callService.callControlApi.cleanupSessionCalls(cleanupSnapshot).then((ok) => {
-        if (!ok)
-          logger.warn(
-            'CALL',
-            'Cleanup phiên cũ chưa được server xác nhận; phiên mới cần dọn bằng token hợp lệ.',
-          )
-      })
     if (primarySession) {
-      try {
-        Promise.resolve(this.sdk.Phone.hangup(primarySession)).catch(() => {})
-      } catch {
-        /* SDK đã ngắt. */
-      }
+      this._hangupPrimarySessionSafely(primarySession)
     }
     this.callService.finalizeCallTermination('ended', null, true, false)
     this.eventConnection.disconnect()
     this.singleIdProfile = null
     this.singleIdCsrf = ''
     this.session = null
+
+    /** Chuyển tiếp lỗi cleanup SDK về handler có tên khi phiên logout từ xa gặp sự cố. */
+    const onSdkLogoutRejected = (error) => this._handleSdkLogoutError(error)
     // Xếp cleanup sau request xác thực còn chạy, trước mọi lần initialize/logIn tiếp theo.
     this.sdkCleanupPromise = this.sdkAuthentication
       .logout(sdkNeedsCleanup)
-      .catch((error) => logger.warn('AUTH', 'SDK chưa hoàn tất logout từ xa:', error.message))
-    // Xóa dữ liệu phiên đã lưu để lượt đăng nhập kế tiếp bắt đầu sạch.
-    const sessionKeys = [
-      'smartcall_auth_method',
-      'smartcall_wazo_token',
-      'smartcall_wazo_refreshToken',
-      'smartcall_user_uuid',
-      'smartcall_user_exten',
-      'smartcall_sip_user',
-      'smartcall_extension',
-      'smartcall_username',
-      'smartcall_login_username',
-      'smartcall_department',
-      'smartcall_user_department',
-      'smartcall_role',
-      'smartcall_is_admin',
-      'smartcall_logged_in',
-      'smartcall_active_room_id',
-      'smartcall_offline_mode',
-      'smartcall_session_uuid',
-    ]
-    sessionKeys.forEach((key) => localStorage.removeItem(key))
-    try {
-      sessionStorage.removeItem('smartcall_client_id')
-      sessionStorage.removeItem('smartcall_tab_client_id')
-      sessionStorage.removeItem('smartcall_session_id')
-    } catch (e) {}
-    this.clientId = ''
+      .catch(onSdkLogoutRejected)
 
-    // Dọn metadata chat của phiên bản Web cũ khi kết thúc phiên.
-    try {
-      Object.keys(localStorage).forEach((k) => {
-        if (k.startsWith('smartcall_chat_rooms_') || k.startsWith('smartcall_unread_v1:')) {
-          localStorage.removeItem(k)
-        }
-      })
-    } catch (e) {}
+    this._clearPersistedSessionData()
+    this.clientId = ''
     this.stopSessionHealthCheck()
-    try {
-      localStorage.removeItem('smartcall_session_id')
-    } catch (e) {}
     this.mySessionId = ''
     this.currentSessionUuid = ''
     this.isSessionRevoked = revoked
 
-    // BUG-06 & BUG-07: Dọn dẹp phòng vệ Wazo.Phone event listeners và ngắt kết nối SIP Phone
+    // Dọn dẹp phòng vệ Wazo.Phone event listeners và ngắt kết nối SIP Phone.
     try {
       this.callService.detachPhoneListeners()
       this.callService.disconnect()
-    } catch (e) {
-      logger.warn('SIP', 'Lỗi khi dọn dẹp Phone trong logout:', e)
+    } catch (error) {
+      logger.warn('SIP', 'Lỗi khi dọn dẹp Phone trong logout:', error)
     } finally {
       this.callService.listenersAttached = false
     }
 
     callState.isRegistered = false
-    userSessionState.extension = ''
-    userSessionState.userUuid = ''
-    userSessionState.displayName = ''
-    userSessionState.department = ''
     callState.activeCall = null
     callState.incomingCall = null
     callState.callNotice = null
@@ -535,24 +638,22 @@ export class AuthService {
   isAuthenticated() {
     return (
       !this.isSessionRevoked &&
-      Boolean(this.session?.token || localStorage.getItem('smartcall_wazo_token'))
+      Boolean(this.session?.token || localStorage.getItem(SESSION_STORAGE_KEYS.token))
     )
   }
 
   /** Lấy access token của phiên hiện tại để gọi Wazo API. */
   getToken() {
     if (this.isSessionRevoked) return ''
-    return this.session?.token || localStorage.getItem('smartcall_wazo_token') || ''
+    return this.session?.token || localStorage.getItem(SESSION_STORAGE_KEYS.token) || ''
   }
 
   /** Lấy máy lẻ từ hồ sơ SDK hoặc thông tin phiên đã khôi phục. */
   getCurrentExtension() {
-    try {
-      const ext = this.session?.primaryNumber?.()
-      if (ext) return String(ext).trim()
-    } catch (e) {}
+    const sdkExtension = this._readSessionPrimaryNumber(this.session)
+    if (sdkExtension) return sdkExtension
     const stored =
-      localStorage.getItem('smartcall_extension') ||
+      localStorage.getItem(SESSION_STORAGE_KEYS.extension) ||
       localStorage.getItem('smartcall_user_exten') ||
       localStorage.getItem('smartcall_sip_user') ||
       ''
@@ -561,7 +662,7 @@ export class AuthService {
 
   /** Trả UUID người dùng hiện tại để xác định chủ sở hữu dữ liệu. */
   getCurrentUserUuid() {
-    return this.session?.uuid || localStorage.getItem('smartcall_user_uuid') || ''
+    return this.session?.uuid || localStorage.getItem(SESSION_STORAGE_KEYS.userUuid) || ''
   }
 
   /** Thu hồi phiên cục bộ và thông báo giao diện khi máy chủ xác nhận token bị hủy. */
@@ -572,26 +673,35 @@ export class AuthService {
     window.dispatchEvent(new CustomEvent('smartcall-session-kicked'))
   }
 
-  /** Thu hồi các phiên thiết bị khác theo cơ chế Wazo hiện hành. */
-  async revokeOtherDeviceSessions(userUuid, currentSessionUuid, currentClientId) {
-    const sessionContext = captureSessionContext()
-    const fetch = createSessionFetch(sessionContext)
-    const token = this.getToken()
-    if (!token || !userUuid) return
-
-    // Chốt chặn an toàn: Bắt buộc phải có currentSessionUuid và currentClientId hợp lệ để tránh tự
-    // xóa phiên của chính mình
-    if (!currentSessionUuid || !currentClientId) {
-      logger.warn(
-        'AUTH',
-        'Chốt chặn an toàn: Bỏ qua revokeOtherDevices do thiếu sessionUuid hoặc clientId hợp lệ.',
-      )
-      return
+  /** Xóa từng session trên các thiết bị khác ngoại trừ session hiện tại. */
+  async _deletePreviousSession({ host, token, userUuid, sessionUuid, fetch }) {
+    try {
+      const delRes = await fetch(`${host}/api/auth/0.1/users/${userUuid}/sessions/${sessionUuid}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Auth-Token': token,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(4000),
+      })
+      logger.info('AUTH', `Đã thu hồi session cũ: ${sessionUuid} -> Status: ${delRes.status}`)
+    } catch (deleteError) {
+      logger.warn('AUTH', `Lỗi khi thu hồi session ${sessionUuid}:`, deleteError.message)
     }
+  }
 
-    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
-
-    // 1. Xóa toàn bộ Session cũ (làm token hiện tại của máy khác bị vô hiệu hóa 401 ngay lập tức)
+  /**
+   * Thu hồi danh sách session cũ của cùng tài khoản; dọn hội nghị cũ đang host trước khi xóa
+   * session để giữ nguyên quyền xử lý hội nghị hợp lệ.
+   */
+  async _revokePreviousSessionsList({
+    host,
+    token,
+    userUuid,
+    currentSessionUuid,
+    sessionContext,
+    fetch,
+  }) {
     try {
       logger.info(
         'AUTH',
@@ -607,42 +717,60 @@ export class AuthService {
 
       // Chỉ sử dụng response HTTP thành công; mã lỗi đi qua nhánh xử lý thất bại thay vì báo thành
       // công giả.
-      if (res.ok) {
-        const data = await res.json()
-        const items = Array.isArray(data.items) ? data.items : []
-        if (items.some((item) => item.uuid && item.uuid !== currentSessionUuid)) {
-          await this.callService.callControlApi.endPreviousHostedConferences(sessionContext)
-          assertSessionContext(sessionContext)
-        }
-        for (const s of items) {
-          const sUuid = s.uuid
-          if (sUuid && sUuid !== currentSessionUuid) {
-            try {
-              const delRes = await fetch(
-                `${host}/api/auth/0.1/users/${userUuid}/sessions/${sUuid}`,
-                {
-                  method: 'DELETE',
-                  headers: {
-                    'X-Auth-Token': token,
-                    Accept: 'application/json',
-                  },
-                  signal: AbortSignal.timeout(4000),
-                },
-              )
-              logger.info('AUTH', `Đã thu hồi session cũ: ${sUuid} -> Status: ${delRes.status}`)
-            } catch (delErr) {
-              logger.warn('AUTH', `Lỗi khi thu hồi session ${sUuid}:`, delErr.message)
-            }
-          }
-        }
-      } else {
+      if (!res.ok) {
         logger.warn('AUTH', `Không thể lấy danh sách sessions từ Wazo Auth (${res.status})`)
+        return
       }
-    } catch (err) {
-      logger.warn('AUTH', `Lỗi trong quá trình thu hồi sessions cũ:`, err.message)
-    }
 
-    // 2. Xóa toàn bộ Refresh Token cũ (ngăn máy khác tự động dùng refresh_token xin token mới)
+      const data = await res.json()
+      const items = Array.isArray(data.items) ? data.items : []
+      /** Xác định item thuộc thiết bị khác để giải tán hội nghị tồn dư trước khi thu hồi token cũ. */
+      const hasOtherSession = (item) => isOtherDeviceSession(item, currentSessionUuid)
+      if (items.some(hasOtherSession)) {
+        await this.callService.callControlApi.endPreviousHostedConferences(sessionContext)
+        assertSessionContext(sessionContext)
+      }
+      for (const sessionItem of items) {
+        if (isOtherDeviceSession(sessionItem, currentSessionUuid)) {
+          await this._deletePreviousSession({
+            host,
+            token,
+            userUuid,
+            sessionUuid: sessionItem.uuid,
+            fetch,
+          })
+        }
+      }
+    } catch (error) {
+      logger.warn('AUTH', 'Lỗi trong quá trình thu hồi sessions cũ:', error.message)
+    }
+  }
+
+  /** Xóa refresh token theo clientId của thiết bị cũ để ngăn tự động cấp lại access token. */
+  async _deleteClientRefreshToken({ host, token, userUuid, clientId, fetch }) {
+    try {
+      const delRes = await fetch(
+        `${host}/api/auth/0.1/users/${userUuid}/tokens/${encodeURIComponent(clientId)}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'X-Auth-Token': token,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(4000),
+        },
+      )
+      logger.info(
+        'AUTH',
+        `Đã xóa refresh_token của client cũ: ${clientId} -> Status: ${delRes.status}`,
+      )
+    } catch (deleteError) {
+      logger.warn('AUTH', `Lỗi khi xóa refresh_token của client ${clientId}:`, deleteError.message)
+    }
+  }
+
+  /** Thu hồi toàn bộ refresh token của các client cũ ngoại trừ client hiện tại. */
+  async _revokePreviousRefreshTokens({ host, token, userUuid, currentClientId, fetch }) {
     try {
       logger.info(
         'AUTH',
@@ -656,59 +784,83 @@ export class AuthService {
         signal: AbortSignal.timeout(5000),
       })
 
-      if (resTokens.ok) {
-        const dataTokens = await resTokens.json()
-        const itemsTokens = Array.isArray(dataTokens.items) ? dataTokens.items : []
-        for (const t of itemsTokens) {
-          const cId = t.client_id || t.clientId
-          if (cId && cId !== currentClientId) {
-            try {
-              const delRes = await fetch(
-                `${host}/api/auth/0.1/users/${userUuid}/tokens/${encodeURIComponent(cId)}`,
-                {
-                  method: 'DELETE',
-                  headers: {
-                    'X-Auth-Token': token,
-                    Accept: 'application/json',
-                  },
-                  signal: AbortSignal.timeout(4000),
-                },
-              )
-              logger.info(
-                'AUTH',
-                `Đã xóa refresh_token của client cũ: ${cId} -> Status: ${delRes.status}`,
-              )
-            } catch (delErr) {
-              logger.warn('AUTH', `Lỗi khi xóa refresh_token của client ${cId}:`, delErr.message)
-            }
-          }
-        }
-      } else {
+      if (!resTokens.ok) {
         logger.warn(
           'AUTH',
           `Không thể lấy danh sách refresh tokens từ Wazo Auth (${resTokens.status})`,
         )
+        return
       }
-    } catch (err) {
-      logger.warn('AUTH', `Lỗi trong quá trình thu hồi refresh tokens cũ:`, err.message)
+
+      const dataTokens = await resTokens.json()
+      const itemsTokens = Array.isArray(dataTokens.items) ? dataTokens.items : []
+      for (const tokenItem of itemsTokens) {
+        const clientId = tokenItem.client_id || tokenItem.clientId
+        if (clientId && clientId !== currentClientId) {
+          await this._deleteClientRefreshToken({ host, token, userUuid, clientId, fetch })
+        }
+      }
+    } catch (error) {
+      logger.warn('AUTH', 'Lỗi trong quá trình thu hồi refresh tokens cũ:', error.message)
+    }
+  }
+
+  /** Thu hồi các phiên thiết bị khác theo cơ chế Wazo hiện hành. */
+  async revokeOtherDeviceSessions(userUuid, currentSessionUuid, currentClientId) {
+    const sessionContext = captureSessionContext()
+    const fetch = createSessionFetch(sessionContext)
+    const token = this.getToken()
+    // Thiếu token hoặc UUID thì không thể gọi endpoint quản trị phiên của user.
+    if (!token || !userUuid) return
+
+    // Chốt chặn an toàn: Bắt buộc phải có currentSessionUuid và currentClientId hợp lệ để tránh tự
+    // xóa phiên của chính mình.
+    if (!currentSessionUuid || !currentClientId) {
+      logger.warn(
+        'AUTH',
+        'Chốt chặn an toàn: Bỏ qua revokeOtherDevices do thiếu sessionUuid hoặc clientId hợp lệ.',
+      )
+      return
+    }
+
+    const host = this.getHostUrl()
+    await this._revokePreviousSessionsList({
+      host,
+      token,
+      userUuid,
+      currentSessionUuid,
+      sessionContext,
+      fetch,
+    })
+    await this._revokePreviousRefreshTokens({
+      host,
+      token,
+      userUuid,
+      currentClientId,
+      fetch,
+    })
+  }
+
+  /** Kiểm tra định kỳ sức khỏe token; thu hồi phiên cục bộ khi refresh token bị máy chủ từ chối. */
+  async _pollSessionHealth() {
+    if (!this.isAuthenticated() || this.isSessionRevoked) return
+    const isHealthy = await this.verifySessionHealth()
+    // Chỉ ép đăng xuất khi refresh token đã bị thu hồi; tránh đá người dùng khi rớt mạng tạm thời.
+    if (!isHealthy && this.refreshTokenRevoked) {
+      logger.warn(
+        'AUTH',
+        'Token và Refresh Token không còn hợp lệ trên Wazo Auth, phiên đã kết thúc!',
+      )
+      this.handleSessionRevocation()
     }
   }
 
   /** Bắt đầu kiểm tra định kỳ tính hợp lệ của phiên; chỉ có một timer. */
   startSessionHealthCheck() {
     this.stopSessionHealthCheck()
-    this.sessionHealthTimer = setInterval(async () => {
-      if (this.isAuthenticated() && !this.isSessionRevoked) {
-        const isHealthy = await this.verifySessionHealth()
-        if (!isHealthy && this.refreshTokenRevoked) {
-          logger.warn(
-            'AUTH',
-            'Token và Refresh Token không còn hợp lệ trên Wazo Auth, phiên đã kết thúc!',
-          )
-          this.handleSessionRevocation()
-        }
-      }
-    }, 5000)
+    /** Gọi phương thức kiểm tra sức khỏe phiên trên đúng instance AuthService hiện tại. */
+    const runSessionHealthPoll = () => this._pollSessionHealth()
+    this.sessionHealthTimer = setInterval(runSessionHealthPoll, 5000)
   }
 
   /** Dừng kiểm tra phiên khi logout hoặc bị thu hồi quyền truy cập. */
@@ -716,6 +868,111 @@ export class AuthService {
     if (this.sessionHealthTimer) {
       clearInterval(this.sessionHealthTimer)
       this.sessionHealthTimer = null
+    }
+  }
+
+  /** Lưu cặp token mới nhận từ API refresh vào storage, state phiên và Wazo Auth SDK. */
+  _applyRefreshedTokenPayload(payload, fallbackRefreshToken) {
+    const newToken = payload?.token
+    if (!newToken) return false
+
+    const newRefreshToken = payload?.refresh_token || payload?.refreshToken || fallbackRefreshToken
+    const newSessionUuid = payload?.session_uuid || payload?.sessionUuid || payload?.uuid
+
+    localStorage.setItem(SESSION_STORAGE_KEYS.token, newToken)
+    localStorage.setItem(SESSION_STORAGE_KEYS.refreshToken, newRefreshToken)
+    if (newSessionUuid) {
+      localStorage.setItem(SESSION_STORAGE_KEYS.sessionUuid, newSessionUuid)
+      this.currentSessionUuid = newSessionUuid
+    }
+
+    if (this.session) {
+      this.session.token = newToken
+      this.session.refreshToken = newRefreshToken
+      if (newSessionUuid) this.session.sessionUuid = newSessionUuid
+    } else {
+      this.session = {
+        token: newToken,
+        refreshToken: newRefreshToken,
+        sessionUuid: newSessionUuid,
+        uuid: payload?.uuid || localStorage.getItem(SESSION_STORAGE_KEYS.userUuid) || '',
+      }
+    }
+
+    try {
+      this.sdk.Auth.setApiToken(newToken)
+      this.sdk.Auth.setToken?.(newToken)
+    } catch (error) {
+      logger.warn(
+        'AUTH',
+        'Không cập nhật được token mới vào Wazo Auth SDK:',
+        error?.message || error,
+      )
+    }
+
+    this.refreshTokenRevoked = false
+    logger.success(
+      'AUTH',
+      '🎉 Đã làm mới Auth Token thành công! Phiên làm việc được duy trì liên tục.',
+    )
+    return true
+  }
+
+  /** Thực thi request làm mới access token qua REST API và dọn cờ khóa khi vẫn thuộc đúng phiên. */
+  async _executeTokenRefresh({ host, clientId, refreshToken, sessionContext, fetch }) {
+    try {
+      logger.info(
+        'AUTH',
+        `🔄 Đang gửi yêu cầu làm mới Auth Token tới Wazo Auth (client_id: ${clientId})...`,
+      )
+
+      // Gửi trực tiếp REST API POST /api/auth/0.1/token chuẩn theo DTO
+      // WazoAuthRequest.forRefreshToken.
+      const res = await fetch(`${host}/api/auth/0.1/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          refresh_token: refreshToken,
+          expiration: 604800,
+        }),
+        signal: AbortSignal.timeout(6000),
+      })
+
+      // Chỉ sử dụng response HTTP thành công; mã lỗi đi qua nhánh xử lý thất bại thay vì báo
+      // thành công giả.
+      if (res.ok) {
+        const data = await res.json()
+        const payload = data?.data || data
+        return this._applyRefreshedTokenPayload(payload, refreshToken)
+      }
+      if (res.status === 401 || res.status === 404 || res.status === 400) {
+        logger.warn(
+          'AUTH',
+          `Refresh token đã bị thu hồi hoặc không hợp lệ trên máy chủ (HTTP ${res.status}).`,
+        )
+        this.refreshTokenRevoked = true
+        return false
+      }
+      logger.warn('AUTH', `Không thể làm mới token do lỗi máy chủ tạm thời (HTTP ${res.status}).`)
+      this.refreshTokenRevoked = false
+      return false
+    } catch (error) {
+      logger.warn('AUTH', 'Lỗi mạng khi làm mới Auth Token qua Refresh Token:', error.message)
+      // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
+      // đến muộn sau hủy/đổi phiên.
+      if (isSessionContextCurrent(sessionContext)) this.refreshTokenRevoked = false
+      return false
+    } finally {
+      // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
+      // đến muộn sau hủy/đổi phiên.
+      if (isSessionContextCurrent(sessionContext)) {
+        this.isRefreshingToken = false
+        this.refreshPromise = null
+      }
     }
   }
 
@@ -727,117 +984,24 @@ export class AuthService {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (this.isRefreshingToken) return this.refreshPromise
-    const refreshToken = localStorage.getItem('smartcall_wazo_refreshToken')
+    const refreshToken = localStorage.getItem(SESSION_STORAGE_KEYS.refreshToken)
     if (!refreshToken) {
       logger.warn('AUTH', 'Không tìm thấy refresh_token trong localStorage để làm mới phiên.')
       this.refreshTokenRevoked = true
       return false
     }
 
-    const clientId =
-      this.clientId ||
-      this.clientId ||
-      localStorage.getItem('smartcall_device_client_id') ||
-      'web_client'
-    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+    const clientId = this.clientId || 'web_client'
+    const host = this.getHostUrl()
 
     this.isRefreshingToken = true
-    this.refreshPromise = (async () => {
-      try {
-        logger.info(
-          'AUTH',
-          `🔄 Đang gửi yêu cầu làm mới Auth Token tới Wazo Auth (client_id: ${clientId})...`,
-        )
-
-        // Gửi trực tiếp REST API POST /api/auth/0.1/token chuẩn 100% theo DTO
-        // WazoAuthRequest.forRefreshToken
-        const res = await fetch(`${host}/api/auth/0.1/token`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            client_id: clientId,
-            refresh_token: refreshToken,
-            expiration: 604800,
-          }),
-          signal: AbortSignal.timeout(6000),
-        })
-
-        // Chỉ sử dụng response HTTP thành công; mã lỗi đi qua nhánh xử lý thất bại thay vì báo
-        // thành công giả.
-        if (res.ok) {
-          const data = await res.json()
-          const payload = data?.data || data
-          const newToken = payload?.token
-          const newRefreshToken = payload?.refresh_token || payload?.refreshToken || refreshToken
-          const newSessionUuid = payload?.session_uuid || payload?.sessionUuid || payload?.uuid
-
-          if (newToken) {
-            localStorage.setItem('smartcall_wazo_token', newToken)
-            localStorage.setItem('smartcall_wazo_refreshToken', newRefreshToken)
-            if (newSessionUuid) {
-              localStorage.setItem('smartcall_session_uuid', newSessionUuid)
-              this.currentSessionUuid = newSessionUuid
-            }
-
-            if (this.session) {
-              this.session.token = newToken
-              this.session.refreshToken = newRefreshToken
-              if (newSessionUuid) this.session.sessionUuid = newSessionUuid
-            } else {
-              this.session = {
-                token: newToken,
-                refreshToken: newRefreshToken,
-                sessionUuid: newSessionUuid,
-                uuid: payload?.uuid || localStorage.getItem('smartcall_user_uuid') || '',
-              }
-            }
-
-            try {
-              this.sdk.Auth.setApiToken(newToken)
-              this.sdk.Auth.setToken?.(newToken)
-            } catch (e) {}
-
-            this.refreshTokenRevoked = false
-            logger.success(
-              'AUTH',
-              '🎉 Đã làm mới Auth Token thành công! Phiên làm việc được duy trì liên tục.',
-            )
-            return true
-          }
-        } else if (res.status === 401 || res.status === 404 || res.status === 400) {
-          logger.warn(
-            'AUTH',
-            `Refresh token đã bị thu hồi hoặc không hợp lệ trên máy chủ (HTTP ${res.status}).`,
-          )
-          this.refreshTokenRevoked = true
-          return false
-        } else {
-          logger.warn(
-            'AUTH',
-            `Không thể làm mới token do lỗi máy chủ tạm thời (HTTP ${res.status}).`,
-          )
-          this.refreshTokenRevoked = false
-          return false
-        }
-      } catch (err) {
-        logger.warn('AUTH', 'Lỗi mạng khi làm mới Auth Token qua Refresh Token:', err.message)
-        // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-        // đến muộn sau hủy/đổi phiên.
-        if (isSessionContextCurrent(sessionContext)) this.refreshTokenRevoked = false
-        return false
-      } finally {
-        // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
-        // đến muộn sau hủy/đổi phiên.
-        if (isSessionContextCurrent(sessionContext)) {
-          this.isRefreshingToken = false
-          this.refreshPromise = null
-        }
-      }
-      return false
-    })()
+    this.refreshPromise = this._executeTokenRefresh({
+      host,
+      clientId,
+      refreshToken,
+      sessionContext,
+      fetch,
+    })
 
     return this.refreshPromise
   }
@@ -860,7 +1024,7 @@ export class AuthService {
     }
 
     try {
-      const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+      const host = this.getHostUrl()
       const res = await fetch(`${host}/api/auth/0.1/token/${token}`, {
         method: 'HEAD',
         signal: AbortSignal.timeout(3500),
@@ -882,8 +1046,35 @@ export class AuthService {
         return true // Lỗi mạng tạm thời, không kick nhầm
       }
       return true
-    } catch (e) {
+    } catch (error) {
+      if (error?.name !== 'StaleSessionError') {
+        logger.warn(
+          'AUTH',
+          'Lỗi mạng tạm thời khi kiểm tra sức khỏe phiên:',
+          error?.message || error,
+        )
+      }
       return true // Lỗi mạng tạm thời, không kick nhầm
+    }
+  }
+
+  /** Tra cứu bổ sung UUID người dùng qua Confd khi state phiên cục bộ chưa có UUID. */
+  async _resolveMissingUserUuid({ host, token, fetch }) {
+    try {
+      const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
+        headers: { 'X-Auth-Token': token, Accept: 'application/json' },
+        signal: AbortSignal.timeout(4000),
+      })
+      if (!meRes.ok) return ''
+      const meData = await meRes.json()
+      if (!meData.uuid) return ''
+      localStorage.setItem(SESSION_STORAGE_KEYS.userUuid, meData.uuid)
+      userSessionState.userUuid = meData.uuid
+      return meData.uuid
+    } catch (error) {
+      if (error?.name === 'StaleSessionError') throw error
+      logger.warn('AUTH', 'Không tra cứu được UUID người dùng qua Confd:', error?.message || error)
+      return ''
     }
   }
 
@@ -895,23 +1086,10 @@ export class AuthService {
     // Thiếu token thì dừng trước khi gọi server; không gửi request bằng credential rỗng hoặc tự
     // tạo token thay thế.
     if (!token) throw new Error('Chưa đăng nhập hoặc phiên làm việc đã hết hạn.')
+    const host = this.getHostUrl()
     let userUuid = this.getCurrentUserUuid()
-    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
     if (!userUuid) {
-      try {
-        const meRes = await fetch(`${host}/api/confd/1.1/users/me`, {
-          headers: { 'X-Auth-Token': token, Accept: 'application/json' },
-          signal: AbortSignal.timeout(4000),
-        })
-        if (meRes.ok) {
-          const meData = await meRes.json()
-          if (meData.uuid) {
-            userUuid = meData.uuid
-            localStorage.setItem('smartcall_user_uuid', meData.uuid)
-            userSessionState.userUuid = meData.uuid
-          }
-        }
-      } catch (e) {}
+      userUuid = await this._resolveMissingUserUuid({ host, token, fetch })
     }
     if (!userUuid) throw new Error('Không xác định được UUID người dùng trên tổng đài.')
 
@@ -934,7 +1112,7 @@ export class AuthService {
   async resetPassword(identifier) {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
-    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
+    const host = this.getHostUrl()
     const queryParam = identifier.includes('@')
       ? `email=${encodeURIComponent(identifier)}`
       : `username=${encodeURIComponent(identifier)}`
@@ -952,8 +1130,10 @@ export class AuthService {
       if (this.session?.profile?.firstName) {
         return `${this.session.profile.firstName} ${this.session.profile.lastName || ''}`.trim()
       }
-    } catch (e) {}
-    return localStorage.getItem('smartcall_username') || 'Người dùng'
+    } catch {
+      /* Dự phòng nếu getter hồ sơ SDK chưa sẵn sàng. */
+    }
+    return localStorage.getItem(SESSION_STORAGE_KEYS.username) || 'Người dùng'
   }
 
   /** Gửi presence theo contract Wazo, giữ metadata nhận diện client Web. */
@@ -965,8 +1145,9 @@ export class AuthService {
     // tạo token thay thế.
     if (!token) return false
 
-    const host = this.host.startsWith('http') ? this.host : `https://${this.host}`
-    const userUuid = this.session?.uuid || localStorage.getItem('smartcall_user_uuid') || 'me'
+    const host = this.getHostUrl()
+    const userUuid =
+      this.session?.uuid || localStorage.getItem(SESSION_STORAGE_KEYS.userUuid) || 'me'
 
     let baseStatus = statusText || (state === 'available' ? 'Sẵn sàng' : 'Bận')
     let finalStatus = baseStatus
@@ -1003,12 +1184,17 @@ export class AuthService {
       return false
     }
   }
+
   /** Mọi thao tác sửa session nội bộ SDK đi qua cùng một cổng, gồm cả initialize. */
   authenticateCredentials(username, password, context = captureSessionContext()) {
+    /** Khởi tạo cấu hình host/clientId SDK trước khi đăng nhập bằng mật khẩu. */
+    const initializeSdk = () => this.initializeAuthentication()
+    /** Thực thi lệnh đăng nhập của Wazo Auth SDK bằng tài khoản và mật khẩu. */
+    const requestSdkLogin = () => this.sdk.Auth.logIn(username, password)
     return this.sdkAuthentication.authenticate({
       context,
-      initialize: () => this.initializeAuthentication(),
-      request: () => this.sdk.Auth.logIn(username, password),
+      initialize: initializeSdk,
+      request: requestSdkLogin,
     })
   }
 
@@ -1017,10 +1203,14 @@ export class AuthService {
    * song với login cũ.
    */
   validateSdkSession(token, refreshToken, context) {
+    /** Khởi tạo cấu hình host/clientId SDK trước khi xác minh lại token đã lưu. */
+    const initializeSdk = () => this.initializeAuthentication()
+    /** Gửi token và refresh token cho Wazo Auth SDK kiểm tra tính hợp lệ. */
+    const requestSdkValidation = () => this.sdk.Auth.validateToken(token, refreshToken)
     return this.sdkAuthentication.authenticate({
       context,
-      initialize: () => this.initializeAuthentication(),
-      request: () => this.sdk.Auth.validateToken(token, refreshToken),
+      initialize: initializeSdk,
+      request: requestSdkValidation,
     })
   }
 
@@ -1052,13 +1242,7 @@ export class AuthService {
       profile.displayName = this.singleIdProfile.name || profile.displayName
       profile.department = this.singleIdProfile.department || profile.department
     }
-    Object.assign(userSessionState, profile)
-    localStorage.setItem('smartcall_user_uuid', profile.userUuid)
-    localStorage.setItem('smartcall_extension', profile.extension)
-    localStorage.setItem('smartcall_user_exten', profile.extension)
-    localStorage.setItem('smartcall_username', profile.displayName)
-    localStorage.setItem('smartcall_department', profile.department)
-    localStorage.setItem('smartcall_user_department', profile.department)
+    this._persistUserProfile(profile)
     return profile
   }
 }

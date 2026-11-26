@@ -1,4 +1,5 @@
 import { ref, computed, onScopeDispose } from 'vue'
+import { logger } from '../services/common/loggerService.js'
 
 /** Chỉ giữ một microphone stream; đóng modal hoặc nhận stream muộn đều dọn track/context. */
 export function useMicrophoneMeter({ isActive, getMicrophoneId }) {
@@ -32,6 +33,14 @@ export function useMicrophoneMeter({ isActive, getMicrophoneId }) {
 
   let disposed = false
 
+  /** Dừng từng MediaStreamTrack để trình duyệt tắt đèn micro ngay khi hủy hoặc hết phiên đo. */
+  function stopMediaStreamTrack(track) {
+    track.stop()
+  }
+
+  /** Bỏ qua lỗi đóng AudioContext khi trình duyệt đã giải phóng context từ trước. */
+  function ignoreAudioContextCloseError() {}
+
   /**
    * Xin stream của mic đang chọn và khởi tạo bộ đo âm lượng; stream đến sau khi đóng phải được thu
    * hồi.
@@ -55,7 +64,7 @@ export function useMicrophoneMeter({ isActive, getMicrophoneId }) {
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (generation !== micGeneration || disposed || !isActive()) {
-        stream.getTracks().forEach((track) => track.stop())
+        stream.getTracks().forEach(stopMediaStreamTrack)
         return
       }
       micStream = stream
@@ -115,7 +124,7 @@ export function useMicrophoneMeter({ isActive, getMicrophoneId }) {
       // muộn sau hủy/đổi phiên.
       if (generation !== micGeneration) return
       stopMicMeter()
-      console.warn('Lỗi kết nối Micro đo tín hiệu VU:', e)
+      logger.warn('AUDIO', 'Lỗi kết nối Micro đo tín hiệu VU:', e)
     }
   }
 
@@ -127,20 +136,24 @@ export function useMicrophoneMeter({ isActive, getMicrophoneId }) {
       animFrameId = null
     }
     if (micStream) {
-      micStream.getTracks().forEach((t) => t.stop())
+      micStream.getTracks().forEach(stopMediaStreamTrack)
       micStream = null
     }
     if (audioContext && audioContext.state !== 'closed') {
-      audioContext.close().catch(() => {})
+      audioContext.close().catch(ignoreAudioContextCloseError)
       audioContext = null
     }
     micLevel.value = 0
     isVoiceActive.value = false
     lastVoiceTime = 0
   }
-  onScopeDispose(() => {
+
+  /** Đánh dấu scope đã hủy và dừng stream đo micro khi component unmount. */
+  function disposeMicrophoneMeter() {
     disposed = true
     stopMicMeter()
-  })
+  }
+
+  onScopeDispose(disposeMicrophoneMeter)
   return { micLevel, isVoiceActive, micStatusText, startMicMeter, stopMicMeter }
 }

@@ -288,21 +288,27 @@ function previewDialTarget([value, active], previous, onCleanup) {
 watch([extension, directoryActive], previewDialTarget)
 
 /** Định dạng số giây đàm thoại thành phút:giây để hiển thị trên khung gọi và thanh gọi nhỏ. */
-const formattedDuration = computed(() => {
+function formatActiveCallDuration() {
   const s = callState.activeCall?.duration || 0
   const m = Math.floor(s / 60)
   const rem = s % 60
   return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
-})
+}
+
+/** Thời lượng đàm thoại hiện tại dạng mm:ss. */
+const formattedDuration = computed(formatActiveCallDuration)
 
 /** Chọn nhãn thời gian phù hợp: chưa gọi, đang kết nối/đổ chuông hoặc thời lượng đàm thoại. */
-const durationText = computed(() => {
+function buildDurationText() {
   if (!callState.activeCall) return '00:00'
   if (callState.activeCall.status === 'answering') return 'Đang kết nối...'
   if (callState.activeCall.status === 'ringing')
     return `${iconGlyphs['phone-text']} Đang đổ chuông...`
   return formattedDuration.value
-})
+}
+
+/** Chuỗi hiển thị trạng thái kết nối hoặc thời lượng cuộc gọi ở ActiveCallPanel. */
+const durationText = computed(buildDurationText)
 
 /** Xác minh người được mời, giữ guard phiên và cuộc gọi khi API trả muộn. */
 async function prepareSelectedTargets(contacts) {
@@ -367,13 +373,16 @@ const clearDigit = () => {
   }
 }
 
+/** Bỏ qua lỗi điều hướng router.replace khi người dùng chuyển trang hoặc trùng query hiện tại. */
+const ignoreRouterReplaceError = () => {}
+
 /** Xóa từ khóa trên UI và query q của router để trạng thái tìm kiếm không tự quay lại. */
 const clearSearch = () => {
   searchTerm.value = ''
   if (route.query && route.query.q) {
     const remainingQuery = { ...route.query }
     delete remainingQuery.q
-    router.replace({ path: '/calls', query: remainingQuery }).catch(() => {})
+    router.replace({ path: '/calls', query: remainingQuery }).catch(ignoreRouterReplaceError)
   }
 }
 
@@ -447,7 +456,7 @@ const cleanCallQueryParams = () => {
     delete remainingQuery.direction
     delete remainingQuery.name
     delete remainingQuery.dept
-    router.replace({ path: '/calls', query: remainingQuery }).catch(() => {})
+    router.replace({ path: '/calls', query: remainingQuery }).catch(ignoreRouterReplaceError)
   }
 }
 
@@ -457,12 +466,19 @@ const onCallEnded = () => {
   cleanCallQueryParams()
 }
 
+/** Ghi cảnh báo nếu lệnh dừng ghi âm khi cúp máy thất bại nhưng không chặn việc ngắt cuộc gọi. */
+function handleStopRecordingOnHangupError(err) {
+  logger.warn('AUDIO', 'Không thể dừng ghi âm khi cúp máy:', err)
+}
+
 /** Yêu cầu dừng ghi âm nếu cần rồi cúp qua CallService, dọn trạng thái nhập của màn hình. */
 const hangupCall = () => {
   if (recordingService.isRecording()) {
     try {
-      recordingService.stopRecording().catch(() => {})
-    } catch (e) {}
+      recordingService.stopRecording().catch(handleStopRecordingOnHangupError)
+    } catch (err) {
+      handleStopRecordingOnHangupError(err)
+    }
   }
   callService.hangupCurrentCall()
   extension.value = ''
@@ -483,7 +499,7 @@ const toggleRecord = async () => {
         }),
       )
     } catch (e) {
-      console.warn('Lỗi khi dừng ghi âm máy chủ:', e)
+      logger.warn('AUDIO', 'Lỗi khi dừng ghi âm máy chủ:', e)
       window.dispatchEvent(
         new CustomEvent('app-toast', {
           detail: {
@@ -547,66 +563,57 @@ const toggleMute = () => {
 
 const showAddParticipantModal = ref(false)
 
-// Nhận từ khóa từ Header qua query URL và đồng bộ phần tìm kiếm trong danh bạ.
-watch(
-  () => route.query.q,
-  (newQ) => {
-    if (newQ !== undefined && newQ !== null) {
-      searchTerm.value = String(newQ)
-      if (typeof window !== 'undefined' && window.innerWidth < 768) {
-        mobileTab.value = 'contacts'
-      }
-    }
-  },
-  { immediate: true },
-)
+/** Nhận từ khóa từ URL và đồng bộ vào thanh tìm kiếm danh bạ (tự mở tab Danh bạ trên mobile). */
+function syncSearchTermFromRoute(newQuery) {
+  if (newQuery === undefined || newQuery === null) return
+  searchTerm.value = String(newQuery)
+  if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    mobileTab.value = 'contacts'
+  }
+}
 
-// Nhận yêu cầu gọi từ màn hình khác qua URL; chỉ tự quay số khi không có cuộc gọi đang hoạt động.
-watch(
-  () => route.query.number,
-  (newNum) => {
-    clearTimeout(autoDialTimer)
-    if (newNum) {
-      if (route.query.active === 'true' || isCalling.value) {
-        // Đang trong cuộc gọi (hoặc vừa nhận cuộc gọi từ Modal), không đưa số vào ô nhập bàn phím
-        extension.value = ''
-        return
+/** Nhận yêu cầu quay số từ URL; chỉ tự động gọi khi không có cuộc gọi đang hoạt động. */
+function handleRouteNumberChange(newNum) {
+  clearTimeout(autoDialTimer)
+  if (!newNum) return
+  if (route.query.active === 'true' || isCalling.value) {
+    // Đang trong cuộc gọi hoặc vừa nhận cuộc gọi từ Modal: không đưa số vào ô nhập bàn phím.
+    extension.value = ''
+    return
+  }
+  extension.value = String(newNum)
+  if (route.query.autocall === 'true') {
+    if (!callState.activeCall && !callService.hasActiveCall()) {
+      const context = captureSessionContext()
+      /** Chỉ tự quay đúng số ban đầu nếu lệnh URL, ô nhập và phiên còn khớp. */
+      function dialFromRoute() {
+        if (
+          route.path === '/calls' &&
+          String(route.query.number) === String(newNum) &&
+          extension.value === String(newNum) &&
+          isSessionContextCurrent(context)
+        )
+          void handleDial()
       }
-      extension.value = String(newNum)
-      if (route.query.autocall === 'true') {
-        if (!callState.activeCall && !callService.hasActiveCall()) {
-          const context = captureSessionContext()
-          /** Chỉ tự quay đúng số ban đầu nếu lệnh URL, ô nhập và phiên còn khớp. */
-          function dialFromRoute() {
-            if (
-              route.path === '/calls' &&
-              String(route.query.number) === String(newNum) &&
-              extension.value === String(newNum) &&
-              isSessionContextCurrent(context)
-            )
-              void handleDial()
-          }
-          autoDialTimer = setTimeout(dialFromRoute, 150)
-        } else {
-          cleanCallQueryParams()
-        }
-      }
-    }
-  },
-  { immediate: true },
-)
-
-// Đồng bộ phần nhập/hiển thị khi cuộc gọi đổi hoặc kết thúc, không giữ query của cuộc gọi cũ.
-watch(
-  () => callState.activeCall,
-  (newCall, oldCall) => {
-    if (!newCall && oldCall) {
-      closeAddParticipantModal()
-      extension.value = ''
+      autoDialTimer = setTimeout(dialFromRoute, 150)
+    } else {
       cleanCallQueryParams()
     }
-  },
-)
+  }
+}
+
+/** Đóng modal mời và dọn query/số nhập ngay khi cuộc gọi kết thúc. */
+function resetCallsViewOnCallEnd(newCall, oldCall) {
+  if (!newCall && oldCall) {
+    closeAddParticipantModal()
+    extension.value = ''
+    cleanCallQueryParams()
+  }
+}
+
+watch(() => route.query.q, syncSearchTermFromRoute, { immediate: true })
+watch(() => route.query.number, handleRouteNumberChange, { immediate: true })
+watch(() => callState.activeCall, resetCallsViewOnCallEnd)
 
 /** Đăng ký sự kiện của màn hình gọi trong suốt vòng đời component. */
 function registerCallViewListeners() {
@@ -754,34 +761,6 @@ onUnmounted(disposeCallsView)
   transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.calls-view .preview-call-action-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: #22c55e;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.15s ease;
-  box-shadow: 0 2px 4px rgba(34, 197, 94, 0.25);
-}
-
-.calls-view .preview-call-action-btn:hover:not(:disabled) {
-  background: #16a34a;
-  transform: scale(1.06);
-}
-
-.calls-view .preview-call-action-btn:disabled {
-  background: #94a3b8;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
 @keyframes calls-view-pulse-ring {
   0% {
     box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
@@ -804,40 +783,6 @@ onUnmounted(disposeCallsView)
   100% {
     box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
   }
-}
-
-.calls-view .dialer-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 0.85rem;
-  color: #cbd5e1;
-  margin-bottom: 16px;
-}
-
-.calls-view .status-sep {
-  color: #64748b;
-  font-size: 0.75rem;
-}
-
-.calls-view .status-ext-text {
-  font-weight: 500;
-  color: #94a3b8;
-}
-
-.calls-view .idle-unknown-note {
-  font-size: 0.82rem;
-  color: #94a3b8;
-  margin: 6px 0 16px 0;
-}
-
-.calls-view .idle-guide-text {
-  font-size: 0.85rem;
-  color: #94a3b8;
-  margin: 8px 0 20px 0;
-  max-width: 280px;
-  line-height: 1.4;
 }
 
 @keyframes calls-view-blink-rec-dot {
@@ -875,9 +820,6 @@ onUnmounted(disposeCallsView)
   100% {
     border-color: rgba(239, 68, 68, 0.5);
   }
-}
-.calls-view .idle-collapsed-bar {
-  display: none;
 }
 
 @keyframes calls-view-spin {
@@ -935,13 +877,6 @@ onUnmounted(disposeCallsView)
     height: 52px;
     font-size: 1.15rem;
   }
-}
-
-.calls-view .pill-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  display: inline-block;
 }
 
 @keyframes calls-view-pulseOpacity {

@@ -89,12 +89,15 @@ const isLoggedIn = ref(false)
 const showSettings = ref(false)
 const showKickedModal = ref(false)
 
+/** Bỏ qua lỗi điều hướng trùng đích hoặc bị hủy khi phiên vừa bị thu hồi. */
+const ignoreNavigationError = () => {}
+
 /** Bỏ giao diện riêng tư, đóng Settings và hiện cảnh báo khi service đã thu hồi phiên. */
 const handleSessionKicked = () => {
   isLoggedIn.value = false
   showSettings.value = false
   showKickedModal.value = true
-  router.replace('/login').catch(() => {})
+  router.replace('/login').catch(ignoreNavigationError)
 }
 
 /** Đóng cảnh báo rồi đưa ứng dụng qua luồng logout/login lại để bắt đầu một phiên sạch. */
@@ -103,7 +106,7 @@ const handleRelogin = () => {
   handleLogout()
 }
 
-// Trạng thái cuộc gọi đến reactive từ callState (SSOT)
+/** Đọc trạng thái mở modal cuộc gọi đến trực tiếp từ callState (SSOT). */
 const showIncomingModal = computed(() => Boolean(callState.incomingCall))
 /** Đọc dữ liệu cuộc gọi đến từ state chung để truyền cho modal, không giữ một bản session riêng. */
 const incomingCallData = computed(() => callState.incomingCall)
@@ -116,18 +119,16 @@ const toastMessage = ref('')
 const toastType = ref('info')
 let toastTimer = null
 
-// --- Lifecycle ---
-onMounted(async () => {
-  // 2. Lắng nghe các sự kiện ứng dụng
-  window.addEventListener('app-action', handleAppAction)
+/** Đăng ký listener ứng dụng và khôi phục phiên Wazo từ token lưu trữ nếu hợp lệ. */
+async function initializeAppSession() {
   window.addEventListener('app-toast', handleToastEvent)
   window.addEventListener('app-login-success', handleLoginSuccess)
   window.addEventListener('smartcall-session-kicked', handleSessionKicked)
   window.addEventListener('beforeunload', handleBeforeUnload)
 
+  // Không đá về /login khi đang ở trang callback xử lý mã OIDC Single ID.
   if (route.path === '/callback') return
 
-  // 1. Kiểm tra trạng thái đăng nhập
   const storedLogin = localStorage.getItem('smartcall_logged_in')
   if (storedLogin !== 'false' && (storedLogin === 'true' || authService.isAuthenticated())) {
     // Tự động khôi phục phiên Wazo từ Token lưu trữ khi có kết nối
@@ -142,19 +143,20 @@ onMounted(async () => {
       router.push('/login')
     }
   }
-})
+}
 
-// Khi component bị hủy, gỡ listener và dọn tài nguyên thuộc vòng đời này để callback cũ không tiếp
-// tục tác động UI.
-onUnmounted(() => {
+/** Gỡ listener, hủy timer toast và ngắt kết nối WebRTC khi App bị unmount. */
+function cleanupAppSession() {
   clearTimeout(toastTimer)
-  window.removeEventListener('app-action', handleAppAction)
   window.removeEventListener('app-toast', handleToastEvent)
   window.removeEventListener('app-login-success', handleLoginSuccess)
   window.removeEventListener('smartcall-session-kicked', handleSessionKicked)
   window.removeEventListener('beforeunload', handleBeforeUnload)
   callService.disconnect()
-})
+}
+
+onMounted(initializeAppSession)
+onUnmounted(cleanupAppSession)
 
 /** Cúp cuộc gọi còn hoạt động trước khi tab đóng/reload để hạn chế bỏ lại nhánh thoại. */
 const handleBeforeUnload = () => {
@@ -163,12 +165,12 @@ const handleBeforeUnload = () => {
   }
 }
 
-// --- Logic kết nối & Đăng nhập ---
+/** Đánh dấu đã đăng nhập để App hiển thị layout chính sau xác thực thành công. */
 const handleLoginSuccess = () => {
   isLoggedIn.value = true
 }
 
-// --- Xử lý sự kiện Modal cuộc gọi đến (Điều hướng qua wazoService) ---
+/** Nhận cuộc gọi đến qua CallService rồi điều hướng sang màn hình CallsView đang đàm thoại. */
 const onAcceptIncomingCall = async (callData) => {
   const ext = callData?.extension || callData?.number || ''
   if (!(await callService.acceptIncomingCall(callData))) return
@@ -200,14 +202,6 @@ const onMissedIncomingCall = (callData) => {
   showToast(`Cuộc gọi nhỡ từ ${name}`, 'warning')
 }
 
-/** Nhận hành động ứng dụng từ component dùng chung và chuyển tới luồng điều hướng thích hợp. */
-const handleAppAction = (event) => {
-  const { type, value } = event.detail
-  if (type === 'dial') {
-    onDial(value, event.detail?.peerUuid)
-  }
-}
-
 /** Nhận thông báo toàn cục và chuyển nội dung/cấp độ sang toast của App. */
 const handleToastEvent = (event) => {
   if (event.detail && event.detail.message) {
@@ -215,7 +209,7 @@ const handleToastEvent = (event) => {
   }
 }
 
-// --- Thao tác người dùng ---
+/** Đăng xuất khỏi Single ID hoặc Wazo truyền thống và đưa người dùng về màn hình đăng nhập. */
 const handleLogout = async () => {
   if (localStorage.getItem('smartcall_auth_method') === 'singleid') {
     showSettings.value = false
@@ -233,24 +227,17 @@ const handleLogout = async () => {
   router.push('/login')
 }
 
-/** Chuẩn hóa máy lẻ rồi mở màn hình gọi với query yêu cầu quay số. */
-const onDial = (extension, peerUuid = '') => {
-  const cleanExt = String(extension || '').trim()
-  if (!cleanExt) return
-  router.push({
-    path: '/calls',
-    query: { number: cleanExt, autocall: 'true', ...(peerUuid ? { peerUuid } : {}) },
-  })
+/** Ẩn thông báo toast sau khi hết thời gian hiển thị mặc định. */
+function clearToastMessage() {
+  toastMessage.value = ''
 }
 
-// --- Helper Toast ---
+/** Hiển thị thông báo toast nổi ở góc trên bên phải và tự ẩn sau 4 giây. */
 const showToast = (message, type = 'info') => {
   toastMessage.value = message
   toastType.value = type
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toastMessage.value = ''
-  }, 4000)
+  toastTimer = setTimeout(clearToastMessage, 4000)
 }
 </script>
 

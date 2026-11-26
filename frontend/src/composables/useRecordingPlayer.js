@@ -1,5 +1,6 @@
 import { ref, computed, onScopeDispose } from 'vue'
 import { captureSessionContext, isSessionContextCurrent } from '../services/auth/sessionScope.js'
+import { logger } from '../services/common/loggerService.js'
 
 /** Sở hữu audio element và chống phản hồi đảo thứ tự; view chỉ giữ bộ lọc lịch sử. */
 export function useRecordingPlayer({ recordingService, canPlay }) {
@@ -12,10 +13,13 @@ export function useRecordingPlayer({ recordingService, canPlay }) {
   const playbackDuration = ref(0)
 
   /** Tính phần trăm tiến độ của bản ghi đang phát để vẽ thanh tua. */
-  const playbackProgress = computed(() => {
+  function calculatePlaybackProgress() {
     if (!playbackDuration.value) return 0
     return Math.min(100, Math.max(0, (playbackCurrentTime.value / playbackDuration.value) * 100))
-  })
+  }
+
+  /** Cung cấp phần trăm tiến độ phản ứng theo thời gian thực cho thanh tua giao diện. */
+  const playbackProgress = computed(calculatePlaybackProgress)
 
   let audioElement = null
 
@@ -50,6 +54,7 @@ export function useRecordingPlayer({ recordingService, canPlay }) {
           await audioElement?.play()
           isPlaying.value = Boolean(audioElement)
         } catch {
+          // Trình duyệt có thể từ chối phát tiếp nếu chính sách autoplay hoặc stream lỗi; đặt về tạm dừng.
           isPlaying.value = false
         }
       }
@@ -91,7 +96,9 @@ export function useRecordingPlayer({ recordingService, canPlay }) {
 
       const audio = new Audio(audioUrl)
       audioElement = audio
-      audio.ontimeupdate = () => {
+
+      /** Cập nhật vị trí phát hiện tại và tổng thời lượng khi audio đang chạy. */
+      function handleAudioTimeUpdate() {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
         // đến muộn sau hủy/đổi phiên.
         if (!current()) return
@@ -102,7 +109,9 @@ export function useRecordingPlayer({ recordingService, canPlay }) {
           playbackDuration.value = call.duration
         }
       }
-      audio.onloadedmetadata = () => {
+
+      /** Nạp tổng thời lượng bản ghi ngay khi trình duyệt đọc xong metadata audio. */
+      function handleAudioLoadedMetadata() {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
         // đến muộn sau hủy/đổi phiên.
         if (!current()) return
@@ -112,18 +121,22 @@ export function useRecordingPlayer({ recordingService, canPlay }) {
           playbackDuration.value = call.duration
         }
       }
-      audio.onended = () => {
+
+      /** Đưa trạng thái phát về 0 khi file ghi âm chạy hết. */
+      function handleAudioEnded() {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
         // đến muộn sau hủy/đổi phiên.
         if (!current()) return
         isPlaying.value = false
         playbackCurrentTime.value = 0
       }
-      audio.onerror = (e) => {
+
+      /** Ghi nhận lỗi codec/tải audio và thông báo cho người dùng khi không phát được file. */
+      function handleAudioError(event) {
         // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu
         // đến muộn sau hủy/đổi phiên.
         if (!current()) return
-        console.warn('Lỗi phát âm thanh:', e)
+        logger.warn('AUDIO', 'Lỗi phát âm thanh:', event)
         isPlaying.value = false
         window.dispatchEvent(
           new CustomEvent('app-toast', {
@@ -135,6 +148,11 @@ export function useRecordingPlayer({ recordingService, canPlay }) {
         )
       }
 
+      audio.ontimeupdate = handleAudioTimeUpdate
+      audio.onloadedmetadata = handleAudioLoadedMetadata
+      audio.onended = handleAudioEnded
+      audio.onerror = handleAudioError
+
       await audio.play()
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
@@ -144,7 +162,7 @@ export function useRecordingPlayer({ recordingService, canPlay }) {
       }
       isPlaying.value = true
     } catch (err) {
-      console.error('Không thể phát ghi âm:', err)
+      logger.error('AUDIO', 'Không thể phát ghi âm:', err)
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (current()) stopCurrentAudio()
