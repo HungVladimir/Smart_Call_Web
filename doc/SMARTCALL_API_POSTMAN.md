@@ -278,7 +278,7 @@ Thêm biến `wrapper_test_key` vào Environment Postman bằng đúng giá tr�
      - `POST {{smartcall_origin}}/api/register/check-email` (hoặc `GET .../check-email?email={{test_email}}&client_id=postman-lab`)
      - Headers: `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`
      - Body (raw JSON): `{"email": "{{test_email}}", "client_id": "postman-lab"}`
-     - Kỳ vọng: nếu chưa có trả `{"exists": false, "authenticated": false, "token": "", "user": null}`; nếu đã có trả `{"exists": true, "authenticated": true, "token": "...", "refresh_token": "...", "user": { "user_uuid", "username", "description", "extension", ... }}` để đăng nhập ngay (nếu tài khoản cũ có mật khẩu riêng khác mặc định sẽ trả `authenticated: false, reason: "WAZO_CREDENTIALS_REQUIRED", token: ""` nhưng vẫn đủ thông tin `user`).
+     - Kỳ vọng: nếu chưa có trả `{"exists": false, "authenticated": false, "token": "", "user": null}`; nếu đã có trả `{"exists": true, "authenticated": true, "token": "...", "refresh_token": "...", "user": { "user_uuid", "username", "description", "extension", ... }}` để đăng nhập ngay (nếu tài khoản cũ có mật khẩu khác mặc định, backend dùng quyền admin `POST /api/auth/0.1/users/password/reset` đồng bộ về `SMARTCALL_WAZO_DEFAULT_PASSWORD` rồi đăng nhập trả `token`). Nếu user đang bị khóa (`enabled=false`) sẽ trả `authenticated: false, reason: "WAZO_USER_DISABLED", token: ""`.
    - **Bước B — Tạo mới hoặc lấy phiên qua `/api/register`:**
      - `POST {{smartcall_origin}}/api/register`
      - Headers: `X-SmartCall-Test-Key: {{wrapper_test_key}}`, `Content-Type: application/json`

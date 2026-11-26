@@ -50,11 +50,11 @@ Bật wrapper và `/api/register` trên backend bằng biến môi trường `SM
 
 - **Kiểm tra email đã tồn tại chưa (`GET` hoặc `POST /api/register/check-email`):**
   - App gửi `email` (qua query `?email=...` với `GET`, hoặc JSON `{"email": "..."}` kèm tùy chọn `password`, `client_id` với `POST`) kèm `X-SmartCall-Test-Key`.
-  - Trả `200 OK`: nếu chưa có → `{"exists": false, "authenticated": false, "token": "", "refresh_token": "", "user": null}`; nếu đã có → `{"exists": true, "authenticated": true, "token": "...", "refresh_token": "...", "user": {"user_uuid", "username", "email", "firstname", "lastname", "department", "description", "extension", "enabled", "host", "tenant_uuid"}}` (đã lọc sạch trường nhạy cảm). Nếu tài khoản cũ có mật khẩu riêng chưa khớp cấu hình/chưa gửi `password` thì vẫn trả thông tin user với `"authenticated": false, "reason": "WAZO_CREDENTIALS_REQUIRED", "token": ""`.
+  - Trả `200 OK`: nếu chưa có → `{"exists": false, "authenticated": false, "token": "", "refresh_token": "", "user": null}`; nếu đã có → backend đăng nhập trả `{"exists": true, "authenticated": true, "token": "...", "refresh_token": "...", "user": {"user_uuid", "username", "email", "firstname", "lastname", "department", "description", "extension", "enabled", "host", "tenant_uuid"}}`. Nếu tài khoản cũ có mật khẩu khác cấu hình, backend tự dùng quyền quản trị gọi `POST /api/auth/0.1/users/password/reset` đồng bộ về mật khẩu hiệu lực rồi cấp lại `token` (trường hợp tài khoản đang bị khóa `enabled=false` trả `authenticated: false, reason: "WAZO_USER_DISABLED"`).
 
 - **Tạo mới hoặc lấy tài khoản hiện có (`POST /api/register`):**
   - Chưa có email → tạo user + cấp máy lẻ trống + ghi `department` vào `description` + đăng nhập trả `created: true, exists: false, authenticated: true, token, refresh_token` (nếu bỏ trống `username`, backend tự lấy phần trước `@` của email).
-  - Email đã tồn tại → **không báo lỗi 409**, trả `200 OK` với `created: false, exists: true` cùng đầy đủ thông tin user hiện có và `token`, `refresh_token` để đăng nhập (đồng thời đồng bộ `description` khi xác thực thành công và có truyền `department`; nếu mật khẩu riêng chưa khớp thì trả `authenticated: false, reason: "WAZO_CREDENTIALS_REQUIRED", token: ""`).
+  - Email đã tồn tại → **không báo lỗi 409**, trả `200 OK` với `created: false, exists: true` cùng đầy đủ thông tin user hiện có và `token`, `refresh_token` để đăng nhập (nếu tài khoản cũ khác mật khẩu cấu hình thì tự đồng bộ mật khẩu qua quyền admin rồi cấp token, đồng thời đồng bộ `description` khi có truyền `department`).
 
 ~~~http
 POST /api/register

@@ -557,7 +557,17 @@ class WazoClient:
             fail("WAZO_IDENTITY_MISMATCH", "Token Wazo không khớp với tài khoản vừa liên kết.", 502)
         return user_token
 
-    # Xác thực tài khoản hiện có (khi đang bật) để cấp user token; trả nguyên thông tin nếu sai mật khẩu.
+    # Dùng quyền quản trị đặt lại mật khẩu Wazo Auth khi tài khoản cũ chưa khớp mật khẩu cấu hình (dùng cho luồng xác thực tập trung không qua form mật khẩu).
+    async def _reset_user_password(self, user_uuid, new_password, admin_token):
+        await self.request(
+            "POST",
+            "/api/auth/0.1/users/password/reset",
+            token=admin_token,
+            params={"user_uuid": user_uuid},
+            json={"password": new_password},
+        )
+
+    # Xác thực tài khoản hiện có (khi đang bật) để cấp user token; nếu sai mật khẩu thì đặt lại theo cấu hình rồi đăng nhập lại.
     async def _resolve_existing_user_session(
         self,
         existing_user,
@@ -577,24 +587,24 @@ class WazoClient:
             return summary, False, "", "", "WAZO_USERNAME_MISSING"
 
         effective_password = self.settings.wazo_default_password if password is None else password
-        authenticated = False
-        token_value = ""
-        refresh_value = ""
-        reason = ""
         try:
             user_token = await self._login_verified_user(
                 existing_username, effective_password, client_id, record["uuid"],
             )
-            authenticated = True
-            token_value = user_token["token"]
-            refresh_value = user_token.get("refresh_token", "")
         except HTTPException as error:
             detail = error.detail if isinstance(error.detail, dict) else {}
-            # Mật khẩu riêng không khớp vẫn phải trả đủ thông tin user công khai, không reset mật khẩu cũ.
-            if detail.get("code") == "WAZO_CREDENTIALS_REQUIRED":
-                reason = "WAZO_CREDENTIALS_REQUIRED"
-            else:
+            if detail.get("code") != "WAZO_CREDENTIALS_REQUIRED":
                 raise
+            # Tài khoản cũ từ nguồn khác có mật khẩu riêng: đồng bộ về mật khẩu hiệu lực rồi xin lại token cho App/Postman.
+            await self._reset_user_password(record["uuid"], effective_password, admin_token)
+            user_token = await self._login_verified_user(
+                existing_username, effective_password, client_id, record["uuid"],
+            )
+
+        authenticated = True
+        token_value = user_token["token"]
+        refresh_value = user_token.get("refresh_token", "")
+        reason = ""
 
         # Chỉ ghi đè description sau khi token đăng nhập vừa cấp đã xác minh khớp đúng UUID của user.
         if sync_department and authenticated and department:
