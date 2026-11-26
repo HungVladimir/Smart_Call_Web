@@ -1,5 +1,9 @@
 # Nhật ký refactor SmartCall Web
 
+26/11/2026. Web bỏ phân trang trong các màn danh bạ và bộ chọn thành viên. Tất cả mặc định hiện liên hệ gần đây. Tìm riêng theo tên, máy lẻ, mã nhân viên hoặc email. Máy lẻ khớp toàn bộ số và mặc định cần 4 chữ số. Có thể đặt `VITE_DIRECTORY_EXTENSION_DIGITS=5` rồi build lại khi đổi dải số. Truy vấn rộng hiện tối đa 50 kết quả và yêu cầu thu hẹp. FastAPI vẫn có thể đọc từng lô từ Wazo để xây snapshot theo quyền nguồn.
+
+Yêu thích tải một danh sách và lọc trực tuyến/ngoại tuyến tại chỗ. Mục thiếu số được ghép theo UUID hoặc ID liên hệ thuộc đúng nguồn Dird. Bộ phận chỉ hiện tùy chọn chưa khai báo khi nguồn xác nhận có bản ghi rỗng. Nếu Dird không công bố `description` và Confd từ chối đọc, danh sách bộ phận có thể còn thiếu. Tab Gọi nhóm mở các nhóm đã lưu, nút Tạo nhóm mở biểu mẫu riêng. Khi Lookup thiếu kết quả, chuẩn bị cuộc gọi tra mới nguồn danh bạ, đối chiếu toàn bộ máy lẻ, UUID đã chọn và presence trước SIP.
+
 26/11/2026. Danh bạ phân trang dùng tenant đã xác minh của token khi đọc Dird, như luồng Web gọi trực tiếp. Nếu Confd trả 401 khi bổ sung `description`, backend kiểm tra lại token với Wazo Auth. Token còn hiệu lực và Dird đã trả dữ liệu thì vẫn hiển thị liên hệ, số máy lẻ và cảnh báo thiếu bộ phận. Token hết hiệu lực hoặc Dird từ chối đọc vẫn chặn kết quả. Lỗi API chỉ rõ bước Wazo bị lỗi.
 
 Yêu thích đọc số nội bộ từ bảng Dird hoặc bổ sung số thiếu theo UUID qua `/api/directory/members`. Khi nguồn từ chối, liên hệ vẫn hiện trong Yêu thích với số bỏ trống. Frontend giữ mã HTTP và báo lỗi backend rõ hơn khi proxy trả body rỗng hoặc HTML. Luồng chuẩn bị gọi tiếp tục xác minh chủ máy lẻ và trạng thái trước khi gửi SIP.

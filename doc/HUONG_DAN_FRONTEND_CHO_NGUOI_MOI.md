@@ -1,8 +1,8 @@
 # Hướng dẫn frontend từ đầu đến cuối cho người mới
 
-Cập nhật 25/11/2026. Luồng hiện hành dùng PagedContactsPanel ở màn gọi, và CallGroupsView cho nhóm cá nhân. Màn Messages, ChatService cùng những mục liên quan bên dưới mô tả phiên bản trước ngày này. [Luồng mới và cách kiểm thử](refactor/KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
+Cập nhật 26/11/2026. Luồng hiện hành dùng DirectoryPanel ở màn gọi và CallGroupsView cho nhóm cá nhân. Màn Messages, ChatService cùng những mục liên quan bên dưới mô tả phiên bản cũ. [Luồng mới và cách kiểm thử](refactor/KE_HOACH_DANH_BA_VA_NHOM_GOI.md).
 
-Danh bạ phân trang và bộ chọn thành viên đọc nguồn Wazo Dird qua FastAPI. Khi thiếu quyền bổ sung bộ phận từ Confd, giao diện vẫn có thể hiển thị tên và số đã đọc được từ Dird. Tab Yêu thích đọc danh sách riêng từ Wazo và bổ sung số thiếu theo UUID qua cùng nguồn danh bạ đã cấp quyền. [Các API và cách đối chiếu trong Postman](SMARTCALL_API_POSTMAN.md).
+Danh bạ và bộ chọn thành viên đọc kết quả Wazo Dird qua FastAPI theo điều kiện tìm kiếm. Khi thiếu quyền bổ sung bộ phận từ Confd, giao diện vẫn có thể hiển thị tên và số đã đọc được từ Dird. Yêu thích đọc danh sách riêng và bổ sung số thiếu bằng UUID hoặc ID trong đúng nguồn. [Các API và cách đối chiếu trong Postman](SMARTCALL_API_POSTMAN.md).
 
 Cập nhật: 20/11/2026. Áp dụng cho D:/Project/Smart_Call_Web_Refactor, nhánh codex/refactor-architecture.
 

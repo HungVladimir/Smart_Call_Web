@@ -1,4 +1,4 @@
-import { mapDirectoryContacts, normalizeDirectoryText } from '../../utils/contactMapper.js'
+import { mapDirectoryContacts } from '../../utils/contactMapper.js'
 import { normalizeExtension } from '../../utils/callPolicy.js'
 import {
   captureSessionContext,
@@ -97,7 +97,6 @@ export class ContactService {
       presences: {},
       presenceCheckedAt: {},
       favoriteIds: [],
-      favoriteContacts: [],
       recentRevision: 0,
     })
     this.pendingFavorites = new Map()
@@ -268,12 +267,13 @@ export class ContactService {
   }
 
   /** Đọc các UUID được yêu cầu trong nguồn đã cấp quyền, chưa đưa dữ liệu vào cache định danh. */
-  async readPublishedMembers(ids, context, signal) {
+  async readPublishedMembers(ids, context, signal, entryIds = []) {
     const source = await this.getDirectorySource(context)
     assertSessionContext(context)
     signal?.throwIfAborted()
     const params = new URLSearchParams({ source: source.uuid })
     for (const id of ids) params.append('ids', id)
+    for (const id of entryIds) params.append('entry_ids', id)
     const data = await requestSmartCall(
       'directory/members?' + params,
       this.authService.getToken(),
@@ -286,7 +286,38 @@ export class ContactService {
     const mapped = mapDirectoryContacts(data, { defaultSource: source.name })
     if (!mapped) throw new Error('Không đọc được các liên hệ từ danh bạ.')
     const requested = new Set(ids)
-    return mapped.filter((contact) => requested.has(contact.uuid))
+    const entries = new Set(entryIds)
+    return mapped.filter((contact) => requested.has(contact.uuid) || entries.has(contact.rawId))
+  }
+
+  /** Tải kết quả tìm theo một trường hoặc toàn bộ một bộ phận đã chọn. */
+  async listPublishedContacts({ field, term = '', department = '', refresh = false, signal }) {
+    const context = captureSessionContext()
+    const source = await this.getDirectorySource(context)
+    signal?.throwIfAborted()
+    const params = new URLSearchParams({ source: source.uuid, field, term, department })
+    if (refresh) params.set('refresh', 'true')
+    const data = await requestSmartCall(
+      'directory/contacts?' + params,
+      this.authService.getToken(),
+      {
+        signal,
+      },
+    )
+    assertSessionContext(context)
+    signal?.throwIfAborted()
+    const contacts = mapDirectoryContacts(data, {
+      favoriteIds: this.favoriteIds,
+      defaultSource: source.name,
+    })
+    if (!contacts) throw new Error('Backend trả danh bạ không hợp lệ.')
+    const notice = [
+      data.limited ? 'Đang hiện 50 kết quả đầu. Hãy nhập cụ thể hơn để thu hẹp.' : '',
+      data.notice,
+    ]
+      .filter(Boolean)
+      .join(' ')
+    return { contacts: this.rememberDirectoryContacts(contacts), notice }
   }
 
   /** Lấy bộ phận từ toàn nguồn đã cấp quyền để bộ lọc bao phủ cả ngoài trang hiện tại. */
@@ -302,45 +333,6 @@ export class ContactService {
     )
     assertSessionContext(context)
     return data
-  }
-
-  /** Lấy đúng một trang server đã lọc theo từ khóa, phòng ban và trạng thái. */
-  async searchPublishedDirectory({
-    term = '',
-    department = '',
-    presence = '',
-    offset = 0,
-    refresh = false,
-    signal,
-  }) {
-    const context = captureSessionContext()
-    const source = await this.getDirectorySource(context)
-    const params = new URLSearchParams({ source: source.uuid, term, department, presence, offset })
-    if (refresh) params.set('refresh', 'true')
-    const data = await requestSmartCall(
-      'directory/contacts?' + params,
-      this.authService.getToken(),
-      { signal },
-    )
-    assertSessionContext(context)
-    if (signal?.aborted) throw new DOMException('Đã hủy tra danh bạ', 'AbortError')
-    const mapped = mapDirectoryContacts(data, {
-      favoriteIds: this.favoriteIds,
-      defaultSource: source.name,
-    })
-    if (!mapped || mapped.length > DIRECTORY_PAGE_SIZE || !Number.isInteger(data.total))
-      throw new Error('Backend trả trang danh bạ không hợp lệ.')
-    const pageOffset = Number.isInteger(data.offset) ? data.offset : offset
-    return {
-      contacts: this.rememberDirectoryContacts(mapped),
-      offset: pageOffset,
-      nextOffset:
-        pageOffset + DIRECTORY_PAGE_SIZE < data.total ? pageOffset + DIRECTORY_PAGE_SIZE : null,
-      total: data.total,
-      notice: data.notice,
-      fetchedAt: data.fetched_at,
-      refreshState: data.refresh_state,
-    }
   }
 
   /** Lấy trang tìm kiếm/duyệt và giữ offset theo số bản ghi Wazo trả, kể cả mục bị ẩn khỏi UI. */
@@ -470,7 +462,7 @@ export class ContactService {
   }
 
   /** Xác minh một máy lẻ trong nguồn Wazo; chỉ công nhận kết quả duy nhất và đầy đủ. */
-  async verifyDirectoryExtension(extension, context) {
+  async verifyDirectoryExtension(extension, context, expectedUuid) {
     const data = await this.requestDirectory(
       '/directories/lookup/default',
       { term: extension },
@@ -483,6 +475,35 @@ export class ContactService {
       Number(data.filtered) > contacts.length
     )
       throw new Error('Chưa xác minh được máy lẻ từ danh bạ Wazo.')
+    const match = this.findUniqueExtension(contacts, extension)
+    if (match?.uuid) return match
+
+    // Profile Lookup có thể thiếu trường số hoặc UUID dù nguồn danh bạ vẫn xuất bản đầy đủ.
+    // Đọc mới cùng nguồn người dùng được phép xem, chỉ gửi SIP khi tìm được đúng một UUID.
+    const source = await this.readDirectoryPage(
+      { search: extension, limit: LOOKUP_MAX_RESULTS, offset: 0 },
+      context,
+    )
+    if (
+      source.filtered > source.contacts.length ||
+      (source.filtered === null && source.contacts.length === LOOKUP_MAX_RESULTS)
+    )
+      throw new Error('Chưa xác minh được hết các liên hệ dùng máy lẻ này.')
+    const directoryMatch = this.findUniqueExtension(source.contacts, extension)
+    if (directoryMatch || !WAZO_USER_UUID.test(expectedUuid)) return directoryMatch
+
+    // Một số nguồn không lập chỉ mục máy lẻ trong search. Với thẻ đã chọn, đọc trực tiếp UUID
+    // và kiểm tra số hiện tại để không gọi vào máy lẻ cũ nếu tài khoản đã đổi số.
+    const byUuid = await this.readDirectoryPage(
+      { uuid: expectedUuid, limit: 2, offset: 0 },
+      context,
+    )
+    if (byUuid.contacts.length !== 1 || byUuid.contacts[0].uuid !== expectedUuid) return null
+    return this.findUniqueExtension(byUuid.contacts, extension)
+  }
+
+  /** Chỉ chấp nhận số trùng toàn bộ và từ chối nếu có nhiều định danh cho cùng số. */
+  findUniqueExtension(contacts, extension) {
     const matches = new Map()
     for (const contact of contacts) {
       if (normalizeExtension(contact.number) === extension)
@@ -490,8 +511,7 @@ export class ContactService {
     }
     if (matches.size > 1)
       throw new Error('Máy lẻ này có nhiều liên hệ. Vui lòng xác minh người nhận.')
-    const match = matches.values().next().value || null
-    return match
+    return matches.values().next().value || null
   }
 
   /** Giữ trạng thái nội bộ chưa xác minh khi dữ liệu kết nối còn thiếu hoặc hết hạn. */
@@ -510,19 +530,38 @@ export class ContactService {
 
   /** Bổ sung số còn thiếu theo UUID thật, bằng nguồn đã cấp quyền cho cùng phiên. */
   async loadFavoriteNumbers(contacts, context, signal) {
-    const ids = new Set()
-    for (const contact of contacts) {
-      if (!contact.number && WAZO_USER_UUID.test(contact.uuid)) ids.add(contact.uuid)
-    }
-    const requested = [...ids]
-    const numbers = new Map()
+    const missing = contacts.filter((contact) => !contact.number && (contact.uuid || contact.rawId))
+    if (!missing.length) return
     try {
-      for (let offset = 0; offset < requested.length; offset += DIRECTORY_PAGE_SIZE) {
-        const batch = requested.slice(offset, offset + DIRECTORY_PAGE_SIZE)
-        const members = await this.readPublishedMembers(batch, context, signal)
-        for (const member of members) {
-          if (member.number) numbers.set(member.uuid, member.number)
+      const source = await this.getDirectorySource(context)
+      const updates = new Map()
+      for (let offset = 0; offset < missing.length; offset += DIRECTORY_PAGE_SIZE) {
+        const batch = missing.slice(offset, offset + DIRECTORY_PAGE_SIZE)
+        const ids = new Set()
+        const entryIds = new Set()
+        for (const contact of batch) {
+          if (WAZO_USER_UUID.test(contact.uuid)) ids.add(contact.uuid)
+          // ID cục bộ có thể trùng giữa hai nguồn. Chỉ ghép nếu mục yêu thích thuộc đúng nguồn.
+          else if (contact.source === source.name || contact.source === source.uuid)
+            entryIds.add(contact.rawId)
         }
+        if (!ids.size && !entryIds.size) continue
+        const members = await this.readPublishedMembers([...ids], context, signal, [...entryIds])
+        for (const contact of batch) {
+          const matches = members.filter((member) =>
+            WAZO_USER_UUID.test(contact.uuid)
+              ? member.uuid === contact.uuid
+              : (contact.source === source.name || contact.source === source.uuid) &&
+                member.rawId === contact.rawId,
+          )
+          if (matches.length === 1 && matches[0].number) updates.set(contact, matches[0])
+        }
+      }
+      assertSessionContext(context)
+      signal?.throwIfAborted()
+      for (const [contact, member] of updates) {
+        contact.uuid = member.uuid
+        contact.number = member.number
       }
     } catch {
       assertSessionContext(context)
@@ -530,56 +569,34 @@ export class ContactService {
       // Nếu nguồn từ chối hoặc tạm lỗi, giữ dữ liệu do API Yêu thích trả và báo thiếu máy lẻ.
       return
     }
-    assertSessionContext(context)
-    signal?.throwIfAborted()
-    for (const contact of contacts) {
-      if (!contact.number && numbers.has(contact.uuid)) contact.number = numbers.get(contact.uuid)
-    }
   }
 
-  /** Đọc riêng danh sách yêu thích khi vào tab; chỉ cắt trang trong tập yêu thích của chính user. */
-  async getFavoritePage({ term = '', offset = 0, signal } = {}) {
+  /** Tải toàn bộ mục Yêu thích do Wazo trả, chỉ bổ sung số còn thiếu trong nguồn đúng quyền. */
+  async listFavorites({ signal } = {}) {
     const context = captureSessionContext()
-    if (offset === 0 || !this.state.favoriteContacts.length) {
-      const data = await this.requestDirectory(
-        '/directories/favorites/default',
-        {},
-        context,
-        signal,
-      )
-      const contacts = mapDirectoryContacts(Array.isArray(data) ? { items: data } : data)
-      if (!contacts) throw new Error('Wazo trả danh sách yêu thích không hợp lệ.')
-      await this.loadFavoriteNumbers(contacts, context, signal)
-      assertSessionContext(context)
-      signal?.throwIfAborted()
-      for (const contact of contacts) contact.isFavorite = true
-      this.state.favoriteIds = [
-        ...new Set(contacts.flatMap((contact) => [contact.rawId, contact.uuid]).filter(Boolean)),
-      ]
-      /** Giữ thẻ chưa có số trong Yêu thích mà không ghi đè định danh đầy đủ đã đọc từ Dird. */
-      const rememberFavorite = (contact) => {
-        if (contact.number) return this.rememberDirectoryContacts([contact])[0]
-        return { ...contact, ...this.directoryContactStatus(contact.uuid) }
-      }
-      this.state.favoriteContacts = contacts.map(rememberFavorite)
+    const data = await this.requestDirectory('/directories/favorites/default', {}, context, signal)
+    // Khi Wazo không công bố nguồn, không tự gán ID cục bộ của mục yêu thích cho nguồn mặc định.
+    const contacts = mapDirectoryContacts(Array.isArray(data) ? { items: data } : data, {
+      defaultSource: '',
+    })
+    if (!contacts) throw new Error('Wazo trả danh sách yêu thích không hợp lệ.')
+    await this.loadFavoriteNumbers(contacts, context, signal)
+    assertSessionContext(context)
+    signal?.throwIfAborted()
+
+    for (const contact of contacts) contact.isFavorite = true
+    this.state.favoriteIds = [
+      ...new Set(contacts.flatMap((contact) => [contact.rawId, contact.uuid]).filter(Boolean)),
+    ]
+    /** Giữ thẻ thiếu số trong Yêu thích mà không ghi đè định danh đầy đủ đã đọc từ Dird. */
+    const rememberFavorite = (contact) => {
+      if (contact.number) return reactive(this.rememberDirectoryContacts([contact])[0])
+      return reactive({ ...contact, ...this.directoryContactStatus(contact.uuid) })
     }
-    const normalized = normalizeDirectoryText(term).replace(/@samsung\.com$/, '')
-    const items = this.state.favoriteContacts.filter(
-      (contact) =>
-        contact.isFavorite &&
-        (!normalized ||
-          [contact.name, contact.number, contact.email, contact.employeeId].some((value) =>
-            normalizeDirectoryText(value).includes(normalized),
-          )),
-    )
-    const contacts = items.slice(offset, offset + DIRECTORY_PAGE_SIZE)
-    const nextOffset = offset + contacts.length
+    const favorites = contacts.map(rememberFavorite)
     return {
-      contacts,
-      total: items.length,
-      nextOffset: nextOffset < items.length ? nextOffset : null,
-      pageKey: JSON.stringify(contacts.map((contact) => [contact.id, contact.number])),
-      notice: this.state.favoriteContacts.some((contact) => contact.isFavorite && !contact.number)
+      contacts: favorites,
+      notice: favorites.some((contact) => !contact.number)
         ? 'Chưa đọc được máy lẻ của một số liên hệ yêu thích.'
         : '',
     }
@@ -1354,7 +1371,6 @@ export class ContactService {
     this.directorySource = null
     this.departmentReadForbidden = false
     this.state.identities.clear()
-    this.state.favoriteContacts = []
     this.state.presenceCheckedAt = {}
     this.defaultSourceName = 'wazo_user'
     this.wazoSourceUuid = ''
@@ -1382,7 +1398,7 @@ export class ContactService {
   }
 
   /** Preview ưu tiên cache. Lượt quay số đọc Dird mới và thay quyền ghi của request preview cũ. */
-  async getOrLookupContact(ext, { fresh = false } = {}) {
+  async getOrLookupContact(ext, { fresh = false, expectedUuid } = {}) {
     const extension = normalizeExtension(ext)
     if (!extension) return null
     const checked = this.extensionChecks.get(extension)
@@ -1391,7 +1407,7 @@ export class ContactService {
     const context = captureSessionContext()
     /** Chỉ lượt tra mới nhất còn quyền cập nhật định danh và cache máy lẻ. */
     const resolveContact = async () => {
-      const result = await this.verifyDirectoryExtension(extension, context)
+      const result = await this.verifyDirectoryExtension(extension, context, expectedUuid)
       assertSessionContext(context)
       if (this.pendingLookups.get(extension) !== pending) {
         const latest = this.pendingLookups.get(extension)
@@ -1492,7 +1508,7 @@ export class ContactService {
         const cached = this.findContactByExtension(extension)
         const contact =
           !cached || expectedUuid || this.isPagedIdentity(cached)
-            ? await this.getOrLookupContact(extension, { fresh: true })
+            ? await this.getOrLookupContact(extension, { fresh: true, expectedUuid })
             : cached
         if (!contact || (expectedUuid && contact.uuid !== expectedUuid)) {
           rejected.push(

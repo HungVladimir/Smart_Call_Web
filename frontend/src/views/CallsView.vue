@@ -82,26 +82,24 @@
       />
 
       <!-- CỘT 3: DANH BẠ NHÂN VIÊN (CONTACTS PANEL) -->
-      <PagedContactsPanel
+      <DirectoryPanel
         :active="directoryActive"
         :busy="isCalling || isDialing || preparingGroup"
         :my-extension="userSessionState.extension"
         :search-query="searchTerm"
         :recent-contacts="recentContacts"
-        :load-page="loadDirectoryPage"
+        :load-contacts="loadDirectoryContacts"
         :load-departments="loadDepartments"
         :refresh-presence="refreshVisiblePresence"
-        :selection-revision="groupSelectionRevision"
         @call="handleCallFromPanel"
         @remember="rememberContact"
         @favorite="toggleFavorite"
-        @start-group="handleStartGroupCallFromContacts"
         @clear-search="clearSearch"
         @clear-recent="clearRecentContacts"
-      />
+      >
+        <template #groups><CallGroupsView embedded @called="mobileTab = 'dialer'" /></template>
+      </DirectoryPanel>
     </div>
-
-    <!-- Modal Tùy chỉnh danh mục hiển thị (Category Tabs Config Modal) -->
 
     <!-- Modal Thêm thành viên vào cuộc gọi đang diễn ra -->
     <AddParticipantModal
@@ -111,7 +109,7 @@
       :group="groupCallService.state"
       :my-extension="userSessionState.extension"
       :can-invite-contact="canInviteContact"
-      :load-page="loadDirectoryPage"
+      :load-contacts="loadDirectoryContacts"
       :refresh-presence="refreshVisiblePresence"
       :submitting="submittingInvite"
       @close="closeAddParticipantModal"
@@ -138,7 +136,8 @@ import { logger } from '@/services/common/loggerService.js'
 import DialerPanel from '@/components/call/DialerPanel.vue'
 import ActiveCallPanel from '@/components/call/ActiveCallPanel.vue'
 import AddParticipantModal from '@/components/call/AddParticipantModal.vue'
-import PagedContactsPanel from '@/components/contacts/PagedContactsPanel.vue'
+import DirectoryPanel from '@/components/contacts/DirectoryPanel.vue'
+import CallGroupsView from './CallGroupsView.vue'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
 
 // View chỉ nối router/state với service và chuyển dữ liệu cho các cụm giao diện.
@@ -146,18 +145,15 @@ const searchTerm = ref('')
 const directoryActive = ref(false)
 const preparingGroup = ref(false)
 const submittingInvite = ref(false)
-const groupSelectionRevision = ref(0)
 let inviteDialogVersion = 0
 /** Hiển thị lịch sử của phiên hiện tại với tên và presence đã biết. */
 const recentContacts = computed(() => contactService.getRecentContacts())
 
-/** Đọc trang hiện tại và tải trạng thái nền cho riêng các liên hệ trên trang. */
-async function loadDirectoryPage(query) {
-  const page =
-    query.tab === 'favorites'
-      ? await contactService.getFavoritePage(query)
-      : await contactService.searchPublishedDirectory(query)
-  return page
+/** Đọc danh sách có phạm vi từ dịch vụ danh bạ. */
+function loadDirectoryContacts(query) {
+  return query.tab === 'favorites'
+    ? contactService.listFavorites(query)
+    : contactService.listPublishedContacts(query)
 }
 
 /** Chuyển lệnh tải presence khi panel lấy lại focus hoặc khi socket mở lại. */
@@ -308,24 +304,7 @@ const durationText = computed(() => {
   return formattedDuration.value
 })
 
-/** Kiểm tra ngay trước khi gọi nhanh từ người đã chọn ở nhiều trang. */
-async function handleStartGroupCallFromContacts(contacts) {
-  const context = captureSessionContext()
-  const targets = await prepareSelectedTargets(contacts)
-  if (!directoryActive.value || isCalling.value || isDialing.value) return
-  if (!targets.length) return
-  if (targets.length === 1 && !confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')) return
-  mobileTab.value = 'dialer'
-  let result = await groupCallService.startGroupCall(targets, { requireGroupConfirmation: true })
-  if (!isSessionContextCurrent(context) || !directoryActive.value) return
-  if (result?.reason === 'TARGET_AVAILABILITY_CHANGED' && result.extension) {
-    if (!confirm('Chỉ còn một người khả dụng. Gọi riêng người này?')) return
-    result = await callService.startCall(result.extension, { expectedUuid: result.expectedUuid })
-  }
-  if (result?.success && isSessionContextCurrent(context)) groupSelectionRevision.value++
-}
-
-/** Xác minh lựa chọn từ nhiều trang một lần, giữ guard phiên và cuộc gọi khi API trả muộn. */
+/** Xác minh người được mời, giữ guard phiên và cuộc gọi khi API trả muộn. */
 async function prepareSelectedTargets(contacts) {
   if (preparingGroup.value) return []
   const context = captureSessionContext()

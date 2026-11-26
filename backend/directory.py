@@ -17,6 +17,7 @@ MANUAL_REFRESH_INTERVAL = 30
 PRESENCE_TTL = 15
 SNAPSHOT_LIMIT = 32
 UUID_QUERY_BUDGET = 2800
+DIRECTORY_SEARCH_LIMIT = 50
 
 
 @dataclass
@@ -60,7 +61,7 @@ def department_name(row):
 
 # Chỉ công bố trường danh bạ và lấy số từ cấu trúc Dird/Confd đã biết.
 def published_row(contact, user_uuid):
-    number = next((contact.get(key) for key in ("exten", "extension", "number", "callable", "phone_number")
+    number = next((contact.get(key) for key in ("exten", "extension", "number", "callable", "number_office", "phone_number")
                    if contact.get(key)), "")
     numbers = contact.get("numbers") or []
     if not number and numbers:
@@ -113,6 +114,37 @@ def search_page(rows, term, department, presence, states, offset, limit, owner):
 # Chỉ dùng kiểu so sánh được và không phụ thuộc nội dung từ điển.
 def directory_order(item):
     return item[:3]
+
+
+# Trả danh sách cho một truy vấn có phạm vi, không cho tải toàn bộ nguồn từ giao diện tìm kiếm.
+def search_contacts(rows, field, term, department, owner):
+    term = normalize(term)
+    if field == "email":
+        term = term.removesuffix("@samsung.com")
+    if field != "department" and not term:
+        return {"items": [], "limited": False}
+    if field == "department" and department == "__unassigned__":
+        rows = [row for row in rows if row.get("department_state") == "empty"]
+    elif field == "department":
+        rows = [row for row in rows if normalize(department_name(row)) == normalize(department)]
+    elif field == "extension":
+        rows = [row for row in rows if normalize(row.get("number")) == term]
+    elif term:
+        key = {"employee_id": "employee_id", "email": "email", "name": "name"}[field]
+        rows = [row for row in rows if term in search_field(row, key)]
+    limit = max(1, len(rows)) if field == "department" else DIRECTORY_SEARCH_LIMIT
+    result = search_page(rows, "", "", "", {}, 0, limit, owner)
+    return {"items": result["items"], "limited": result["total"] > limit}
+
+
+# Chuẩn hóa đúng trường đã chọn, giữ số 0 đầu mã nhân viên.
+def search_field(row, field):
+    if field == "name":
+        return normalize(row.get("name") or row.get("display_name") or row.get("displayName") or
+                         " ".join(str(row.get(key) or "") for key in ("firstname", "lastname")))
+    if field == "employee_id":
+        return normalize(row.get("employee_id") or row.get("epId"))
+    return normalize(row.get(field))
 
 
 # Presence thiếu chứng cứ phải là unknown để không lọt vào bộ lọc ngoại tuyến.

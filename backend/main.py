@@ -14,7 +14,7 @@ from config import Settings
 from store import Store
 from oidc import OidcClient, fail
 from wazo import WazoClient
-from directory import Directory, department_name, normalize, search_page
+from directory import Directory, department_name, normalize, search_contacts, search_page
 from call_groups import CallGroupInput, call_groups
 
 
@@ -133,24 +133,39 @@ def create_app(settings=None):
     async def directory_contacts(source: UUID, request: Request, term: str = Query("", max_length=160),
                                  department: str = Query("", max_length=160),
                                  presence: str = Query("", pattern="^(online|offline)?$"),
+                                 field: str = Query("", pattern="^(name|extension|employee_id|email|department)?$"),
                                  offset: int = Query(0, ge=0, le=10000), refresh: bool = False,
                                  x_auth_token: str = Header("")):
         directory = request.app.state.directory
         owner, token, key = await directory.actor(x_auth_token)
+        # Tìm kiếm mới phải có phạm vi. Máy lẻ chỉ khớp toàn bộ 4 hoặc 5 chữ số.
+        if field:
+            term = term.strip()
+            matchable = (field == "department" and department.strip()
+                         or field == "extension" and len(term) in (4, 5) and term.isascii() and term.isdecimal()
+                         or field in ("name", "employee_id", "email") and len(term) >= 2)
+            if not matchable:
+                return {"items": [], "limited": False}
         snapshot, refresh_state = await directory.contacts(str(source), token, key, refresh)
+        if field:
+            return dict(search_contacts(snapshot.rows, field, term, department, owner),
+                        notice=snapshot.notice, fetched_at=snapshot.fetched_at, refresh_state=refresh_state)
         states = await directory.status(str(source), owner, token, key, snapshot) if presence else {}
         return dict(search_page(snapshot.rows, term, department, presence, states, offset, 30, owner),
                     notice=snapshot.notice, fetched_at=snapshot.fetched_at, refresh_state=refresh_state)
 
     # Phân giải đúng UUID của nhóm đã lưu, kể cả khi các thành viên ở trang khác.
     @app.get("/api/directory/members")
-    async def directory_members(source: UUID, request: Request, ids: list[UUID] = Query(max_length=100),
+    async def directory_members(source: UUID, request: Request, ids: list[UUID] = Query(default=[], max_length=100),
+                                entry_ids: list[str] = Query(default=[], max_length=100),
                                 x_auth_token: str = Header("")):
         directory = request.app.state.directory
         _, token, key = await directory.actor(x_auth_token)
         snapshot, _ = await directory.contacts(str(source), token, key)
         requested = {str(user) for user in ids}
-        return {"items": [row for row in snapshot.rows if row["uuid"] in requested]}
+        entries = {entry for entry in entry_ids if 0 < len(entry) <= 160}
+        return {"items": [row for row in snapshot.rows
+                          if row["uuid"] in requested or str(row.get("id", row["uuid"])) in entries]}
 
     # Lấy danh mục bộ phận từ toàn bộ nguồn đã xác minh quyền.
     @app.get("/api/directory/departments")
@@ -165,6 +180,7 @@ def create_app(settings=None):
             if label:
                 labels.setdefault(normalize(label), label)
         return {"items": sorted(labels.values(), key=normalize), "notice": snapshot.notice,
+                "has_unassigned": any(row.get("department_state") == "empty" for row in snapshot.rows),
                 "fetched_at": snapshot.fetched_at, "refresh_state": refresh_state}
 
     # Đọc nhóm gọi của tài khoản đã xác thực.

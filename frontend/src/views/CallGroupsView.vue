@@ -1,5 +1,5 @@
 <template>
-  <section class="groups-view calls-view">
+  <section class="groups-view calls-view" :class="{ 'groups-embedded': embedded }">
     <button
       v-if="editor"
       class="group-button group-back"
@@ -10,7 +10,7 @@
       <UiIcon name="back" /> Nhóm đã lưu
     </button>
     <header class="groups-header">
-      <div>
+      <div v-if="!embedded">
         <h1>{{ editor ? (editor.id ? 'Sửa nhóm' : 'Tạo nhóm') : 'Gọi nhóm' }}</h1>
         <p>
           {{
@@ -155,13 +155,13 @@
       </form>
       <div class="group-directory">
         <h2>Chọn đồng nghiệp</h2>
-        <PagedContactsPanel
+        <DirectoryPanel
           :active="active"
           picker
           :busy="busy"
           :my-extension="myExtension"
           :selected-ids="selectedIds"
-          :load-page="loadPage"
+          :load-contacts="loadContacts"
           :refresh-presence="refreshPresence"
           @toggle-member="toggleMember"
         />
@@ -170,10 +170,10 @@
   </section>
 </template>
 <script setup>
-import { computed, nextTick, onActivated, onDeactivated, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import UiIcon from '@/components/common/UiIcon.vue'
-import PagedContactsPanel from '@/components/contacts/PagedContactsPanel.vue'
+import DirectoryPanel from '@/components/contacts/DirectoryPanel.vue'
 import { getAvatarColor, getAvatarInitials } from '@/utils/avatar.js'
 import { authService, callService, contactService, groupCallService } from '@/services/index.js'
 import {
@@ -185,6 +185,9 @@ import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/
 import { callState } from '@/state/callState.js'
 
 const router = useRouter()
+const route = useRoute()
+const props = defineProps({ embedded: Boolean })
+const emit = defineEmits(['called'])
 const groups = ref([])
 const editor = ref(null)
 const groupNameInput = ref(null)
@@ -195,7 +198,7 @@ const notice = ref('')
 const error = ref('')
 let version = 0
 
-/** Lấy danh sách UUID đã chọn để thẻ ở trang khác đánh dấu đúng. */
+/** Lấy danh sách UUID đã chọn để các lượt tìm kế tiếp đánh dấu đúng. */
 const selectedIds = computed(() => editor.value?.members.map(memberId) || [])
 /** Bỏ số của chính người dùng khỏi bộ chọn. */
 const myExtension = computed(() => authService.getCurrentExtension())
@@ -219,7 +222,15 @@ async function loadGroups() {
   error.value = ''
   try {
     const items = await listCallGroups(authService.getToken())
-    if (stillActive(context, viewVersion)) groups.value = items
+    if (!stillActive(context, viewVersion)) return
+    groups.value = items
+    // Từ danh sách nhúng, chỉ mở màn riêng khi có yêu cầu tạo hoặc sửa.
+    const draft = props.embedded ? '' : route.query.draft
+    if (draft === 'new') createGroup()
+    else if (draft) {
+      const group = items.find((item) => item.id === draft)
+      if (group) await editGroup(group)
+    }
   } catch (failure) {
     if (stillActive(context, viewVersion)) error.value = failure.message
   } finally {
@@ -234,11 +245,26 @@ function hideGroups() {
   busy.value = false
   version += 1
 }
-onActivated(loadGroups)
-onDeactivated(hideGroups)
+/** Nạp danh sách ở màn riêng khi RouterView kích hoạt. */
+function activateGroupsPage() {
+  if (!props.embedded) void loadGroups()
+}
 
-/** Khởi tạo biểu mẫu mới để chọn đồng nghiệp bằng danh bạ phân trang. */
+/** Nạp danh sách khi tab Gọi nhóm trong danh bạ vừa xuất hiện. */
+function mountEmbeddedGroups() {
+  if (props.embedded) void loadGroups()
+}
+onMounted(mountEmbeddedGroups)
+onActivated(activateGroupsPage)
+onDeactivated(hideGroups)
+onUnmounted(hideGroups)
+
+/** Mở trình tạo riêng từ tab nhúng hoặc tạo biểu mẫu tại màn nhóm. */
 function createGroup() {
+  if (props.embedded) {
+    void router.push({ path: '/call-groups', query: { draft: 'new' } })
+    return
+  }
   error.value = ''
   notice.value = ''
   editor.value = { id: '', name: '', members: [] }
@@ -255,10 +281,15 @@ async function focusGroupName() {
 function closeEditor() {
   editor.value = null
   error.value = ''
+  if (route.query.draft) void router.replace({ path: '/call-groups' })
 }
 
 /** Tra lại thành viên qua UUID và giữ mục đã rời danh bạ để người dùng có thể bỏ. */
 async function editGroup(group) {
+  if (props.embedded) {
+    await router.push({ path: '/call-groups', query: { draft: group.id } })
+    return
+  }
   await perform(async (context, viewVersion) => {
     const contacts = await contactService.getSavedGroupMembers(group.members)
     if (!stillActive(context, viewVersion)) return
@@ -274,7 +305,7 @@ async function editGroup(group) {
   if (editor.value?.id === group.id) void focusGroupName()
 }
 
-/** Chọn hoặc bỏ một UUID mà không phụ thuộc máy lẻ hay trang đang xem. */
+/** Chọn hoặc bỏ một UUID độc lập với từ khóa đang tìm. */
 function toggleMember(contact) {
   if (busy.value || !editor.value || !contact.uuid) return
   const members = editor.value.members
@@ -314,7 +345,7 @@ async function submitGroup() {
     )
     if (!stillActive(context, viewVersion)) return
     groups.value = [...groups.value.filter((group) => group.id !== saved.id), saved]
-    editor.value = null
+    closeEditor()
     notice.value = 'Đã lưu nhóm.'
   })
 }
@@ -373,13 +404,14 @@ async function callGroup(group) {
       error.value = 'Chưa bắt đầu được cuộc gọi. Kiểm tra trạng thái rồi thử lại.'
       return
     }
+    if (props.embedded) emit('called')
     await router.push({ path: '/calls', query: { active: 'true' } })
   })
 }
 
 /** Đọc kết quả chọn thành viên từ dịch vụ danh bạ. */
-function loadPage(query) {
-  return contactService.searchPublishedDirectory(query)
+function loadContacts(query) {
+  return contactService.listPublishedContacts(query)
 }
 
 /** Cập nhật presence của trang bộ chọn đang mở. */
@@ -411,6 +443,17 @@ function refreshPresence(contacts, force) {
   padding-bottom: 21px;
   margin-bottom: 22px;
   border-bottom: 1px solid var(--group-line);
+}
+.groups-embedded {
+  padding: 0;
+}
+.groups-embedded .groups-header {
+  justify-content: flex-end;
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+.groups-embedded .groups-header:empty {
+  display: none;
 }
 .groups-header h1 {
   margin: 0 0 6px;

@@ -21,7 +21,7 @@
       </div>
 
       <div
-        v-if="loadPage && selectedContacts.size"
+        v-if="loadContacts && selectedContacts.size"
         class="add-participant-search"
         aria-label="Người đã chọn"
       >
@@ -35,21 +35,22 @@
         </button>
       </div>
       <div class="add-participant-list">
+        <p v-if="results.notice.value" role="status">{{ results.notice.value }}</p>
         <div
-          v-if="paging.loading.value && !availableAddParticipants.length"
+          v-if="results.loading.value && !availableAddParticipants.length"
           class="add-participant-empty"
         >
           <p>Đang tìm đồng nghiệp…</p>
         </div>
-        <div v-else-if="paging.error.value" class="add-participant-empty" role="alert">
-          <p>{{ paging.error.value }}</p>
-          <button type="button" @click="paging.retry">Thử lại</button>
+        <div v-else-if="results.error.value" class="add-participant-empty" role="alert">
+          <p>{{ results.error.value }}</p>
+          <button type="button" @click="results.refresh">Thử lại</button>
         </div>
-        <div
-          v-else-if="loadPage && addParticipantSearch.trim().length === 1"
-          class="add-participant-empty"
-        >
-          <p>Nhập ít nhất 2 ký tự để tìm.</p>
+        <div v-else-if="loadContacts && searchHint" class="add-participant-empty">
+          <p>{{ searchHint }}</p>
+        </div>
+        <div v-else-if="loadContacts && !addParticipantSearch.trim()" class="add-participant-empty">
+          <p>Nhập tên hoặc máy lẻ để tìm người cần mời.</p>
         </div>
         <div v-else-if="availableAddParticipants.length === 0" class="add-participant-empty">
           <p>Không có đồng nghiệp trực tuyến nào khả dụng để mời.</p>
@@ -81,14 +82,6 @@
           </div>
           <ContactPresenceDot :status="c.status" />
         </div>
-        <button
-          v-if="paging.nextOffset.value !== null && !paging.error.value"
-          type="button"
-          :disabled="paging.loading.value"
-          @click="paging.loadMore"
-        >
-          Xem thêm
-        </button>
       </div>
 
       <div class="add-participant-footer">
@@ -109,7 +102,8 @@
 import UiIcon from '@/components/common/UiIcon.vue'
 import { ref, computed, watch } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
-import { useDirectoryPages } from '@/composables/useDirectoryPages.js'
+import { useDirectoryResults } from '@/composables/useDirectoryResults.js'
+import { directorySearchHint } from '@/utils/directorySearch.js'
 import ContactPresenceDot from '@/components/contacts/ContactPresenceDot.vue'
 
 /** Chỉ giữ lựa chọn tạm khi modal mở; gửi danh sách máy lẻ đã chọn cho view xử lý. */
@@ -121,7 +115,7 @@ const props = defineProps({
   group: { type: Object, required: true },
   myExtension: { type: String, default: '' },
   canInviteContact: { type: Function, required: true },
-  loadPage: { type: Function, default: null },
+  loadContacts: { type: Function, default: null },
   refreshPresence: { type: Function, default: null },
 })
 const emit = defineEmits(['close', 'confirm'])
@@ -134,18 +128,33 @@ const addParticipantSearch = ref('')
 
 const selectedContacts = ref(new Map())
 
-/** Chỉ tải trang trong vòng đời của modal và cuộc gọi đang mời. */
+/** Chọn tìm theo số hoặc tên dựa trên nội dung người dùng nhập. */
+const searchField = computed(() =>
+  /^\d+$/.test(addParticipantSearch.value.trim()) ? 'extension' : 'name',
+)
+/** Dùng cùng giới hạn nhập máy lẻ như danh bạ chính. */
+const searchHint = computed(() =>
+  directorySearchHint(searchField.value, addParticipantSearch.value.trim()),
+)
+
+/** Chỉ tìm khi modal đang mở và từ khóa đủ điều kiện. */
 function getQuery() {
-  if (!props.isOpen || !props.loadPage) return null
+  if (
+    !props.isOpen ||
+    !props.loadContacts ||
+    searchHint.value ||
+    !addParticipantSearch.value.trim()
+  )
+    return null
   const term = addParticipantSearch.value.trim()
-  return { term, waitForInput: term.length === 1, callId: props.call?.callId }
+  return { field: searchField.value, term, callId: props.call?.callId }
 }
 
 /** Nhờ View tải trang qua ContactService. */
-function requestPage(query) {
-  return props.loadPage(query)
+function requestResults(query) {
+  return props.loadContacts(query)
 }
-const paging = useDirectoryPages(getQuery, requestPage)
+const results = useDirectoryResults(getQuery, requestResults)
 
 /** Lấy trạng thái cho đúng trang modal, không quét cả danh bạ khi người dùng mở modal. */
 function refreshModalPresence(page, previousPage, onCleanup) {
@@ -154,7 +163,7 @@ function refreshModalPresence(page, previousPage, onCleanup) {
   onCleanup(() => controller.abort())
   props.refreshPresence(page[0], true, controller.signal)
 }
-watch([paging.contacts, () => props.isOpen], refreshModalPresence)
+watch([results.contacts, () => props.isOpen], refreshModalPresence)
 
 /**
  * Lọc người có thể mời: bỏ chính mình, peer/thành viên đã có và người không sẵn sàng; áp dụng từ
@@ -172,14 +181,14 @@ const availableAddParticipants = computed(() => {
   if (!isGroup && activeExt) inCallExts.add(activeExt)
   if (myExt) inCallExts.add(myExt)
 
-  const source = props.loadPage ? paging.contacts.value : contacts.value
+  const source = props.loadContacts ? results.contacts.value : contacts.value
   let list = source.filter((c) => {
     const ext = String(c.number || '').trim()
-    return ext && (props.loadPage || props.canInviteContact(c)) && !inCallExts.has(ext)
+    return ext && (props.loadContacts || props.canInviteContact(c)) && !inCallExts.has(ext)
   })
 
   const q = addParticipantSearch.value.trim().toLowerCase()
-  if (q && !props.loadPage) {
+  if (q && !props.loadContacts) {
     list = list.filter(
       (c) =>
         (c.name || '').toLowerCase().includes(q) ||
@@ -223,7 +232,7 @@ watch([() => props.isOpen, () => props.call?.callId], resetSelection)
 const closeAddParticipantModal = () => emit('close')
 /** Loại lựa chọn vừa mất khả dụng rồi phát danh sách máy lẻ hợp lệ cho View; chưa tự gọi SDK/API. */
 const confirmAddParticipants = () => {
-  if (props.loadPage) {
+  if (props.loadContacts) {
     if (selectedContacts.value.size) emit('confirm', [...selectedContacts.value.values()])
     return
   }

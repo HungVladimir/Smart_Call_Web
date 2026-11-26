@@ -24,7 +24,10 @@ export function mapDirectoryContacts(data, { favoriteIds = [], defaultSource = '
         row.relations?.source_entry_id ||
         row.id ||
         row.column_values?.[data.column_types.indexOf('id')],
-      uuid: row.relations?.user_uuid,
+      uuid:
+        row.relations?.user_uuid ||
+        row.user_uuid ||
+        row.column_values?.[data.column_types.indexOf('uuid')],
       source: row.source || row.backend,
       favorited: row.favorited,
     }))

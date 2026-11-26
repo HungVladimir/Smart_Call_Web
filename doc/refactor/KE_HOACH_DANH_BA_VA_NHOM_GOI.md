@@ -1,25 +1,22 @@
 # Kế hoạch SmartCall cho danh bạ lớn và nhóm gọi có tên
 
-Bản để review trên codex/refactor-architecture tại a89c047. Mục tiêu là mở màn gọi nhanh, tìm đúng người trong toàn bộ danh bạ, hiển thị tối đa 30 liên hệ mỗi trang và lưu nhóm để gọi lại.
+Hướng dẫn thử luồng danh bạ và nhóm gọi hiện hành trên nhánh `codex/refactor-architecture`. Kế hoạch phân trang ban đầu nằm ở phần lịch sử bên dưới.
 
 ## Bản triển khai và cách thử
 
-Cập nhật ngày 25/11/2026. Pull nhánh refactor, khởi động lại FastAPI và build lại frontend. Proxy cần chuyển các đường dẫn /api/directory và /api/call-groups về cùng FastAPI đang phục vụ Single ID. Token người dùng phải thuộc Wazo host và tenant cấu hình của backend. Nhóm cá nhân dùng bảng saved_call_groups trong SQLite hiện tại. Không cần bật cờ phân trang.
+Cập nhật ngày 26/11/2026. Pull nhánh refactor, khởi động lại FastAPI và build lại frontend. Proxy chuyển `/api/directory` và `/api/call-groups` về FastAPI. Token phải thuộc Wazo host và tenant của backend.
 
-Danh bạ có Tất cả, Yêu thích, Bộ phận và Gọi nhóm. Tất cả mặc định hiện liên hệ gần đây. Bộ lọc online/offline toàn danh bạ lọc ở FastAPI rồi trả một trang 30 người. Mỗi worker giữ snapshot Dird tối đa 120 giây và snapshot lọc presence toàn nguồn tối đa 15 giây, chỉ lấy snapshot toàn nguồn khi có người dùng bộ lọc trạng thái. Các thẻ liên hệ cập nhật bằng WebSocket và khi đổi trang, reconnect hoặc mở lại tab. Danh mục bộ phận dùng description từ Dird trước, bổ sung từ Confd nếu cùng tài khoản có quyền đọc view directory. Nếu cả hai nơi thiếu description, Web dùng trường bộ phận cũ có nội dung.
+1. Mở Tất cả. Khi ô trống, Web chỉ hiện liên hệ gần đây từ phiên này. Chọn lần lượt Tên, Máy lẻ, Mã nhân viên và Email. Với Máy lẻ, nhập `10` chưa tìm. Nhập `1001` mới tra toàn bộ số. Kiểm tra tên có dấu hoặc không dấu, email rút gọn và ID có số 0 đầu. Truy vấn quá rộng hiện tối đa 50 kết quả và yêu cầu thu hẹp.
+2. Mở Yêu thích. Kiểm tra máy lẻ của cùng một người như Alice giữa Tất cả và Yêu thích. Thử bộ lọc Trực tuyến/Ngoại tuyến. Presence chỉ đọc tập liên hệ đã tải, gồm danh sách yêu thích chứ không quét toàn nguồn.
+3. Mở Bộ phận và chọn tên `description` đã biết. Nếu thiếu tên bộ phận, đối chiếu Wazo Dird xem nguồn có trả `description` không. Nếu nguồn thiếu trường này, kiểm tra quyền bằng chính token người dùng ở Confd. Chỉ hiện Chưa có bộ phận khi có bản ghi được xác nhận trống.
+4. Mở Gọi nhóm từ danh bạ. Danh sách nhóm xuất hiện ngay. Bấm Tạo nhóm mới mở bộ chọn, thử tìm và chọn đồng nghiệp từ nhiều lượt tìm. Lưu nhóm, mở lại, gọi và kiểm tra danh sách bỏ qua khi có người ngoại tuyến. Nếu chỉ còn một người thì xác nhận trước khi gọi riêng.
+5. Trong Network, kiểm tra không có nút hay lượt lật trang ở Web. Backend vẫn đọc nguồn Wazo theo lô trong phạm vi quyền token. Đo riêng thời gian dựng snapshot và các lượt dùng lại cache khi thử dữ liệu công ty.
 
-Mã nhân viên dùng trường employee_id hoặc epId từ nguồn. Nếu nguồn không có, backend bổ sung epId khi nhân viên đăng nhập Single ID. Có thể nhập ID của cả lô từ CSV kết quả import Wazo mà không ghi vào tổng đài. Trên máy backend, chạy `.\backend\.venv\Scripts\python.exe -X utf8 backend/seed_wazo_test_users.py --index-report <CSV_KET_QUA>`, đối chiếu tenant và nhập TAO. Chỉ sử dụng báo cáo của đúng tenant. Dòng pending bị bỏ qua. Nếu CSV không có UUID đã xác nhận, đối soát Wazo trước khi nhập.
+Mã nhân viên ưu tiên trường `employee_id` hoặc `epId`. Backend có thể bổ sung ID từ lúc người đó đăng nhập Single ID hoặc từ báo cáo import CSV đã xác nhận UUID bằng `.\backend\.venv\Scripts\python.exe -X utf8 backend/seed_wazo_test_users.py --index-report <CSV_KET_QUA>`.
 
-Kiểm tra Wazo công ty theo thứ tự:
+## Kế hoạch lịch sử dùng phân trang
 
-1. Dùng tài khoản thường tìm tên có dấu hoặc không dấu, số máy lẻ, email có hoặc không có đuôi samsung.com, và mã nhân viên có số 0 đầu. Thử người ở cuối tập dữ liệu.
-2. Mở Bộ phận, thử description thật, phòng ban chỉ có người ở cuối danh bạ và mục Chưa có bộ phận.
-3. Bật Trực tuyến. Kiểm tra trang đầu có tối đa 30 người, và khi bấm Trang sau thì trang trước biến mất. Xem Network để xác nhận trình duyệt chỉ hỏi presence cho trang hiện tại.
-4. Tạo nhóm có tên và chọn người ở hai trang. Mở cùng tài khoản ở trình duyệt khác, thử sửa, gọi và xóa. Ngắt thiết bị của một người trước lúc gọi và quan sát danh sách bỏ qua. Khi chỉ còn một người, kiểm tra hộp xác nhận gọi riêng.
-5. Kiểm tra cuộc gọi nhóm vẫn giữ người gọi ban đầu làm host. Khi người tham gia từ chối hoặc rời, số người kết nối và danh sách đang mời cần cập nhật đúng.
-6. Bật DevTools khi mở Web, vào danh bạ và reconnect. Kiểm tra phần chat không còn gửi request phòng/tin nhắn. Presence trên API chatd vẫn phục vụ thoại.
-
-Đã kiểm tra mô phỏng 3.000 danh bạ trên API backend. Cần đo thật thời gian dựng snapshot đầu tiên, số request, byte phản hồi và tải Wazo khi nhiều phiên đăng nhập cùng lúc. Cache hiện nằm trong từng worker, nên mỗi worker có thể cần tự dựng snapshot đầu tiên.
+Các mục dưới đây mô tả thiết kế trước ngày 26/11/2026.
 
 ## 1. Kết quả kiểm tra Bộ phận trước khi triển khai
 

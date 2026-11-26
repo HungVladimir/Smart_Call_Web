@@ -1136,7 +1136,10 @@ export class CallService {
       let target = this.contactService.findContactByExtension(targetExtension)
       const verifyTarget = !meta.allowUnknown || Boolean(meta.expectedUuid)
       if (verifyTarget)
-        target = await this.contactService.getOrLookupContact(targetExtension, { fresh: true })
+        target = await this.contactService.getOrLookupContact(targetExtension, {
+          fresh: true,
+          ...(meta.expectedUuid ? { expectedUuid: meta.expectedUuid } : {}),
+        })
       // Chỉ tác vụ/callback còn thuộc đúng phiên và đúng thế hệ được dùng kết quả; bỏ dữ liệu đến
       // muộn sau hủy/đổi phiên.
       if (!isSessionContextCurrent(context) || generation !== this.callGeneration)

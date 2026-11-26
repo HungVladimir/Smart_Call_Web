@@ -2,7 +2,9 @@
   <span v-if="glyph" aria-hidden="true" v-bind="$attrs">{{ glyph }}</span>
   <svg
     v-else-if="svgAttributes"
-    :class="{ 'ui-icon': svgAttributes === compactOutline }"
+    class="ui-icon"
+    width="1em"
+    height="1em"
     viewBox="0 0 24 24"
     aria-hidden="true"
     focusable="false"
@@ -128,6 +130,22 @@
     />
     <path v-else-if="name === 'close'" d="m6 6 12 12M18 6 6 18" />
     <path v-else-if="name === 'check'" d="m5 12 4 4L19 6" />
+    <template v-else-if="name === 'search-outline'">
+      <circle cx="10.8" cy="10.8" r="6.3" />
+      <path d="m16 16 4 4" />
+    </template>
+    <template v-else-if="name === 'people'">
+      <circle cx="12" cy="8" r="3.3" />
+      <path d="M5 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2" />
+    </template>
+    <path
+      v-else-if="name === 'star'"
+      d="m12 3 2.7 5.6 6.2.9-4.5 4.4 1.1 6.1-5.5-2.9L6.5 20l1.1-6.1-4.5-4.4 6.2-.9Z"
+    />
+    <path
+      v-else-if="name === 'office'"
+      d="M4 21h16M6 21V5h12v16m-8 0v-4h4v4M9 9h1m4 0h1m-6 4h1m4 0h1"
+    />
   </svg>
 </template>
 
@@ -219,6 +237,10 @@ const svgIcons = {
   trash: compactOutline,
   close: compactOutline,
   check: compactOutline,
+  'search-outline': compactOutline,
+  people: compactOutline,
+  star: compactOutline,
+  office: compactOutline,
 }
 
 /** Lấy ký tự đã đăng ký và dùng cùng kiểu chữ với giao diện chứa icon. */
@@ -235,8 +257,6 @@ const svgAttributes = computed(function getSvgAttributes() {
 <style scoped>
 .ui-icon {
   display: inline-block;
-  width: 1em;
-  height: 1em;
   flex: 0 0 auto;
   vertical-align: middle;
 }
