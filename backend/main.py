@@ -8,7 +8,7 @@ from uuid import UUID
 import httpx
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
 from config import Settings
 from store import Store
@@ -41,7 +41,13 @@ def create_app(settings=None):
     # Không cache hồ sơ/token; Origin chặn POST từ website khác trước khi xử lý.
     @app.middleware("http")
     async def protect_response(request, call_next):
-        if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("origin") != settings.public_origin:
+        origin = request.headers.get("origin")
+        # Postman và App gọi route đọc này bằng header riêng, không dùng cookie hay Origin.
+        wrapper_from_native_client = (
+            request.method == "POST" and request.url.path == "/api/wrapper" and origin is None
+        )
+        if (request.method not in ("GET", "HEAD", "OPTIONS")
+                and origin != settings.public_origin and not wrapper_from_native_client):
             return JSONResponse({"detail": {"code": "ORIGIN_INVALID", "message": "Origin không hợp lệ."}}, status_code=403)
         response = await call_next(request)
         response.headers.update({"Cache-Control": "no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer"})
@@ -79,18 +85,32 @@ def create_app(settings=None):
     async def health():
         return {"status": "ok"}
 
-    # Cổng thử nghiệm chỉ cho đọc danh sách context. Key rỗng thì route không hoạt động.
+    # Xác thực key trước khi thực hiện bất kỳ request quản trị nào sang Wazo.
+    def require_wrapper_key(supplied_key):
+        configured_key = settings.wazo_wrapper_test_key
+        if not configured_key:
+            fail("WRAPPER_DISABLED", "API wrapper thử nghiệm chưa được bật.", 404)
+        # So sánh theo byte để từ chối an toàn cả khi client gửi ký tự ngoài ASCII.
+        if not secrets.compare_digest(supplied_key.encode(), configured_key.encode()):
+            fail("WRAPPER_KEY_INVALID", "Key thử nghiệm không hợp lệ.", 401)
+
+    # Tương thích với phép thử đọc context qua GET.
     @app.get("/api/wrapper/contexts")
     async def wrapper_contexts(request: Request, x_smartcall_test_key: str = Header("", max_length=256),
                                limit: int = Query(30, ge=1, le=50),
                                offset: int = Query(0, ge=0, le=10000)):
-        configured_key = settings.wazo_wrapper_test_key
-        if not configured_key:
-            fail("WRAPPER_DISABLED", "API wrapper thử nghiệm chưa được bật.", 404)
-        # So sánh theo byte để từ chối key sai mà không lệch thời gian theo tiền tố.
-        if not secrets.compare_digest(x_smartcall_test_key.encode(), configured_key.encode()):
-            fail("WRAPPER_KEY_INVALID", "Key thử nghiệm không hợp lệ.", 401)
+        require_wrapper_key(x_smartcall_test_key)
         return await request.app.state.wazo.list_wrapper_contexts(limit, offset)
+
+    # Điều phối lệnh đã duyệt. Backend tự chọn token, tenant, host và URL gọi Wazo.
+    @app.post("/api/wrapper")
+    async def wrapper_command(command: WazoWrapperCommand, request: Request,
+                              x_smartcall_test_key: str = Header("", max_length=256)):
+        require_wrapper_key(x_smartcall_test_key)
+        operation = (command.method.strip().upper(), command.path)
+        if operation != ("GET", "/api/confd/1.1/contexts"):
+            fail("WRAPPER_OPERATION_FORBIDDEN", "Thao tác Wazo chưa được phép qua wrapper.", 403)
+        return await request.app.state.wazo.list_wrapper_contexts(command.query.limit, command.query.offset)
 
     # Chuyển cửa sổ tới authorization endpoint, gắn cookie giao dịch riêng cho browser.
     @app.get("/api/auth/login")
@@ -275,6 +295,21 @@ def create_app(settings=None):
         return response
 
     return app
+
+
+class WazoWrapperQuery(BaseModel):
+    """Chỉ nhận các tham số phân trang của thao tác đọc context."""
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    limit: int = Field(default=30, ge=1, le=50, strict=True)
+    offset: int = Field(default=0, ge=0, le=10000, strict=True)
+
+
+class WazoWrapperCommand(BaseModel):
+    """Mô tả thao tác đã đăng ký, không cho client gửi header hay body tùy ý tới Wazo."""
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    method: str = Field(min_length=1, max_length=12)
+    path: str = Field(min_length=1, max_length=160)
+    query: WazoWrapperQuery = Field(default_factory=WazoWrapperQuery)
 
 
 class WazoSessionRequest(BaseModel):

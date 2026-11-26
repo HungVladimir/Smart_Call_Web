@@ -357,3 +357,5 @@ Nguồn API: https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/w
 ## Wrapper thử nghiệm đọc context Wazo
 
 26/11/2026. Bổ sung GET /api/wrapper/contexts cho Web, App và Postman trong môi trường thử. Bật bằng biến SMARTCALL_WAZO_WRAPPER_TEST_KEY và gửi X-SmartCall-Test-Key. Backend dùng credential Wazo đã cấu hình, chỉ đọc một trang context trong tenant cố định và lọc trường trả về. 56 ca unittest backend đạt, một ca bỏ qua. Đã kiểm tra route tắt, key sai, key đúng, giới hạn truy vấn và thu hồi token trên Wazo mô phỏng.
+
+26/11/2026. Thêm POST /api/wrapper với JSON method, path, query và header X-SmartCall-Test-Key cho Android và Postman. Danh sách thao tác hiện gồm GET /api/confd/1.1/contexts với limit/offset. Kiểm thử backend đạt 57 ca, một ca bỏ qua. Lệnh, query và Origin không hợp lệ bị chặn trước Wazo. GET /api/wrapper/contexts tiếp tục phục vụ phép thử cũ.

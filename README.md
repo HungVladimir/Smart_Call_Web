@@ -42,16 +42,34 @@ Route trả items, total, offset và có thể kèm notice về dữ liệu bộ
 - GET /api/directory/departments dùng cùng header, source là tùy chọn và trả items, has_unassigned và notice.
 - App gọi host HTTPS đã triển khai SmartCall. Trong môi trường dev trên máy tính, có thể gọi FastAPI ở cổng 8801.
 
-## Thử API đọc context Wazo
+## Thử wrapper Wazo bằng Android hoặc Postman
 
-Đặt biến môi trường SMARTCALL_WAZO_WRAPPER_TEST_KEY trước khi chạy backend. Dùng một key ngẫu nhiên riêng trong môi trường thử. Để trống hoặc bỏ biến để tắt route. Backend dùng cấu hình quản trị Wazo và tenant hiện có.
+Bật wrapper trên backend thử nghiệm bằng biến môi trường SMARTCALL_WAZO_WRAPPER_TEST_KEY. Dùng key ngẫu nhiên riêng cho buổi thử. Bỏ biến hoặc để trống để tắt route. Backend dùng credential quản trị và tenant Wazo đã cấu hình.
 
 ~~~http
-GET /api/wrapper/contexts?limit=30&offset=0
+POST /api/wrapper
+Content-Type: application/json
 X-SmartCall-Test-Key: <KEY_THU_NGHIEM>
+
+{
+  "method": "GET",
+  "path": "/api/confd/1.1/contexts",
+  "query": {"limit": 30, "offset": 0}
+}
 ~~~
 
-Backend gọi GET /api/confd/1.1/contexts trong tenant cấu hình và trả items, total, offset. Từng mục chỉ có các trường uuid, name, label, type và enabled nếu Wazo trả về. Key sai trả 401, chưa bật trả 404. Web và App có thể truyền header trong bản thử. Không đưa key thật vào source, bundle, APK, Git hay URL. Key này chỉ mở quyền đọc context trong đợt thử và không dùng để xác minh danh tính Single ID hoặc đăng ký tài khoản.
+Android/Postman gửi POST đến backend SmartCall. method là thao tác backend thực hiện trên Wazo. path là đường dẫn đã đăng ký. Backend nhận query dạng JSON, với limit và offset nguyên. Có thể bỏ query nếu dùng mặc định. Dùng URL HTTPS của SmartCall trên điện thoại. localhost chỉ trỏ đến chính thiết bị đang gửi request. Web gọi từ origin đã cấu hình.
+
+| Mã HTTP từ SmartCall | Ý nghĩa |
+| --- | --- |
+| 200 | Trả items, total và offset. Mỗi context chỉ có uuid, name, label, type và enabled nếu Wazo cung cấp. |
+| 401 | Thiếu key hoặc key sai. |
+| 403 | method/path chưa được cấp phép hoặc Origin của browser sai. |
+| 404 | Wrapper thử nghiệm chưa bật. |
+| 422 | JSON hoặc query sai định dạng, có trường thừa hoặc vượt giới hạn. |
+| 502/503 | Wazo không phản hồi thành công hoặc backend thiếu cấu hình Wazo. |
+
+Phép thử GET /api/wrapper/contexts?limit=30&offset=0 vẫn dùng được với cùng header. Danh sách thao tác hiện chỉ có GET /api/confd/1.1/contexts. Muốn thêm API cần khai báo riêng method, path, tham số và các trường được phép trả. Key thử nghiệm không đưa vào Git, URL hoặc bản phát hành Android/Web.
 
 ## Đọc code từ đâu
 
