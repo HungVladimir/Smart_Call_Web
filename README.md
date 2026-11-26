@@ -42,6 +42,17 @@ Route trả items, total, offset và có thể kèm notice về dữ liệu bộ
 - GET /api/directory/departments dùng cùng header, source là tùy chọn và trả items, has_unassigned và notice.
 - App gọi host HTTPS đã triển khai SmartCall. Trong môi trường dev trên máy tính, có thể gọi FastAPI ở cổng 8801.
 
+## Thử API đọc context Wazo
+
+Đặt biến môi trường SMARTCALL_WAZO_WRAPPER_TEST_KEY trước khi chạy backend. Dùng một key ngẫu nhiên riêng trong môi trường thử. Để trống hoặc bỏ biến để tắt route. Backend dùng cấu hình quản trị Wazo và tenant hiện có.
+
+~~~http
+GET /api/wrapper/contexts?limit=30&offset=0
+X-SmartCall-Test-Key: <KEY_THU_NGHIEM>
+~~~
+
+Backend gọi GET /api/confd/1.1/contexts trong tenant cấu hình và trả items, total, offset. Từng mục chỉ có các trường uuid, name, label, type và enabled nếu Wazo trả về. Key sai trả 401, chưa bật trả 404. Web và App có thể truyền header trong bản thử. Không đưa key thật vào source, bundle, APK, Git hay URL. Key này chỉ mở quyền đọc context trong đợt thử và không dùng để xác minh danh tính Single ID hoặc đăng ký tài khoản.
+
 ## Đọc code từ đâu
 
 | Muốn đọc | Bắt đầu ở đây |

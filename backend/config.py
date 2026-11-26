@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     database_path: Path = ROOT / "data" / "identity.sqlite3"
     tls_ca_file: str = ""
     wazo_url: str = "https://107.126.11.126:9443"
+    wazo_wrapper_test_key: str = ""
     wazo_admin_username: str = ""
     wazo_admin_password: str = ""
     wazo_tenant_uuid: str = ""

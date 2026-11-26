@@ -353,3 +353,7 @@ Nguồn API: https://raw.githubusercontent.com/wazo-platform/wazo-confd/master/w
 - Gọi 1-1 giữ nguyên đường phát lời từ chối từ Wazo. Ở phía gọi, nút **Thêm người** và lệnh mời chờ Calld xác nhận bridge với đúng người đối thoại trên đúng SIP Call-ID. Web nhận máy có thể bật nút sau ACK nhận cuộc gọi.
 - Host gọi nhóm tắt audio riêng của từng nhánh mời từ lúc SDK tạo thẻ audio. Host chỉ mở một đường nghe đã xác nhận. Nhánh chưa có đối tác giữ trạng thái đang mời, không được ghép hoặc tính vào số người kết nối. Các thành viên tiếp theo được tính sau khi API hội nghị trả thành công. A tiếp tục là host.
 - Đã kiểm thử frontend bằng SDK và API mô phỏng cho gọi 1-1, gọi B và C ngay từ đầu, mời C khi đang nói với B, ghép thành công và cuộc gọi kết thúc trong lúc chờ API. Chưa kiểm tra âm thanh trên tổng đài thật. Nếu Wazo trộn thông báo của C vào luồng A–B từ phía máy chủ, Web không thể tách lời đó khỏi luồng thoại.
+
+## Wrapper thử nghiệm đọc context Wazo
+
+26/11/2026. Bổ sung GET /api/wrapper/contexts cho Web, App và Postman trong môi trường thử. Bật bằng biến SMARTCALL_WAZO_WRAPPER_TEST_KEY và gửi X-SmartCall-Test-Key. Backend dùng credential Wazo đã cấu hình, chỉ đọc một trang context trong tenant cố định và lọc trường trả về. 56 ca unittest backend đạt, một ca bỏ qua. Đã kiểm tra route tắt, key sai, key đúng, giới hạn truy vấn và thu hồi token trên Wazo mô phỏng.

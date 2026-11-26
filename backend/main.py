@@ -79,6 +79,19 @@ def create_app(settings=None):
     async def health():
         return {"status": "ok"}
 
+    # Cổng thử nghiệm chỉ cho đọc danh sách context. Key rỗng thì route không hoạt động.
+    @app.get("/api/wrapper/contexts")
+    async def wrapper_contexts(request: Request, x_smartcall_test_key: str = Header("", max_length=256),
+                               limit: int = Query(30, ge=1, le=50),
+                               offset: int = Query(0, ge=0, le=10000)):
+        configured_key = settings.wazo_wrapper_test_key
+        if not configured_key:
+            fail("WRAPPER_DISABLED", "API wrapper thử nghiệm chưa được bật.", 404)
+        # So sánh theo byte để từ chối key sai mà không lệch thời gian theo tiền tố.
+        if not secrets.compare_digest(x_smartcall_test_key.encode(), configured_key.encode()):
+            fail("WRAPPER_KEY_INVALID", "Key thử nghiệm không hợp lệ.", 401)
+        return await request.app.state.wazo.list_wrapper_contexts(limit, offset)
+
     # Chuyển cửa sổ tới authorization endpoint, gắn cookie giao dịch riêng cho browser.
     @app.get("/api/auth/login")
     async def login(request: Request):

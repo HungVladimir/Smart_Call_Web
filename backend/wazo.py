@@ -1,6 +1,7 @@
 """Cấp tài khoản WebRTC qua Confd; chỉ trả token của user, tuyệt đối không trả token quản trị."""
 import hashlib
 import secrets
+import httpx
 from httpx import BasicAuth
 from oidc import fail
 
@@ -33,11 +34,11 @@ class WazoClient:
         return response.json() if response.content else {}
 
     # Đăng nhập Wazo bằng credential riêng; token IdP không được dùng làm password.
-    async def token(self, username, password, client_id, user=True):
+    async def token(self, username, password, client_id, user=True, *, expiration=3600):
         response = await self.client.post(self.settings.wazo_url + "/api/auth/0.1/token",
             headers={"Wazo-Tenant": self.settings.wazo_auth_tenant_uuid} if self.settings.wazo_auth_tenant_uuid else {},
             auth=BasicAuth(username, password),
-            json={"backend": "wazo_user", "expiration": 3600, **(
+            json={"backend": "wazo_user", "expiration": expiration, **(
                 {"access_type": "offline", "client_id": client_id} if user else {})})
         if response.status_code in (401, 403) and user:
             fail("WAZO_CREDENTIALS_REQUIRED",
@@ -48,6 +49,38 @@ class WazoClient:
         if not data.get("token"):
             fail("WAZO_RESPONSE_INVALID", "Wazo chưa trả token hợp lệ.", 502)
         return data
+
+    # Đọc một trang context trong tenant cấu hình và chỉ công bố trường cần thiết cho thử nghiệm.
+    async def list_wrapper_contexts(self, limit, offset):
+        settings = self.settings
+        if not settings.wazo_admin_username or not settings.wazo_admin_password or not settings.wazo_tenant_uuid:
+            fail("WAZO_NOT_CONFIGURED", "Chưa cấu hình tài khoản và tenant Wazo.", 503)
+
+        admin_session = await self.token(
+            settings.wazo_admin_username, settings.wazo_admin_password,
+            "smartcall-wrapper-contexts", user=False, expiration=60,
+        )
+        admin_token = admin_session["token"]
+        try:
+            result = await self.request(
+                "GET", "/api/confd/1.1/contexts", token=admin_token,
+                params={"limit": limit, "offset": offset, "recurse": False},
+            )
+            items = result.get("items") if isinstance(result, dict) else None
+            if not isinstance(items, list):
+                fail("WAZO_RESPONSE_INVALID", "Danh sách context Wazo không đúng định dạng.", 502)
+            fields = ("uuid", "name", "label", "type", "enabled")
+            contexts = [
+                {field: item[field] for field in fields if field in item}
+                for item in items if isinstance(item, dict)
+            ]
+            return {"items": contexts, "total": result.get("total", len(contexts)), "offset": offset}
+        finally:
+            # Cố gắng thu hồi ngay cả khi đọc thất bại. Giữ lỗi gốc nếu thu hồi gặp lỗi mạng.
+            try:
+                await self.client.delete(settings.wazo_url + "/api/auth/0.1/token/" + admin_token)
+            except httpx.HTTPError:
+                pass
 
     # Lấy đủ các trang trước khi kết luận không tồn tại; lỗi API không phải danh sách rỗng.
     async def list_items(self, path, token, **params):
