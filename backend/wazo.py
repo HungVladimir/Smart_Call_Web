@@ -557,24 +557,100 @@ class WazoClient:
             fail("WAZO_IDENTITY_MISMATCH", "Token Wazo không khớp với tài khoản vừa liên kết.", 502)
         return user_token
 
-    # Kiểm tra email đã tồn tại trên Wazo chưa; nếu có thì trả về thông tin an toàn của user đó.
-    async def check_register_email(self, raw_email):
+    # Xác thực tài khoản hiện có (khi đang bật) để cấp user token; trả nguyên thông tin nếu sai mật khẩu.
+    async def _resolve_existing_user_session(
+        self,
+        existing_user,
+        email,
+        admin_token,
+        *,
+        department="",
+        password=None,
+        client_id="smartcall-app",
+        sync_department=False,
+    ):
+        record, existing_username = await self._read_user_detail(existing_user, admin_token)
+        summary = self._build_public_user_summary(record, existing_username, email)
+        if record.get("enabled") is False:
+            return summary, False, "", "", "WAZO_USER_DISABLED"
+        if not existing_username:
+            return summary, False, "", "", "WAZO_USERNAME_MISSING"
+
+        effective_password = self.settings.wazo_default_password if password is None else password
+        authenticated = False
+        token_value = ""
+        refresh_value = ""
+        reason = ""
+        try:
+            user_token = await self._login_verified_user(
+                existing_username, effective_password, client_id, record["uuid"],
+            )
+            authenticated = True
+            token_value = user_token["token"]
+            refresh_value = user_token.get("refresh_token", "")
+        except HTTPException as error:
+            detail = error.detail if isinstance(error.detail, dict) else {}
+            # Mật khẩu riêng không khớp vẫn phải trả đủ thông tin user công khai, không reset mật khẩu cũ.
+            if detail.get("code") == "WAZO_CREDENTIALS_REQUIRED":
+                reason = "WAZO_CREDENTIALS_REQUIRED"
+            else:
+                raise
+
+        # Chỉ ghi đè description sau khi token đăng nhập vừa cấp đã xác minh khớp đúng UUID của user.
+        if sync_department and authenticated and department:
+            try:
+                await self.synchronize_department_description(record, {"department": department}, admin_token)
+                summary = self._build_public_user_summary(record, existing_username, email)
+            except Exception:
+                try:
+                    await self.revoke_session({"token": token_value, "user_uuid": record["uuid"]}, client_id)
+                except Exception:
+                    pass
+                raise
+
+        return summary, authenticated, token_value, refresh_value, reason
+
+    # Kiểm tra email đã tồn tại trên Wazo chưa; nếu có thì trả thông tin user kèm token đăng nhập nếu xác thực được.
+    async def check_register_email(self, raw_email, *, password=None, client_id="smartcall-app"):
         self._ensure_admin_configured()
         email = self._normalize_allowed_email(raw_email)
         async with self.admin_token_scope("smartcall-check-email", expiration=60) as admin_token:
             existing_user = await self.find_email(email, admin_token)
             if not existing_user:
-                return {"exists": False, "email": email, "user": None}
+                return {
+                    "exists": False,
+                    "email": email,
+                    "authenticated": False,
+                    "reason": "",
+                    "token": "",
+                    "refresh_token": "",
+                    "host": self.settings.wazo_url,
+                    "tenant_uuid": self.settings.wazo_tenant_uuid,
+                    "user": None,
+                }
             if existing_user.get("tenant_uuid") not in (None, self.settings.wazo_tenant_uuid):
                 fail("WRAPPER_TENANT_FORBIDDEN", "Tài nguyên không thuộc tenant Wazo được cấu hình.", 403)
-            record, username = await self._read_user_detail(existing_user, admin_token)
+            summary, authenticated, token_value, refresh_value, reason = await self._resolve_existing_user_session(
+                existing_user,
+                email,
+                admin_token,
+                password=password,
+                client_id=client_id,
+                sync_department=False,
+            )
             return {
                 "exists": True,
                 "email": email,
-                "user": self._build_public_user_summary(record, username, email),
+                "authenticated": authenticated,
+                "reason": reason,
+                "token": token_value,
+                "refresh_token": refresh_value,
+                "host": self.settings.wazo_url,
+                "tenant_uuid": self.settings.wazo_tenant_uuid,
+                "user": summary,
             }
 
-    # Kiểm tra email trên Wazo: nếu chưa có thì tạo mới + trả token; nếu đã có thì trả thông tin (và token nếu đăng nhập được).
+    # Kiểm tra email trên Wazo: nếu chưa có thì tạo mới + trả token; nếu đã có thì trả thông tin và token đăng nhập.
     async def register_user(self, payload):
         settings = self.settings
         if not settings.wazo_provisioning_enabled:
@@ -598,50 +674,18 @@ class WazoClient:
                     if existing_user.get("tenant_uuid") not in (None, settings.wazo_tenant_uuid) or existing_user.get("enabled") is False:
                         fail("WAZO_USER_UNAVAILABLE", "Tài khoản Wazo bị khóa hoặc không thuộc tenant cấu hình.", 403)
 
-                    record, existing_username = await self._read_user_detail(existing_user, admin_token)
-                    if not existing_username:
+                    summary, authenticated, token_value, refresh_value, reason = await self._resolve_existing_user_session(
+                        existing_user,
+                        email,
+                        admin_token,
+                        department=department,
+                        password=payload.password,
+                        client_id=payload.client_id,
+                        sync_department=True,
+                    )
+                    if reason == "WAZO_USERNAME_MISSING":
                         fail("WAZO_USERNAME_MISSING", "Không lấy được username Wazo của tài khoản hiện có.", 409)
 
-                    register_marker = "smartcall:register:" + hashlib.sha256(email.encode()).hexdigest()
-                    userfield = str(record.get("userfield") or "")
-                    managed = userfield == register_marker or userfield.startswith("smartcall:sso:")
-                    # Chỉ tự thử đăng nhập khi tài khoản do SmartCall quản lý, client truyền mật khẩu, hoặc bật opt-in thử mật khẩu cấu hình.
-                    can_attempt_login = managed or payload.password is not None or settings.wazo_existing_password_login
-                    authenticated = False
-                    token_value = ""
-                    refresh_value = ""
-                    reason = ""
-
-                    if not can_attempt_login:
-                        reason = "WAZO_ACCOUNT_LINK_REQUIRED"
-                    else:
-                        try:
-                            user_token = await self._login_verified_user(
-                                existing_username, effective_password, payload.client_id, record["uuid"],
-                            )
-                            authenticated = True
-                            token_value = user_token["token"]
-                            refresh_value = user_token.get("refresh_token", "")
-                        except HTTPException as error:
-                            detail = error.detail if isinstance(error.detail, dict) else {}
-                            # Nếu mật khẩu không khớp thì vẫn trả thông tin user hiện có để App/Web xử lý tiếp, không giấu dữ liệu.
-                            if detail.get("code") == "WAZO_CREDENTIALS_REQUIRED":
-                                reason = "WAZO_CREDENTIALS_REQUIRED"
-                            else:
-                                raise
-
-                    # Chỉ đồng bộ description sau khi xác nhận token đăng nhập hợp lệ thuộc đúng UUID của user này.
-                    if authenticated and department:
-                        try:
-                            await self.synchronize_department_description(record, {"department": department}, admin_token)
-                        except Exception:
-                            try:
-                                await self.revoke_session({"token": token_value, "user_uuid": record["uuid"]}, payload.client_id)
-                            except Exception:
-                                pass
-                            raise
-
-                    summary = self._build_public_user_summary(record, existing_username, email)
                     return {
                         "created": False,
                         "exists": True,

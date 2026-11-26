@@ -355,29 +355,25 @@ class Directory:
                 return rows
         raise HTTPException(503, "Nguồn danh bạ vượt giới hạn 10.000 liên hệ.")
 
-    # Phân biệt description rỗng được Confd xác nhận với thiếu quyền hoặc thiếu dữ liệu.
-    async def describe(self, token, rows):
-        missing = {}
-        for row in rows:
-            if str(row.get("description") or "").strip():
-                row["department_state"] = "confirmed"
-            else:
-                row["department_state"] = "unknown"
-                missing[row["uuid"]] = row
+    # Đọc từng lô description từ Confd bằng token chỉ định (admin khi có cấu hình, fallback user token ở môi trường thiếu admin).
+    async def _read_descriptions(self, auth_token, missing, *, verify_user_token=None):
         notice = ""
         path = "/api/confd/1.1/users"
         for batch in uuid_batches(missing, "uuid"):
             try:
-                data = await self.read(path, token, operation="Wazo Confd (bộ phận)",
-                                       view="directory", uuid=",".join(batch), limit=len(batch), recurse="false")
+                data = await self.read(
+                    path, auth_token, operation="Wazo Confd (bộ phận)",
+                    view="directory", uuid=",".join(batch), limit=len(batch), recurse="false",
+                )
                 if not isinstance(data.get("items"), list):
                     raise HTTPException(502, "Nguồn Confd không trả danh sách bộ phận.")
             except HTTPException as error:
-                if error.status_code == 401:
-                    await self.actor(token, fresh=True)
-                # Chỉ thiếu phần bổ sung khi token còn hiệu lực nhưng Confd từ chối.
-                if error.status_code in (401, 403):
-                    return "Tài khoản chưa có quyền đọc đầy đủ bộ phận từ Wazo."
+                if verify_user_token:
+                    if error.status_code == 401:
+                        await self.actor(verify_user_token, fresh=True)
+                    # Chỉ thiếu phần bổ sung khi token người dùng còn hiệu lực nhưng Confd từ chối.
+                    if error.status_code in (401, 403):
+                        return "Tài khoản chưa có quyền đọc đầy đủ bộ phận từ Wazo."
                 notice = "Chưa cập nhật được một phần bộ phận từ Wazo."
                 continue
             for item in data["items"]:
@@ -390,6 +386,27 @@ class Directory:
         if not notice and any(row["department_state"] == "unknown" for row in missing.values()):
             return "Wazo chưa trả đủ dữ liệu bộ phận."
         return notice
+
+    # Phân biệt description rỗng được Confd xác nhận với thiếu quyền; ưu tiên dùng admin token cho các UUID user đã được Dird cấp phép.
+    async def describe(self, token, rows):
+        missing = {}
+        for row in rows:
+            if str(row.get("description") or "").strip():
+                row["department_state"] = "confirmed"
+            else:
+                row["department_state"] = "unknown"
+                missing[row["uuid"]] = row
+        if not missing:
+            return ""
+        settings = self.wazo.settings
+        # User thường bị Confd chặn đọc description của người khác; khi backend có credential quản trị, dùng admin token đọc hộ đúng tập UUID từ Dird.
+        if settings.wazo_admin_username and settings.wazo_admin_password and settings.wazo_tenant_uuid:
+            try:
+                async with self.wazo.admin_token_scope("smartcall-directory-departments", expiration=60) as admin_token:
+                    return await self._read_descriptions(admin_token, missing, verify_user_token=None)
+            except (HTTPException, httpx.HTTPError):
+                return "Chưa cập nhật được một phần bộ phận từ Wazo."
+        return await self._read_descriptions(token, missing, verify_user_token=token)
 
     # Chỉ lấy trạng thái của UUID thuộc snapshot đã cấp quyền cho chính token này.
     async def status(self, source, user, token, key, snapshot):

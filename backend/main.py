@@ -125,17 +125,23 @@ def create_app(settings=None):
 
     # Kiểm tra email đã tồn tại trên Wazo chưa (hỗ trợ cả GET query và POST JSON cho App/Web/Postman).
     @app.get("/api/register/check-email")
-    async def check_register_email_query(request: Request, email: str = Query(..., min_length=3, max_length=256),
-                                         x_smartcall_test_key: str = Header("", max_length=256)):
+    async def check_register_email_query(
+        request: Request,
+        email: str = Query(..., min_length=3, max_length=256),
+        client_id: str = Query("smartcall-app", min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$"),
+        x_smartcall_test_key: str = Header("", max_length=256),
+    ):
         require_wrapper_key(x_smartcall_test_key)
-        return await request.app.state.wazo.check_register_email(email)
+        return await request.app.state.wazo.check_register_email(email, client_id=client_id)
 
     # Biến thể POST JSON của check-email để không đưa địa chỉ email lên query URL log.
     @app.post("/api/register/check-email")
     async def check_register_email_body(body: CheckRegisterEmailRequest, request: Request,
                                         x_smartcall_test_key: str = Header("", max_length=256)):
         require_wrapper_key(x_smartcall_test_key)
-        return await request.app.state.wazo.check_register_email(body.email)
+        return await request.app.state.wazo.check_register_email(
+            body.email, password=body.password, client_id=body.client_id,
+        )
 
     # Tìm theo email hoặc tạo tài khoản mới cho Web/Android bằng quyền quản trị rồi trả thông tin và token khi đăng nhập được.
     @app.post("/api/register")
@@ -349,6 +355,8 @@ class CheckRegisterEmailRequest(BaseModel):
     """Email cần kiểm tra tồn tại trên tổng đài Wazo cho Web và Android."""
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     email: str = Field(min_length=3, max_length=256)
+    password: str | None = Field(default=None, min_length=1, max_length=128)
+    client_id: str = Field(default="smartcall-app", min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
 class RegisterUserRequest(BaseModel):

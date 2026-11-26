@@ -311,6 +311,24 @@ const formatTime = (seconds) => {
   return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
 }
 
+/** Bổ sung bộ phận theo peerUuid từ backend danh bạ khi CDR thiếu thông tin phòng ban. */
+const hydrateHistoryDepartments = async (list, request, context) => {
+  const missingUuids = [
+    ...new Set(
+      list
+        .map((call) => call.peerUuid)
+        .filter((uuid) => uuid && !contactService.findContactByUuid(uuid)?.dept),
+    ),
+  ]
+  if (!missingUuids.length) return
+  try {
+    await contactService.getSavedGroupMembers(missingUuids)
+    if (request !== historyRequest || !isSessionContextCurrent(context)) return
+  } catch {
+    // Giữ lịch sử cuộc gọi đang hiển thị nếu nguồn danh bạ tạm thời chưa phản hồi.
+  }
+}
+
 // Nạp dữ liệu từ historyService (hỗ trợ Optimistic Rendering & Force Refresh)
 const fetchHistory = async (force = false) => {
   const request = ++historyRequest
@@ -329,6 +347,7 @@ const fetchHistory = async (force = false) => {
     // muộn sau hủy/đổi phiên.
     if (request !== historyRequest || !isSessionContextCurrent(context)) return
     calls.value = [...list]
+    void hydrateHistoryDepartments(list, request, context)
     await syncRecordingsAvailability()
   } catch (err) {
     console.error('Lỗi khi tải lịch sử cuộc gọi:', err)

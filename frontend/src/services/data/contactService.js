@@ -566,6 +566,10 @@ export class ContactService {
       for (const [contact, member] of updates) {
         contact.uuid = member.uuid
         contact.number = member.number
+        if (!contact.dept && member.dept) contact.dept = member.dept
+        if (!contact.description && member.description) contact.description = member.description
+        if (!contact.departmentState && member.departmentState)
+          contact.departmentState = member.departmentState
       }
     } catch {
       assertSessionContext(context)

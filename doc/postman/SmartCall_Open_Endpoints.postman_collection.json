@@ -525,15 +525,19 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Check email POST trả 200 OK và không lộ trường nhạy cảm', function () {",
+                  "pm.test('Check email POST trả 200 OK, kèm token nếu email đã tồn tại và không lộ secret', function () {",
                   "  pm.response.to.have.status(200);",
                   "  const data = pm.response.json();",
                   "  pm.expect(data).to.have.property('exists');",
+                  "  pm.expect(data).to.have.property('authenticated');",
                   "  if (data.exists && data.user) {",
                   "    pm.expect(data.user).to.not.have.property('auth');",
                   "    pm.expect(data.user).to.not.have.property('password');",
                   "    pm.expect(data.user).to.not.have.property('userfield');",
                   "    pm.environment.set('target_user_uuid', data.user.user_uuid);",
+                  "  }",
+                  "  if (data.token) {",
+                  "    pm.environment.set('wazo_user_token', data.token);",
                   "  }",
                   "});"
                 ],
@@ -549,14 +553,14 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{test_email}}\"\n}"
+              "raw": "{\n  \"email\": \"{{test_email}}\",\n  \"client_id\": \"postman-lab\"\n}"
             },
             "url": {
               "raw": "{{backend_base}}/api/register/check-email",
               "host": ["{{backend_base}}"],
               "path": ["api", "register", "check-email"]
             },
-            "description": "Kiểm tra email đã tồn tại trên Wazo chưa. Nếu chưa có -> trả {exists: false, user: null}. Nếu đã có -> trả {exists: true, user: {...}} (kèm description, extension, username, user_uuid)."
+            "description": "Kiểm tra email đã tồn tại trên Wazo chưa. Nếu chưa có -> trả {exists: false, authenticated: false, token: '', user: null}. Nếu đã có -> trả {exists: true, authenticated: true, token, refresh_token, user: {...}} để đăng nhập ngay."
           }
         },
         {
@@ -566,9 +570,16 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Check email GET trả 200 OK', function () {",
+                  "pm.test('Check email GET trả 200 OK và lưu token nếu có', function () {",
                   "  pm.response.to.have.status(200);",
-                  "  pm.expect(pm.response.json()).to.have.property('exists');",
+                  "  const data = pm.response.json();",
+                  "  pm.expect(data).to.have.property('exists');",
+                  "  if (data.exists && data.user) {",
+                  "    pm.environment.set('target_user_uuid', data.user.user_uuid);",
+                  "  }",
+                  "  if (data.token) {",
+                  "    pm.environment.set('wazo_user_token', data.token);",
+                  "  }",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -582,14 +593,15 @@
               { "key": "Accept", "value": "application/json" }
             ],
             "url": {
-              "raw": "{{backend_base}}/api/register/check-email?email={{test_email}}",
+              "raw": "{{backend_base}}/api/register/check-email?email={{test_email}}&client_id=postman-lab",
               "host": ["{{backend_base}}"],
               "path": ["api", "register", "check-email"],
               "query": [
-                { "key": "email", "value": "{{test_email}}" }
+                { "key": "email", "value": "{{test_email}}" },
+                { "key": "client_id", "value": "postman-lab" }
               ]
             },
-            "description": "Biến thể GET trên URL của /api/register/check-email để kiểm tra nhanh trên Postman."
+            "description": "Biến thể GET trên URL của /api/register/check-email; nếu email đã tồn tại cũng trả luôn token và refresh_token."
           }
         },
         {
