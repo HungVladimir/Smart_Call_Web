@@ -104,13 +104,19 @@
         <div class="history-card-body">
           <!-- Khối Avatar người gọi -->
           <div class="avatar-box" :class="call.direction">
+            <UserAvatar
+              class="history-avatar-media"
+              :name="call.name"
+              :email="historyAvatarEmail(call)"
+              size="sm"
+              transparent-fallback
+            />
             <UiIcon
               name="call-inbound"
               v-if="call.direction === 'inbound'"
               class="direction-arrow inbound"
             />
             <UiIcon name="call-outbound" v-else class="direction-arrow outbound" />
-            <div class="avatar-initials">{{ getAvatarInitials(call.name) }}</div>
           </div>
 
           <!-- Khối Thông tin chi tiết cuộc gọi -->
@@ -227,7 +233,7 @@ import { contactService, historyService, recordingService } from '@/services/ind
 import { logger } from '@/services/common/loggerService.js'
 import { callState } from '@/state/callState.js'
 import { captureSessionContext, isSessionContextCurrent } from '@/services/auth/sessionScope.js'
-import { getAvatarInitials } from '@/utils/avatar.js'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 /** Chỉ cho phát lại file ghi âm khi không có cuộc gọi thoại hoặc chuông đến đang chiếm loa. */
 function canPlayHistoryRecording() {
@@ -262,6 +268,13 @@ const calls = ref([])
 /** Chỉ ghép bộ phận theo UUID của đối phương để tránh nhầm khi máy lẻ vừa đổi chủ. */
 function historyDepartment(call) {
   return (call.peerUuid && contactService.findContactByUuid(call.peerUuid)?.dept) || call.dept || ''
+}
+
+/** Đọc email của đối phương từ danh bạ đã tải để nạp ảnh đại diện mà không đoán sai khi đổi số. */
+function historyAvatarEmail(call) {
+  if (call.peerEmail) return call.peerEmail
+  if (call.peerUuid) return contactService.findContactByUuid(call.peerUuid)?.email || ''
+  return call.extension ? contactService.findContactByExtension(call.extension)?.email || '' : ''
 }
 const recordingsMap = ref({})
 
@@ -325,9 +338,10 @@ function extractCallPeerUuid(call) {
   return call.peerUuid
 }
 
-/** Giữ lại UUID hợp lệ chưa có thông tin phòng ban trong bộ nhớ danh bạ hiện tại. */
+/** Giữ lại UUID hợp lệ chưa có đủ thông tin danh bạ/phòng ban trong bộ nhớ hiện tại. */
 function needsDepartmentLookup(uuid) {
-  return Boolean(uuid && !contactService.findContactByUuid(uuid)?.dept)
+  const contact = uuid && contactService.findContactByUuid(uuid)
+  return Boolean(uuid && (!contact || !contact.dept))
 }
 
 /** Bổ sung bộ phận theo peerUuid từ backend danh bạ khi CDR thiếu thông tin phòng ban. */
@@ -901,7 +915,8 @@ const handleCallback = (call) => {
   background: linear-gradient(135deg, #f87171, #ef4444);
 }
 
-.avatar-initials {
+.history-avatar-media {
+  border-radius: inherit;
   font-size: 0.95rem;
   font-weight: 700;
 }
@@ -910,6 +925,7 @@ const handleCallback = (call) => {
   position: absolute;
   top: -4px;
   right: -4px;
+  z-index: 2;
   width: 20px;
   height: 20px;
   border-radius: 50%;

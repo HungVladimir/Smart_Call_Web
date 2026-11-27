@@ -22,9 +22,12 @@
         }"
       >
         <template v-if="modelValue && contact">
-          <div class="preview-avatar" :style="{ backgroundColor: avatarColor }">
-            {{ avatarInitials }}
-          </div>
+          <UserAvatar
+            class="preview-avatar"
+            :name="contact.name"
+            :email="contact.email"
+            size="sm"
+          />
           <div class="preview-info">
             <div class="preview-header-line">
               <span class="preview-name">{{ contact.name }}</span>
@@ -83,12 +86,11 @@
 </template>
 <script setup>
 import UiIcon from '@/components/common/UiIcon.vue'
-import { computed } from 'vue'
-import { getAvatarInitials, getAvatarColor } from '../../utils/avatar.js'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import ContactPresenceDot from '@/components/contacts/ContactPresenceDot.vue'
 
 /** Panel nhập số: chỉ phát ý định người dùng, không tự gọi SDK hay giữ state cuộc gọi. */
-const props = defineProps({
+defineProps({
   modelValue: { type: String, default: '' },
   contact: { type: Object, default: null },
   previewMessage: { type: String, default: '' },
@@ -96,10 +98,6 @@ const props = defineProps({
   isDialing: Boolean,
 })
 const emit = defineEmits(['update:modelValue', 'dial', 'digit', 'erase'])
-/** Tính chữ viết tắt của liên hệ khớp số nhập để hiển thị trong bàn phím gọi. */
-const avatarInitials = computed(() => getAvatarInitials(props.contact?.name))
-/** Tính màu avatar theo tên của liên hệ khớp số đang nhập. */
-const avatarColor = computed(() => getAvatarColor(props.contact?.name))
 const keys = [
   { num: '1', sub: '' },
   { num: '2', sub: 'ABC' },

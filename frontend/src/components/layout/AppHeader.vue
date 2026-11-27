@@ -36,9 +36,7 @@
       </select>
 
       <div class="user-profile">
-        <div class="avatar-sm" :style="{ backgroundColor: userAvatarColor }">
-          {{ userInitials }}
-        </div>
+        <UserAvatar class="avatar-sm" :name="userName" :email="userSessionState.email" size="sm" />
         <div class="user-info">
           <span class="user-name">{{ userDisplayName }}</span>
         </div>
@@ -128,7 +126,7 @@ import { useRouter } from 'vue-router'
 import { authService } from '@/services/index.js'
 import { callState } from '@/state/callState.js'
 import { userSessionState } from '@/state/sessionState.js'
-import { getAvatarInitials, getAvatarColor } from '@/utils/avatar.js'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const router = useRouter()
 defineEmits(['logout', 'open-settings'])
@@ -184,12 +182,6 @@ const showSipInfoModal = ref(false)
 const showSipHelp = () => {
   showSipInfoModal.value = true
 }
-
-/** Tính chữ viết tắt của tên người dùng cho avatar Header bằng helper dùng chung. */
-const userInitials = computed(() => getAvatarInitials(userName.value))
-
-/** Chọn màu nền ổn định cho avatar Header theo tên người dùng hiện tại. */
-const userAvatarColor = computed(() => getAvatarColor(userName.value))
 
 /** Điều hướng từ Header về màn hình chính đang được ứng dụng sử dụng. */
 const goHome = () => {

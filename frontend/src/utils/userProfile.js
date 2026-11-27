@@ -25,6 +25,7 @@ export function mapUserProfile(session, confdUser = {}, username = '') {
     userUuid: session?.uuid || confdUser.uuid || '',
     extension: String(sdkNumber || confdUser.lines?.[0]?.extensions?.[0]?.exten || ''),
     displayName: sdkName || confdName || displayName || username,
+    email: String(confdUser.email || sdkProfile.email || '').trim(),
     department:
       confdUser.description ||
       sdkProfile.department ||

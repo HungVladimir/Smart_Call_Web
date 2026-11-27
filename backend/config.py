@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     wazo_extension_min: int = 1000
     wazo_extension_max: int = 9999
     wazo_existing_password_login: bool = False
+    avatar_base_url: str = "http://oneai.sdv.com"
+    avatar_tls_verify: bool = True
 
     # Chặn URL/số máy lẻ cấu hình sai trước khi có request cấp phát.
     @model_validator(mode="after")
@@ -51,6 +53,11 @@ class Settings(BaseSettings):
             raise ValueError("Web trên IP/hostname công ty cần HTTPS để sử dụng microphone.")
         if urlsplit(self.wazo_url).scheme != "https":
             raise ValueError("WAZO_URL phải dùng HTTPS.")
+        if self.avatar_base_url:
+            avatar = urlsplit(self.avatar_base_url)
+            if avatar.scheme not in ("http", "https") or not avatar.netloc or avatar.query or avatar.fragment:
+                raise ValueError("AVATAR_BASE_URL phải là URL HTTP/HTTPS hợp lệ.")
+            self.avatar_base_url = self.avatar_base_url.rstrip("/")
         if not 1 <= self.wazo_extension_min <= self.wazo_extension_max <= 999999:
             raise ValueError("Dải máy lẻ không hợp lệ.")
         if self.idp_logout_redirect:

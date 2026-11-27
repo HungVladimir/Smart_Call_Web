@@ -18,4 +18,5 @@ export const userSessionState = reactive({
   userUuid: readStoredSessionValue('smartcall_user_uuid'),
   displayName: readStoredSessionValue('smartcall_username'),
   department: readStoredSessionValue('smartcall_department', 'smartcall_user_department'),
+  email: '',
 })

@@ -10,6 +10,7 @@ import {
 } from './sessionScope.js'
 import { callState } from '../../state/callState.js'
 import { userSessionState } from '../../state/sessionState.js'
+import { clearFailedAvatars } from '../../state/avatarState.js'
 import { logger } from '../common/loggerService.js'
 
 const DEFAULT_WAZO_HOST = '107.126.11.126:9443'
@@ -196,10 +197,12 @@ export class AuthService {
       localStorage.removeItem(key)
     }
     this._clearTabSessionStorage()
+    clearFailedAvatars()
     userSessionState.extension = ''
     userSessionState.userUuid = ''
     userSessionState.displayName = ''
     userSessionState.department = ''
+    userSessionState.email = ''
   }
 
   /** Lấy hoặc tạo mã client riêng cho tab để nhận diện phiên Web. */
@@ -1241,6 +1244,7 @@ export class AuthService {
     if (this.singleIdProfile) {
       profile.displayName = this.singleIdProfile.name || profile.displayName
       profile.department = this.singleIdProfile.department || profile.department
+      profile.email = this.singleIdProfile.email || profile.email
     }
     this._persistUserProfile(profile)
     return profile

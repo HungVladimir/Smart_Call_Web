@@ -114,11 +114,12 @@
           </p>
           <ul v-else class="group-roster">
             <li v-for="member in editor.members" :key="member.uuid">
-              <span
+              <UserAvatar
                 class="group-member-avatar"
-                :style="{ backgroundColor: getAvatarColor(member.name) }"
-                >{{ getAvatarInitials(member.name) }}</span
-              >
+                :name="member.name"
+                :email="member.email"
+                size="sm"
+              />
               <span class="group-member-details">
                 <strong>{{ member.name }}</strong>
                 <small v-if="member.number">Máy lẻ {{ member.number }}</small>
@@ -173,8 +174,8 @@
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UiIcon from '@/components/common/UiIcon.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import DirectoryPanel from '@/components/contacts/DirectoryPanel.vue'
-import { getAvatarColor, getAvatarInitials } from '@/utils/avatar.js'
 import { authService, callService, contactService, groupCallService } from '@/services/index.js'
 import {
   deleteCallGroup,
@@ -724,6 +725,7 @@ function refreshPresence(contacts, force) {
   display: grid;
   place-items: center;
   flex: 0 0 32px;
+  width: 32px;
   height: 32px;
   border-radius: 50%;
   color: #fff;

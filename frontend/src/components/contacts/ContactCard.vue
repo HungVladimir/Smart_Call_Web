@@ -36,11 +36,9 @@
       <UiIcon :name="contact.isFavorite ? 'favorite' : 'favorite-outline'" />
     </button>
 
-    <!-- Ảnh đại diện dạng chữ cái. -->
+    <!-- Ảnh đại diện thật theo idKnox hoặc chữ cái mặc định. -->
     <div class="avatar-wrap">
-      <div class="contact-avatar" :style="{ backgroundColor: getAvatarColor(contact.name) }">
-        {{ getInitials(contact.name) }}
-      </div>
+      <UserAvatar class="contact-avatar" :name="contact.name" :email="contact.email" size="sm" />
     </div>
 
     <!-- Chấm màu hiển thị trạng thái ngay trước tên nhân viên. -->
@@ -101,7 +99,7 @@
 
 <script setup>
 import UiIcon from '@/components/common/UiIcon.vue'
-import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import ContactPresenceDot from './ContactPresenceDot.vue'
 /** Một liên hệ: chỉ hiển thị và phát hành động, không sở hữu danh sách hoặc gọi API. */
 defineProps({

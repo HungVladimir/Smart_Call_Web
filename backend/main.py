@@ -11,6 +11,7 @@ from fastapi import APIRouter, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from redis.exceptions import RedisError
+from avatar import fetch_avatar
 from call_groups import CallGroupInput, call_groups
 from config import Settings
 from directory import Directory, department_name, normalize, public_contact, search_contacts, search_page
@@ -66,6 +67,7 @@ wrapper_register_router = APIRouter(tags=["wrapper_register"])
 auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
 directory_router = APIRouter(prefix="/api/directory", tags=["directory"])
 call_groups_router = APIRouter(prefix="/api/call-groups", tags=["call_groups"])
+avatar_router = APIRouter(tags=["avatar"])
 
 
 # Dùng chung pool HTTP/Redis và luôn đóng tài nguyên khi tắt backend.
@@ -73,15 +75,18 @@ call_groups_router = APIRouter(prefix="/api/call-groups", tags=["call_groups"])
 async def lifespan(app: FastAPI):
     settings = app.state.settings
     verify = ssl.create_default_context(cafile=settings.tls_ca_file or None)
+    avatar_verify = verify if settings.avatar_tls_verify else False
     async with httpx.AsyncClient(trust_env=False, verify=verify, timeout=15, follow_redirects=False) as client:
-        app.state.store = Store(settings)
-        app.state.oidc = OidcClient(settings, client)
-        app.state.wazo = WazoClient(settings, client, app.state.store)
-        app.state.directory = Directory(app.state.wazo)
-        try:
-            yield
-        finally:
-            await app.state.store.redis.aclose()
+        async with httpx.AsyncClient(trust_env=False, verify=avatar_verify, timeout=8, follow_redirects=False) as avatar_client:
+            app.state.store = Store(settings)
+            app.state.oidc = OidcClient(settings, client)
+            app.state.wazo = WazoClient(settings, client, app.state.store)
+            app.state.directory = Directory(app.state.wazo)
+            app.state.avatar_client = avatar_client
+            try:
+                yield
+            finally:
+                await app.state.store.redis.aclose()
 
 
 # Không cache hồ sơ/token; chặn thao tác ghi sai Origin trước khi xử lý, mở ngoại lệ không Origin cho client native.
@@ -114,7 +119,16 @@ async def protect_response(request: Request, call_next):
     ):
         return JSONResponse({"detail": {"code": "ORIGIN_INVALID", "message": "Origin không hợp lệ."}}, status_code=403)
     response = await call_next(request)
-    response.headers.update({"Cache-Control": "no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer"})
+    is_cached_avatar = (
+        request.method == "GET"
+        and request.url.path == "/api/avatar"
+        and response.status_code in (200, 404)
+        and "cache-control" in response.headers
+    )
+    if is_cached_avatar:
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+    else:
+        response.headers.update({"Cache-Control": "no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer"})
     return response
 
 
@@ -183,6 +197,16 @@ def require_wrapper_key(request: Request, supplied_key: str):
 # Kiểm tra tiến trình; không tiết lộ cấu hình/credential.
 async def health():
     return {"status": "ok"}
+
+
+# Proxy ảnh đại diện nội bộ theo idKnox (tách từ email) và size cho Web/App không qua Mixed Content.
+@avatar_router.get("/api/avatar")
+async def read_avatar(
+    request: Request,
+    id: str = Query("", max_length=256),
+    size: str = Query("sm", max_length=16),
+):
+    return await fetch_avatar(request.app.state.avatar_client, request.app.state.settings, id, size)
 
 
 # Tương thích với phép thử đọc context qua GET.
@@ -534,6 +558,7 @@ def create_app(settings=None):
     app.include_router(auth_router)
     app.include_router(directory_router)
     app.include_router(call_groups_router)
+    app.include_router(avatar_router)
     return app
 
 

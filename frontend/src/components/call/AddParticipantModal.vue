@@ -70,9 +70,7 @@
               @click.stop="toggleContact(c)"
             />
           </div>
-          <div class="add-item-avatar" :style="{ backgroundColor: getAvatarColor(c.name) }">
-            {{ getInitials(c.name) }}
-          </div>
+          <UserAvatar class="add-item-avatar" :name="c.name" :email="c.email" size="sm" />
           <div class="add-item-info">
             <div class="add-item-name">{{ c.name }}</div>
             <div class="add-item-sub">
@@ -100,8 +98,8 @@
 
 <script setup>
 import UiIcon from '@/components/common/UiIcon.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { ref, computed, watch } from 'vue'
-import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 import { useDirectoryResults } from '@/composables/useDirectoryResults.js'
 import { directorySearchHint } from '@/utils/directorySearch.js'
 import ContactPresenceDot from '@/components/contacts/ContactPresenceDot.vue'

@@ -162,6 +162,8 @@ function createCallIncomingHandler(callService) {
       session: callSession,
       number: ext,
       extension: ext,
+      peerUuid: contact?.uuid || '',
+      peerEmail: contact?.email || '',
       name,
       dept,
       sipUri,
@@ -191,6 +193,7 @@ function createCallIncomingHandler(callService) {
           current.name = found.name
           current.dept = found.dept || current.dept
           current.peerUuid = found.uuid || ''
+          current.peerEmail = found.email || ''
         } catch {
           // Caller ID SIP vẫn cho phép nghe hoặc từ chối khi Dird không phản hồi.
         }
@@ -251,6 +254,8 @@ function createCallAcceptedHandler(callService) {
         session: callSession,
         callId: `rec-${Date.now()}`,
         number: ext,
+        peerUuid: contact?.uuid || '',
+        peerEmail: contact?.email || '',
         name: contact?.name || (ext ? `Máy lẻ ${ext}` : 'Đồng nghiệp'),
         dept: contact?.dept || '',
         direction: 'inbound',

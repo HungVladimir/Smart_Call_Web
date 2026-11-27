@@ -15,7 +15,13 @@
           <div class="pulse-ring"></div>
           <div class="pulse-ring delay"></div>
           <div class="avatar-circle" :style="{ backgroundColor: avatarBg }">
-            <span class="avatar-initials">{{ initials }}</span>
+            <UserAvatar
+              :name="callerName"
+              :email="callerEmail"
+              :fallback-text="initials"
+              size="md"
+              transparent-fallback
+            />
           </div>
         </div>
 
@@ -56,6 +62,7 @@
 
 <script setup>
 import UiIcon from '@/components/common/UiIcon.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { computed, watch } from 'vue'
 import { callToneService } from '@/services/audio/audioService.js'
 import { authService } from '@/services/index.js'
@@ -106,6 +113,9 @@ const callerSip = computed(resolveCallerSip)
 
 /** Đọc phòng ban của người gọi, dùng nhãn chung khi SDK/danh bạ chưa cung cấp. */
 const callerDept = computed(() => props.callData?.dept || 'Nội bộ công ty')
+
+/** Email người gọi đến dùng để lấy ảnh đại diện nếu có trong danh bạ. */
+const callerEmail = computed(() => props.callData?.peerEmail || props.callData?.email || '')
 
 /** Tính chữ viết tắt cho avatar của người gọi đến bằng helper dùng chung. */
 const initials = computed(() => getAvatarInitials(callerName.value))

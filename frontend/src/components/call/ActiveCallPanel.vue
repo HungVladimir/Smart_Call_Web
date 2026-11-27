@@ -12,7 +12,15 @@
           }"
           :style="{ backgroundColor: activeCallAvatarBg }"
         >
-          <span v-if="activeCallAvatarText">{{ activeCallAvatarText }}</span>
+          <UserAvatar
+            v-if="!isGroupCall && (activeCallEmail || activeCallAvatarText)"
+            class="call-avatar-media"
+            :name="activeCallPersonName"
+            :email="activeCallEmail"
+            :fallback-text="activeCallAvatarText"
+            :fallback-bg="activeCallAvatarBg"
+            size="md"
+          />
           <UiIcon v-else :name="isGroupCall ? 'users-text' : 'phone-text'" />
         </div>
 
@@ -104,6 +112,7 @@
 
 <script setup>
 import UiIcon from '@/components/common/UiIcon.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { computed } from 'vue'
 import { getAvatarInitials as getInitials, getAvatarColor } from '@/utils/avatar.js'
 
@@ -232,6 +241,16 @@ function buildActiveCallAvatarBg() {
   if (name) return getAvatarColor(name)
   return '#2563eb'
 }
+
+/** Tên người đang gọi 1-1 để hiển thị nhãn alt và fallback màu/chữ cái. */
+const activeCallPersonName = computed(() => props.call?.name || activeCallContact.value?.name || '')
+
+/** Email người đang gọi 1-1 để tải ảnh đại diện khi không phải cuộc gọi nhóm. */
+const activeCallEmail = computed(() =>
+  isGroupCall.value
+    ? ''
+    : props.call?.peerEmail || props.call?.email || activeCallContact.value?.email || '',
+)
 
 /** Màu nền avatar của khung đàm thoại hiện tại. */
 const activeCallAvatarBg = computed(buildActiveCallAvatarBg)
