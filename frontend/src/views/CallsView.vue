@@ -89,6 +89,7 @@
         :search-query="searchTerm"
         :recent-contacts="recentContacts"
         :load-contacts="loadDirectoryContacts"
+        :peek-contacts="peekDirectoryContacts"
         :load-departments="loadDepartments"
         :refresh-presence="refreshVisiblePresence"
         @call="handleCallFromPanel"
@@ -154,6 +155,11 @@ function loadDirectoryContacts(query) {
   return query.tab === 'favorites'
     ? contactService.listFavorites(query)
     : contactService.listPublishedContacts(query)
+}
+
+/** Kiểm tra nhanh RAM cache của Yêu thích/Bộ phận để đổi tab tức thì không chớp màn hình tải. */
+function peekDirectoryContacts(query) {
+  return contactService.peekDirectoryContacts?.(query) || null
 }
 
 /** Chuyển lệnh tải presence khi panel lấy lại focus hoặc khi socket mở lại. */

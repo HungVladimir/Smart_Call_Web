@@ -84,6 +84,49 @@ function matchesFavoriteMember(contact, member, source) {
   )
 }
 
+/** Cho nhiều caller dùng chung một request nền đang bay và chỉ abort HTTP khi mọi caller đều hủy. */
+function subscribeSharedRequest(entry, clearEntry, signal) {
+  signal?.throwIfAborted()
+  entry.subscribers += 1
+  let detached = false
+  let handleCallerAbort
+
+  /** Giảm số caller đang chờ và hủy request nền nếu không còn nơi nào đợi kết quả. */
+  function detach(abortedByCaller) {
+    if (detached) return
+    detached = true
+    signal?.removeEventListener('abort', handleCallerAbort)
+    entry.subscribers = Math.max(0, entry.subscribers - 1)
+    if (abortedByCaller && entry.subscribers === 0 && !entry.settled) {
+      clearEntry()
+      entry.controller.abort()
+    }
+  }
+
+  if (!signal) {
+    return entry.promise.finally(() => detach(false))
+  }
+
+  return new Promise((resolve, reject) => {
+    /** Từ chối riêng caller đã hủy trước khi giải phóng request nền nếu hết caller. */
+    handleCallerAbort = function onCallerAbort() {
+      detach(true)
+      reject(signal.reason || new DOMException('Thao tác đã được hủy.', 'AbortError'))
+    }
+    signal.addEventListener('abort', handleCallerAbort, { once: true })
+    entry.promise.then(
+      (value) => {
+        detach(false)
+        resolve(value)
+      },
+      (error) => {
+        detach(false)
+        reject(error)
+      },
+    )
+  })
+}
+
 /** Sở hữu danh bạ, trạng thái presence và danh sách yêu thích của phiên hiện tại. */
 export class ContactService {
   /** Đọc/cập nhật bản đồ presence reactive theo UUID để trạng thái liên hệ tự cập nhật. */
@@ -130,6 +173,9 @@ export class ContactService {
     this.pendingSource = null
     this.extensionChecks = new Map()
     this.presenceRevisions = new Map()
+    this.favoritesCache = null
+    this.pendingFavoritesRead = null
+    this.favoritesMutationVersion = 0
     this.presences = {}
     this.favoriteIds = []
     this.defaultSourceName = 'wazo_user'
@@ -297,6 +343,16 @@ export class ContactService {
     return mapped.filter(isRequestedMember)
   }
 
+  /** Đọc nhanh danh sách Yêu thích đang giữ trong phiên để đổi tab không chớp loading. */
+  peekDirectoryContacts(query) {
+    if (query?.tab !== 'favorites' || !this.favoritesCache) return null
+    return {
+      contacts: this.favoritesCache.contacts,
+      notice: this.favoritesCache.notice,
+      fresh: false,
+    }
+  }
+
   /** Tải kết quả tìm chung, tìm theo trường riêng hoặc xem một bộ phận đã chọn. */
   async listPublishedContacts({ field, term = '', department = '', refresh = false, signal }) {
     const context = captureSessionContext()
@@ -331,10 +387,11 @@ export class ContactService {
     return { contacts: this.rememberDirectoryContacts(contacts), notice }
   }
 
-  /** Lấy bộ phận từ toàn nguồn đã cấp quyền để bộ lọc bao phủ cả ngoài trang hiện tại. */
+  /** Lấy bộ phận từ toàn nguồn đã cấp quyền; mỗi lượt dùng signal riêng để đổi tab nhanh không lỗi chéo. */
   async listDepartments(signal, refresh = false) {
     const context = captureSessionContext()
     const source = await this.getDirectorySource(context)
+    signal?.throwIfAborted()
     const params = new URLSearchParams({ source: source.uuid })
     if (refresh) params.set('refresh', 'true')
     const data = await requestSmartCall(
@@ -510,38 +567,129 @@ export class ContactService {
     }
   }
 
-  /** Tải toàn bộ mục Yêu thích do Wazo trả, chỉ bổ sung số còn thiếu trong nguồn đúng quyền. */
-  async listFavorites({ signal } = {}) {
-    const context = captureSessionContext()
-    const data = await this.requestDirectory('/directories/favorites/default', {}, context, signal)
-    // Khi Wazo không công bố nguồn, không tự gán ID cục bộ của mục yêu thích cho nguồn mặc định.
-    const contacts = mapDirectoryContacts(Array.isArray(data) ? { items: data } : data, {
-      defaultSource: '',
-    })
-    if (!contacts) throw new Error('Wazo trả danh sách yêu thích không hợp lệ.')
-    await this.loadFavoriteNumbers(contacts, context, signal)
-    assertSessionContext(context)
-    signal?.throwIfAborted()
-
-    for (const contact of contacts) contact.isFavorite = true
-    this.state.favoriteIds = [
-      ...new Set(contacts.flatMap((contact) => [contact.rawId, contact.uuid]).filter(Boolean)),
-    ]
-
+  /** Cho một caller bám vào lượt đọc Yêu thích chung và tự dọn khi mọi caller đều hủy. */
+  _subscribeFavoritesEntry(entry, signal) {
     const service = this
-    /** Giữ thẻ thiếu số trong Yêu thích mà không ghi đè định danh đầy đủ đã đọc từ Dird. */
-    function rememberFavorite(contact) {
-      if (contact.number) return reactive(service.rememberDirectoryContacts([contact])[0])
-      return reactive({ ...contact, ...service.directoryContactStatus(contact.uuid) })
+    return subscribeSharedRequest(
+      entry,
+      () => {
+        if (service.pendingFavoritesRead === entry) service.pendingFavoritesRead = null
+      },
+      signal,
+    )
+  }
+
+  /** Tạo lượt đọc Yêu thích mới dùng chung cho các caller hiện tại và đồng bộ lại 1 lần sau mutation. */
+  _createFavoritesReadEntry(context, allowFallback = true) {
+    const service = this
+    const controller = new AbortController()
+    const mutationVersion = this.favoritesMutationVersion
+    const entry = { controller, subscribers: 0, settled: false, mutationVersion, promise: null }
+    this.pendingFavoritesRead = entry
+
+    /** Đọc danh sách Yêu thích từ Wazo và chỉ ghi cache khi chưa bị thay thế bởi lượt hoặc mutation mới hơn. */
+    async function runFavoritesRead() {
+      try {
+        let data
+        try {
+          data = await service.requestDirectory(
+            '/directories/favorites/default',
+            {},
+            context,
+            controller.signal,
+          )
+        } catch (error) {
+          if (error?.status === 401 || error?.status === 403) {
+            service.favoritesCache = null
+            service.state.favoriteIds = []
+          }
+          throw error
+        }
+        const contacts = mapDirectoryContacts(Array.isArray(data) ? { items: data } : data, {
+          defaultSource: '',
+        })
+        if (!contacts) throw new Error('Wazo trả danh sách yêu thích không hợp lệ.')
+        await service.loadFavoriteNumbers(contacts, context, controller.signal)
+        assertSessionContext(context)
+        controller.signal.throwIfAborted()
+
+        if (service.favoritesMutationVersion !== mutationVersion) {
+          const syncedEntry =
+            service.pendingFavoritesRead &&
+            !service.pendingFavoritesRead.settled &&
+            !service.pendingFavoritesRead.controller.signal.aborted &&
+            service.pendingFavoritesRead.mutationVersion === service.favoritesMutationVersion
+              ? service.pendingFavoritesRead
+              : service._createFavoritesReadEntry(context)
+          return await service._subscribeFavoritesEntry(syncedEntry, controller.signal)
+        }
+
+        if (service.pendingFavoritesRead !== entry) {
+          const newerEntry = service.pendingFavoritesRead
+          if (newerEntry && !newerEntry.settled && !newerEntry.controller.signal.aborted) {
+            return await service._subscribeFavoritesEntry(newerEntry, controller.signal)
+          }
+          if (service.favoritesCache) {
+            return {
+              contacts: service.favoritesCache.contacts,
+              notice: service.favoritesCache.notice,
+            }
+          }
+          if (allowFallback) {
+            const fallbackEntry = service._createFavoritesReadEntry(context, false)
+            return await service._subscribeFavoritesEntry(fallbackEntry, controller.signal)
+          }
+        }
+
+        for (const contact of contacts) contact.isFavorite = true
+        service.state.favoriteIds = [
+          ...new Set(contacts.flatMap((contact) => [contact.rawId, contact.uuid]).filter(Boolean)),
+        ]
+
+        /** Giữ thẻ thiếu số trong Yêu thích mà không ghi đè định danh đầy đủ đã đọc từ Dird. */
+        function rememberFavorite(contact) {
+          if (contact.number) return reactive(service.rememberDirectoryContacts([contact])[0])
+          return reactive({ ...contact, ...service.directoryContactStatus(contact.uuid) })
+        }
+
+        const favorites = contacts.map(rememberFavorite)
+        const notice = favorites.some((contact) => !contact.number)
+          ? 'Chưa đọc được máy lẻ của một số liên hệ yêu thích.'
+          : ''
+        service.favoritesCache = {
+          contacts: favorites,
+          notice,
+        }
+        return { contacts: favorites, notice }
+      } finally {
+        entry.settled = true
+        if (service.pendingFavoritesRead === entry) service.pendingFavoritesRead = null
+      }
     }
 
-    const favorites = contacts.map(rememberFavorite)
-    return {
-      contacts: favorites,
-      notice: favorites.some((contact) => !contact.number)
-        ? 'Chưa đọc được máy lẻ của một số liên hệ yêu thích.'
-        : '',
+    entry.promise = runFavoritesRead()
+    // Tránh unhandledRejection nếu toàn bộ caller hủy trước khi HTTP nền kết thúc.
+    entry.promise.catch(() => {})
+    return entry
+  }
+
+  /** Tải toàn bộ mục Yêu thích do Wazo trả (gộp request đọc trùng, đồng bộ đúng 1 lượt sau thao tác sao). */
+  async listFavorites({ refresh = false, signal } = {}) {
+    signal?.throwIfAborted()
+    const activePending =
+      !refresh &&
+      this.pendingFavoritesRead &&
+      !this.pendingFavoritesRead.settled &&
+      !this.pendingFavoritesRead.controller.signal.aborted &&
+      this.pendingFavoritesRead.mutationVersion === this.favoritesMutationVersion
+        ? this.pendingFavoritesRead
+        : null
+    if (activePending) {
+      return this._subscribeFavoritesEntry(activePending, signal)
     }
+
+    const context = captureSessionContext()
+    return this._subscribeFavoritesEntry(this._createFavoritesReadEntry(context), signal)
   }
 
   /** Tạo khóa gần đây theo máy chủ và UUID của tài khoản đã đăng nhập. */
@@ -715,9 +863,36 @@ export class ContactService {
       this.favoriteIds = enabled
         ? [...new Set([...this.favoriteIds, ...ids])]
         : this.favoriteIds.filter((value) => !ids.includes(value))
+      this.favoritesMutationVersion += 1
+      this.pendingFavoritesRead = null
+      this._syncFavoritesCacheAfterToggle(contact, enabled)
       return enabled
     }
     throw new Error('Không tìm được nguồn danh bạ hỗ trợ cập nhật yêu thích.')
+  }
+
+  /** Đồng bộ cache Yêu thích trong RAM ngay sau khi thêm hoặc bỏ dấu sao thành công. */
+  _syncFavoritesCacheAfterToggle(contact, enabled) {
+    if (!this.favoritesCache) return
+    const targetIds = new Set([contact.uuid, contact.rawId, contact.id].filter(Boolean).map(String))
+    const remaining = this.favoritesCache.contacts.filter(
+      (item) =>
+        ![item.uuid, item.rawId, item.id].some((value) => value && targetIds.has(String(value))),
+    )
+    if (!enabled) {
+      this.favoritesCache = {
+        ...this.favoritesCache,
+        contacts: remaining,
+      }
+      return
+    }
+    if (contact.uuid && contact.number) {
+      const remembered = reactive(this.rememberDirectoryContacts([contact])[0] || contact)
+      this.favoritesCache = {
+        ...this.favoritesCache,
+        contacts: [remembered, ...remaining],
+      }
+    }
   }
 
   /** Đối chiếu các định danh hợp lệ của liên hệ với danh sách favorite đang giữ trong RAM. */
@@ -954,7 +1129,11 @@ export class ContactService {
     this.extensionChecks.clear()
     this.presenceRevisions.clear()
     this.pendingSource = null
+    this.pendingFavoritesRead?.controller?.abort()
+    this.pendingFavoritesRead = null
     this.directorySource = null
+    this.favoritesCache = null
+    this.favoritesMutationVersion += 1
     this.state.identities.clear()
     this.state.presenceCheckedAt = {}
     this.defaultSourceName = 'wazo_user'

@@ -13,10 +13,10 @@
           <span>{{ tab.label }}</span>
         </button>
       </div>
-      <div v-if="activeTab === 'group'" class="directory-results">
-        <slot v-if="active" name="groups" />
+      <div v-if="groupTabVisited" v-show="activeTab === 'group'" class="directory-results">
+        <slot name="groups" />
       </div>
-      <template v-else>
+      <template v-if="activeTab !== 'group'">
         <div v-if="activeTab !== 'department' || department" class="directory-toolbar">
           <div class="directory-search">
             <UiIcon name="search-outline" />
@@ -143,6 +143,7 @@ const props = defineProps({
   searchQuery: { type: String, default: '' },
   recentContacts: { type: Array, default: () => [] },
   loadContacts: { type: Function, required: true },
+  peekContacts: { type: Function, default: null },
   loadDepartments: { type: Function, default: null },
   refreshPresence: { type: Function, required: true },
 })
@@ -161,6 +162,7 @@ const directoryTabs = [
   { id: 'group', label: 'Gọi nhóm', icon: 'users' },
 ]
 const activeTab = ref('all')
+const groupTabVisited = ref(false)
 const term = ref('')
 const department = ref('')
 const presence = ref('')
@@ -202,7 +204,7 @@ const searchPlaceholder = computed(function getSearchPlaceholder() {
 
 /** Tạo truy vấn mới từ đầu khi đổi từ khóa. Tab bộ phận trống từ khóa vẫn xem cả bộ phận. */
 function getQuery() {
-  if (!props.active || activeTab.value === 'group') return null
+  if (activeTab.value === 'group') return null
   if (activeTab.value === 'favorites') return { tab: 'favorites' }
   const keyword = term.value.trim()
   if (activeTab.value === 'department') {
@@ -214,11 +216,19 @@ function getQuery() {
   return { term: keyword }
 }
 
+/** Đọc cache RAM đồng bộ từ service (nếu có) để chuyển tab Yêu thích/Bộ phận không chớp loading. */
+function peekCachedQueryResults(query) {
+  return props.peekContacts ? props.peekContacts(query) : null
+}
+
 /** View cung cấp lệnh đọc dữ liệu phù hợp với tab. */
 function load(query) {
   return props.loadContacts(query)
 }
-const results = useDirectoryResults(getQuery, load)
+const results = useDirectoryResults(getQuery, load, {
+  isActive: () => props.active,
+  peekResults: peekCachedQueryResults,
+})
 
 /** Lọc trạng thái từ dữ liệu đang hiển thị của Yêu thích, chưa xác minh thì không coi là ngoại tuyến. */
 function matchesFavorite(contact) {
@@ -257,6 +267,12 @@ const emptyMessage = computed(function getEmptyMessage() {
   return 'Chưa có kết quả phù hợp.'
 })
 
+/** Ghi nhớ tab Gọi nhóm đã từng mở để giữ nguyên nội dung nhúng khi chuyển qua lại các tab. */
+function trackGroupTabVisit(tab) {
+  if (tab === 'group') groupTabVisited.value = true
+}
+watch(activeTab, trackGroupTabVisit, { immediate: true })
+
 /** Chỉ hiện tùy chọn chưa có bộ phận khi Wazo thực sự xác nhận có bản ghi trống. */
 async function reloadDepartments(force = false) {
   departmentRequest?.abort()
@@ -264,7 +280,7 @@ async function reloadDepartments(force = false) {
   const request = new AbortController()
   departmentRequest = request
   departmentError.value = ''
-  loadingDepartments.value = true
+  loadingDepartments.value = !departments.value.length || force === true
   try {
     const data = await props.loadDepartments(request.signal, force === true)
     if (request.signal.aborted) return

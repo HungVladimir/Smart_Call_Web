@@ -14,6 +14,7 @@ import { clearFailedAvatars } from '../../state/avatarState.js'
 import { logger } from '../common/loggerService.js'
 
 const DEFAULT_WAZO_HOST = '107.126.11.126:9443'
+const SESSION_HEALTH_POLL_INTERVAL_MS = 30000
 
 const SESSION_STORAGE_KEYS = {
   authMethod: 'smartcall_auth_method',
@@ -863,7 +864,7 @@ export class AuthService {
     this.stopSessionHealthCheck()
     /** Gọi phương thức kiểm tra sức khỏe phiên trên đúng instance AuthService hiện tại. */
     const runSessionHealthPoll = () => this._pollSessionHealth()
-    this.sessionHealthTimer = setInterval(runSessionHealthPoll, 5000)
+    this.sessionHealthTimer = setInterval(runSessionHealthPoll, SESSION_HEALTH_POLL_INTERVAL_MS)
   }
 
   /** Dừng kiểm tra phiên khi logout hoặc bị thu hồi quyền truy cập. */

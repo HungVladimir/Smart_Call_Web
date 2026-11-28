@@ -36,7 +36,10 @@
     </p>
 
     <template v-if="!editor">
-      <p v-if="loading && !groups.length" class="group-message" role="status">Đang tải nhóm…</p>
+      <p v-if="openingDraft" class="group-message" role="status">Đang mở nhóm…</p>
+      <p v-else-if="loading && !groups.length" class="group-message" role="status">
+        Đang tải nhóm…
+      </p>
       <div v-else-if="!groups.length" class="group-empty">
         <div class="group-emblem"><UiIcon name="users" /></div>
         <h2>Chưa có nhóm đã lưu</h2>
@@ -171,7 +174,16 @@
   </section>
 </template>
 <script setup>
-import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UiIcon from '@/components/common/UiIcon.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -195,9 +207,15 @@ const groupNameInput = ref(null)
 const active = ref(false)
 const busy = ref(false)
 const loading = ref(false)
+const openingDraft = ref(false)
 const notice = ref('')
 const error = ref('')
 let version = 0
+let draftRevision = 0
+let groupsLoadVersion = 0
+let listLoadedForVisit = false
+let deactivatedOnce = false
+let activeUrlDraft = ''
 
 /** Lấy danh sách UUID đã chọn để các lượt tìm kế tiếp đánh dấu đúng. */
 const selectedIds = computed(() => editor.value?.members.map(memberId) || [])
@@ -214,28 +232,100 @@ function stillActive(context, viewVersion) {
   return active.value && version === viewVersion && isSessionContextCurrent(context)
 }
 
-/** Đọc lại nhóm khi chuyển từ màn gọi hoặc lịch sử về đây. */
-async function loadGroups() {
+/** Mở ngay trình tạo nhóm trống ở chế độ toàn màn hình. */
+function openNewGroupEditor() {
+  openingDraft.value = false
+  error.value = ''
+  notice.value = ''
+  editor.value = { id: '', name: '', members: [] }
+  void focusGroupName()
+}
+
+/** Dựng nhanh state sửa nhóm từ danh bạ đã có trong RAM trước khi bổ sung các thành viên còn thiếu. */
+function buildImmediateGroupEditor(group) {
+  /** Lấy bản ghi thành viên đã có trong RAM danh bạ để hiển thị ngay không chớp khung danh sách. */
+  function resolveKnownMember(uuid) {
+    return (
+      contactService.findContactByUuid?.(uuid) || {
+        uuid,
+        name: 'Đang tải thành viên...',
+      }
+    )
+  }
+  return {
+    id: group.id,
+    name: group.name,
+    members: (group.members || []).map(resolveKnownMember),
+  }
+}
+
+/** Mở thẳng màn hình tạo hoặc sửa nhóm từ draft đã có sẵn trong danh sách hiện tại. */
+function applyImmediateDraft(draft) {
+  if (props.embedded || !draft) {
+    activeUrlDraft = ''
+    openingDraft.value = false
+    return false
+  }
+  activeUrlDraft = draft
+  if (draft === 'new') {
+    if (!editor.value || editor.value.id !== '') openNewGroupEditor()
+    return true
+  }
+  const existing = groups.value.find((item) => item.id === draft)
+  if (existing) {
+    openingDraft.value = false
+    if (!editor.value || editor.value.id !== draft) {
+      void editGroup(existing)
+    }
+    return true
+  }
+  openingDraft.value = true
+  return false
+}
+
+/** Đọc lại nhóm khi mở danh sách hoặc kích hoạt lại tab nhúng; mở form Tạo nhóm ngay không gọi GET. */
+async function loadGroups({ applyDraft = true } = {}) {
   active.value = true
-  const viewVersion = ++version
+  const viewVersion = version
   const context = captureSessionContext()
-  loading.value = true
+  const draft = props.embedded || !applyDraft ? '' : String(route.query.draft || '')
+  if (draft === 'new') {
+    groupsLoadVersion += 1
+    applyImmediateDraft('new')
+    loading.value = false
+    return
+  }
+  const startLoadVersion = ++groupsLoadVersion
+  if (draft) applyImmediateDraft(draft)
+  const startDraftRevision = draftRevision
+  loading.value = !groups.value.length && !openingDraft.value && !editor.value
   error.value = ''
   try {
     const items = await listCallGroups(authService.getToken())
-    if (!stillActive(context, viewVersion)) return
+    if (!stillActive(context, viewVersion) || groupsLoadVersion !== startLoadVersion) return
     groups.value = items
-    // Từ danh sách nhúng, chỉ mở màn riêng khi có yêu cầu tạo hoặc sửa.
-    const draft = props.embedded ? '' : route.query.draft
-    if (draft === 'new') createGroup()
-    else if (draft) {
-      const group = items.find((item) => item.id === draft)
-      if (group) await editGroup(group)
+    listLoadedForVisit = true
+    if (
+      draft &&
+      draftRevision === startDraftRevision &&
+      String(route.query.draft || '') === draft
+    ) {
+      if (!editor.value || editor.value.id !== draft) {
+        const group = items.find((item) => item.id === draft)
+        if (group) await editGroup(group)
+      }
     }
+    if (draftRevision === startDraftRevision) openingDraft.value = false
   } catch (failure) {
-    if (stillActive(context, viewVersion)) error.value = failure.message
+    if (stillActive(context, viewVersion) && groupsLoadVersion === startLoadVersion) {
+      if (failure?.status === 401 || failure?.status === 403) groups.value = []
+      if (draftRevision === startDraftRevision) openingDraft.value = false
+      error.value = failure.message
+    }
   } finally {
-    if (stillActive(context, viewVersion)) loading.value = false
+    if (stillActive(context, viewVersion) && groupsLoadVersion === startLoadVersion) {
+      loading.value = false
+    }
   }
 }
 
@@ -243,13 +333,42 @@ async function loadGroups() {
 function hideGroups() {
   active.value = false
   editor.value = null
+  openingDraft.value = false
   busy.value = false
+  listLoadedForVisit = false
+  activeUrlDraft = ''
+  draftRevision += 1
+  groupsLoadVersion += 1
   version += 1
 }
-/** Nạp danh sách ở màn riêng khi RouterView kích hoạt. */
+/** Nạp danh sách ở màn riêng hoặc đồng bộ lại danh sách nhúng khi KeepAlive quay về màn gọi. */
 function activateGroupsPage() {
-  if (!props.embedded) void loadGroups()
+  if (!props.embedded || deactivatedOnce) void loadGroups()
 }
+
+/** Ghi dấu đã từng rời màn để lần quay lại KeepAlive đồng bộ lại danh sách nhúng. */
+function deactivateGroupsPage() {
+  deactivatedOnce = true
+  hideGroups()
+}
+
+/** Xử lý khi query draft đổi trong lúc trang Gọi nhóm đang mở sẵn. */
+function syncDraftQuery(nextDraft) {
+  if (props.embedded || !active.value) return
+  draftRevision += 1
+  if (nextDraft) {
+    if (!applyImmediateDraft(String(nextDraft))) void loadGroups()
+    return
+  }
+  if (activeUrlDraft) {
+    activeUrlDraft = ''
+    editor.value = null
+    openingDraft.value = false
+    error.value = ''
+    if (!listLoadedForVisit) void loadGroups({ applyDraft: false })
+  }
+}
+watch(() => route.query.draft, syncDraftQuery)
 
 /** Nạp danh sách khi tab Gọi nhóm trong danh bạ vừa xuất hiện. */
 function mountEmbeddedGroups() {
@@ -257,7 +376,7 @@ function mountEmbeddedGroups() {
 }
 onMounted(mountEmbeddedGroups)
 onActivated(activateGroupsPage)
-onDeactivated(hideGroups)
+onDeactivated(deactivateGroupsPage)
 onUnmounted(hideGroups)
 
 /** Mở trình tạo riêng từ tab nhúng hoặc tạo biểu mẫu tại màn nhóm. */
@@ -266,10 +385,9 @@ function createGroup() {
     void router.push({ path: '/call-groups', query: { draft: 'new' } })
     return
   }
-  error.value = ''
-  notice.value = ''
-  editor.value = { id: '', name: '', members: [] }
-  void focusGroupName()
+  draftRevision += 1
+  activeUrlDraft = ''
+  openNewGroupEditor()
 }
 
 /** Đưa con trỏ đến trường đầu tiên sau khi mở trình sửa. */
@@ -278,11 +396,15 @@ async function focusGroupName() {
   if (active.value && editor.value) groupNameInput.value?.focus()
 }
 
-/** Quay về danh sách đã lưu, bỏ các thay đổi chưa gửi lên backend. */
+/** Quay về danh sách đã lưu, bỏ thay đổi chưa gửi và tải danh sách nếu mở thẳng từ draft=new. */
 function closeEditor() {
+  draftRevision += 1
+  activeUrlDraft = ''
   editor.value = null
+  openingDraft.value = false
   error.value = ''
   if (route.query.draft) void router.replace({ path: '/call-groups' })
+  if (!props.embedded && !listLoadedForVisit) void loadGroups({ applyDraft: false })
 }
 
 /** Chuyển phần tử liên hệ sang cặp [uuid, contact] để tra cứu nhanh khi mở trình sửa nhóm. */
@@ -290,20 +412,20 @@ function toContactMapEntry(contact) {
   return [contact.uuid, contact]
 }
 
-/** Tải thông tin thành viên hiện tại của nhóm và dựng state cho trình sửa nhóm. */
+/** Tải thông tin thành viên hiện tại của nhóm và cập nhật mà không xóa nội dung người dùng đang sửa. */
 async function loadGroupForEditing(group, context, viewVersion) {
   const contacts = await contactService.getSavedGroupMembers(group.members)
-  if (!stillActive(context, viewVersion)) return
+  if (!stillActive(context, viewVersion) || editor.value?.id !== group.id) return
   const byId = new Map(contacts.map(toContactMapEntry))
   /** Giữ cả UUID đã rời danh bạ để người dùng có thể chủ động gỡ khỏi nhóm. */
   function resolveGroupMember(uuid) {
     return byId.get(uuid) || { uuid, name: 'Liên hệ không còn trong danh bạ' }
   }
-  editor.value = {
-    id: group.id,
-    name: group.name,
-    members: group.members.map(resolveGroupMember),
+  /** Cập nhật chi tiết thành viên từ backend cho từng UUID hiện có trong trình sửa. */
+  function hydrateExistingMember(member) {
+    return byId.get(member.uuid) || resolveGroupMember(member.uuid)
   }
+  editor.value.members = editor.value.members.map(hydrateExistingMember)
 }
 
 /** Tra lại thành viên qua UUID và giữ mục đã rời danh bạ để người dùng có thể bỏ. */
@@ -311,6 +433,14 @@ async function editGroup(group) {
   if (props.embedded) {
     await router.push({ path: '/call-groups', query: { draft: group.id } })
     return
+  }
+  if (activeUrlDraft !== group.id) {
+    draftRevision += 1
+    activeUrlDraft = ''
+  }
+  if (!editor.value || editor.value.id !== group.id) {
+    editor.value = buildImmediateGroupEditor(group)
+    void focusGroupName()
   }
   /** Bọc tác vụ nạp dữ liệu sửa nhóm cho hàng đợi khóa thao tác. */
   function runLoadGroupForEditing(context, viewVersion) {
@@ -351,6 +481,7 @@ async function perform(action) {
 async function saveDraftGroup(draft, context, viewVersion) {
   const saved = await saveCallGroup(authService.getToken(), draft.id, draft.name, selectedIds.value)
   if (!stillActive(context, viewVersion)) return
+  groupsLoadVersion += 1
   groups.value = [...groups.value.filter((group) => group.id !== saved.id), saved]
   closeEditor()
   notice.value = 'Đã lưu nhóm.'
@@ -371,6 +502,7 @@ async function submitGroup() {
 async function deleteSelectedGroup(group, context, viewVersion) {
   await deleteCallGroup(authService.getToken(), group.id)
   if (!stillActive(context, viewVersion)) return
+  groupsLoadVersion += 1
   groups.value = groups.value.filter((item) => item.id !== group.id)
   if (editor.value?.id === group.id) editor.value = null
   notice.value = 'Đã xóa nhóm.'

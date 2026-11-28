@@ -7,6 +7,8 @@ import {
 } from '../auth/sessionScope.js'
 import { logger } from '../common/loggerService.js'
 
+const DEFAULT_HISTORY_LIMIT = 100
+
 /** Thêm số 0 ở đầu để các phần ngày/giờ hiển thị đủ hai chữ số. */
 function padTwoDigits(value) {
   return String(value).padStart(2, '0')
@@ -47,11 +49,11 @@ export class HistoryService {
     this.historyGeneration = 0
   }
 
-  /** Bỏ cache CDR hiện tại và chủ động tải lại, đánh dấu thế hệ request để kết quả cũ không ghi đè. */
+  /** Bỏ cache CDR hiện tại và chủ động tải lại với cùng giới hạn màn Lịch sử. */
   async reload() {
     this.localHistory = []
     this._fetchingHistoryPromise = null
-    return await this.getHistory({ forceRefresh: true })
+    return await this.getHistory({ limit: DEFAULT_HISTORY_LIMIT, forceRefresh: true })
   }
 
   /**
@@ -122,7 +124,7 @@ export class HistoryService {
    * Tải CDR, chuẩn hóa theo máy lẻ hiện tại và ghép bản ghi RAM; chỉ request mới nhất được cập
    * nhật cache.
    */
-  async getHistory({ tab = 'all', limit = 50, forceRefresh = false } = {}) {
+  async getHistory({ tab = 'all', limit = DEFAULT_HISTORY_LIMIT, forceRefresh = false } = {}) {
     const sessionContext = captureSessionContext()
     const fetch = createSessionFetch(sessionContext)
     if (forceRefresh) {
